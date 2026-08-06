@@ -1,0 +1,16 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+celery==5.4.0
+redis==5.0.8
+browser-use==0.13.7
+playwright==1.48.0
+python-dotenv==1.0.1
+pydantic==2.8.2
+sqlalchemy==2.0.35
+psycopg2-binary==2.9.9
+python-multipart==0.0.12
+httpx==0.27.2
+resend==0.8.0
+requests==2.32.3
+langchain-ollama==0.2.0
+aiofiles==24.1.0
