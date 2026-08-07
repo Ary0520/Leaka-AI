@@ -171,10 +171,10 @@ def run_browser_test(
             llm=llm,
             browser_session=browser_session,
             use_vision=use_vision,
-            max_failures=3,
-            max_actions_per_step=3,
-            step_timeout=180,
-            llm_timeout=120,
+            max_failures=5,
+            max_actions_per_step=5,
+            step_timeout=60,
+            llm_timeout=60,
         )
         history = await agent.run(max_steps=max_steps)
 
@@ -221,7 +221,22 @@ def run_browser_test(
         return history, dom_html, final_failure_shot_rel
 
     try:
-        history, dom_html, final_failure_shot_rel = asyncio.run(_run_agent())
+        # Use a fresh ProactorEventLoop per run instead of asyncio.run().
+        # asyncio.run() closes the loop immediately after the coroutine
+        # finishes, which causes "Event loop is closed" errors when
+        # browser-use's cleanup callbacks (httpx, anyio) fire during GC.
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            history, dom_html, final_failure_shot_rel = loop.run_until_complete(_run_agent())
+        finally:
+            # Give pending callbacks a chance to finish before closing
+            try:
+                loop.run_until_complete(asyncio.sleep(0.1))
+            except Exception:
+                pass
+            loop.close()
+            asyncio.set_event_loop(None)
     except Exception as exc:
         tb = traceback.format_exc()
         _update_db_status(

@@ -170,7 +170,14 @@ def _startup():
 # ---------------------------------------------------------------------------
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "llm_provider": settings.LLM_PROVIDER}
+    model = (
+        settings.LLM_MODEL_OPENROUTER if settings.LLM_PROVIDER == "openrouter"
+        else settings.LLM_MODEL_OPENAI if settings.LLM_PROVIDER == "openai"
+        else settings.LLM_MODEL_ANTHROPIC if settings.LLM_PROVIDER == "anthropic"
+        else settings.OLLAMA_MODEL if settings.LLM_PROVIDER == "ollama"
+        else "unknown"
+    )
+    return {"status": "ok", "llm_provider": settings.LLM_PROVIDER, "llm_model": model}
 
 
 # ---------------------------------------------------------------------------
