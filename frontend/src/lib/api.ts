@@ -78,6 +78,7 @@ export interface RunStatusResponse {
   final_result?: string | null;
   error_message?: string | null;
   is_successful?: boolean | null;
+  created_at?: string | null;
   started_at?: string | null;
   completed_at?: string | null;
   screenshots: Screenshot[];
@@ -129,6 +130,40 @@ export interface TestCaseCreate {
   suite_id?: number | null;
 }
 
+export interface TestCaseUpdate {
+  name?: string | null;
+  prompt?: string | null;
+  success_criteria?: string | null;
+  target_url?: string | null;
+  suite_id?: number | null;
+}
+
+export interface TestSuiteOut {
+  id: number;
+  name: string;
+  description?: string | null;
+  created_at: string;
+  updated_at: string;
+  tests: TestCaseOut[];
+}
+
+export interface TestSuiteCreate {
+  name: string;
+  description?: string | null;
+}
+
+export interface TestSuiteUpdate {
+  name?: string | null;
+  description?: string | null;
+}
+
+export interface TestSuiteRunResponse {
+  message: string;
+  suite_id: number;
+  count: number;
+  job_ids: string[];
+}
+
 // ---------- API ----------
 export const api = {
   health: () => request<{ status: string; llm_provider: string }>("/api/health"),
@@ -176,6 +211,46 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  updateTestCase: (id: number, body: TestCaseUpdate) =>
+    request<TestCaseOut>(`/api/test-cases/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  deleteTestCase: (id: number) =>
+    request<void>(`/api/test-cases/${id}`, { method: "DELETE" }),
+
+  // Test suites
+  listSuites: (params?: { skip?: number; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.skip) qs.set("skip", String(params.skip));
+    if (params?.limit) qs.set("limit", String(params.limit));
+    const q = qs.toString();
+    return request<TestSuiteOut[]>(`/api/test-suites${q ? `?${q}` : ""}`);
+  },
+  getSuite: (id: number) =>
+    request<TestSuiteOut>(`/api/test-suites/${id}`),
+  createSuite: (body: TestSuiteCreate) =>
+    request<TestSuiteOut>("/api/test-suites", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateSuite: (id: number, body: TestSuiteUpdate) =>
+    request<TestSuiteOut>(`/api/test-suites/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  deleteSuite: (id: number) =>
+    request<void>(`/api/test-suites/${id}`, { method: "DELETE" }),
+  runSuite: (id: number, params?: { use_vision?: boolean; max_steps?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.use_vision != null) qs.set("use_vision", String(params.use_vision));
+    if (params?.max_steps) qs.set("max_steps", String(params.max_steps));
+    const q = qs.toString();
+    return request<TestSuiteRunResponse>(
+      `/api/test-suites/${id}/run${q ? `?${q}` : ""}`,
+      { method: "POST" },
+    );
+  },
 
   // Linear
   createLinearIssue: (body: {
@@ -199,6 +274,19 @@ export const api = {
     if (dashboardBaseUrl) form.append("dashboard_base_url", dashboardBaseUrl);
     return request<{ sent: boolean; result: unknown }>(
       `/api/integrations/email/alert-failure/${jobId}`,
+      {
+        method: "POST",
+        body: form,
+      },
+    );
+  },
+
+  // Slack alert
+  sendSlackAlert: (jobId: string, dashboardBaseUrl?: string) => {
+    const form = new FormData();
+    if (dashboardBaseUrl) form.append("dashboard_base_url", dashboardBaseUrl);
+    return request<{ sent: boolean; result: unknown }>(
+      `/api/integrations/slack/alert-failure/${jobId}`,
       {
         method: "POST",
         body: form,

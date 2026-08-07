@@ -8,52 +8,59 @@ def get_llm() -> Any:
     """
     Build the browser-use LLM client based on settings.LLM_PROVIDER.
 
+    Correct imports verified against browser-use==0.13.7 installed package.
+    All Chat* classes live under browser_use.llm, not the top-level package.
+
     Supports:
       - openai      : ChatOpenAI (official OpenAI API)
       - anthropic   : ChatAnthropic (official Anthropic API)
-      - openrouter  : ChatOpenAI with base_url=OpenRouter, model in provider/model format
-      - ollama      : langchain_ollama.ChatOllama (100% free, local LLM)
+      - openrouter  : ChatOpenRouter (OpenRouter multi-provider gateway)
+      - ollama      : ChatOllama (100% free, local LLM via Ollama server)
     """
     provider = (settings.LLM_PROVIDER or "openai").lower().strip()
 
     if provider == "openai":
-        from browser_use import ChatOpenAI
+        from browser_use.llm import ChatOpenAI  # type: ignore[import]
 
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "LLM_PROVIDER=openai but OPENAI_API_KEY is not set in .env"
+            )
         return ChatOpenAI(model=settings.LLM_MODEL_OPENAI, temperature=0.0)
 
     if provider == "anthropic":
-        from browser_use import ChatAnthropic
+        from browser_use.llm import ChatAnthropic  # type: ignore[import]
 
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "LLM_PROVIDER=anthropic but ANTHROPIC_API_KEY is not set in .env"
+            )
         return ChatAnthropic(model=settings.LLM_MODEL_ANTHROPIC, temperature=0.0)
 
     if provider == "openrouter":
+        from browser_use.llm import ChatOpenRouter  # type: ignore[import]
+
         api_key = settings.OPENROUTER_API_KEY or os.getenv("OPENROUTER_API_KEY")
         if not api_key:
             raise RuntimeError(
                 "LLM_PROVIDER=openrouter but OPENROUTER_API_KEY is not set."
             )
-        from browser_use import ChatOpenAI
-
-        return ChatOpenAI(
+        return ChatOpenRouter(
             model=settings.LLM_MODEL_OPENROUTER,
-            base_url="https://openrouter.ai/api/v1",
             api_key=api_key,
             temperature=0.0,
         )
 
     if provider == "ollama":
-        try:
-            from langchain_ollama import ChatOllama
-        except ImportError as e:
-            raise RuntimeError(
-                "LLM_PROVIDER=ollama requires 'langchain-ollama' installed. "
-                "Run: pip install langchain-ollama"
-            ) from e
+        from browser_use.llm import ChatOllama  # type: ignore[import]
 
+        # ChatOllama in browser-use 0.13.7 uses `host` (not `base_url`)
+        # Verified from: browser_use.llm.ollama.chat.__init__ signature
         return ChatOllama(
             model=settings.OLLAMA_MODEL,
-            base_url=settings.OLLAMA_BASE_URL,
-            temperature=0.0,
+            host=settings.OLLAMA_BASE_URL,
         )
 
     raise ValueError(

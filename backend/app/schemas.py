@@ -18,6 +18,14 @@ class TestCaseCreate(TestCaseBase):
     pass
 
 
+class TestCaseUpdate(BaseModel):
+    name: Optional[str] = None
+    prompt: Optional[str] = None
+    success_criteria: Optional[str] = None
+    target_url: Optional[str] = None
+    suite_id: Optional[int] = None
+
+
 class TestCaseOut(TestCaseBase):
     id: int
     created_at: datetime
@@ -35,6 +43,18 @@ class TestSuiteBase(BaseModel):
 
 class TestSuiteCreate(TestSuiteBase):
     pass
+
+
+class TestSuiteUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+class TestSuiteRunResponse(BaseModel):
+    message: str
+    suite_id: int
+    count: int
+    job_ids: List[str]
 
 
 class TestSuiteOut(TestSuiteBase):
@@ -84,6 +104,7 @@ class TestRunStatusResponse(BaseModel):
     status: TestRunStatus
     name: str
     prompt: str
+    target_url: Optional[str] = None
     stage: Optional[str] = None
     progress: Optional[dict[str, Any]] = None
     total_steps: Optional[int] = None
@@ -92,6 +113,7 @@ class TestRunStatusResponse(BaseModel):
     final_result: Optional[str] = None
     error_message: Optional[str] = None
     is_successful: Optional[bool] = None
+    created_at: Optional[datetime] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     screenshots: List[ScreenshotOut] = []
@@ -124,7 +146,7 @@ class CIWebhookResponse(BaseModel):
 
 # -------------- Linear --------------
 class CreateLinearTicketRequest(BaseModel):
-    test_run_id: int
+    job_id: str
     title: Optional[str] = None
     description: Optional[str] = None
 

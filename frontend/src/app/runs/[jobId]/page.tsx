@@ -39,6 +39,7 @@ import {
   CheckCheck,
   Clock,
   Image as ImageIcon,
+  Bell,
 } from "lucide-react";
 import { formatDate, formatDuration, truncate } from "@/lib/utils";
 import { useParams, useRouter } from "next/navigation";
@@ -109,6 +110,27 @@ export default function RunDetailPage() {
       }),
   });
 
+  const slackMut = useMutation({
+    mutationFn: () =>
+      api.sendSlackAlert(
+        jobId,
+        typeof window !== "undefined"
+          ? `${window.location.origin}/runs`
+          : undefined,
+      ),
+    onSuccess: (r) =>
+      toast({
+        title: r.sent ? "Slack alert sent" : "Slack alert failed",
+        variant: r.sent ? "default" : "destructive",
+      }),
+    onError: (e: Error) =>
+      toast({
+        title: "Failed to send Slack alert",
+        description: e.message,
+        variant: "destructive",
+      }),
+  });
+
   const status = data?.status;
   const isRunning = status === "running" || status === "pending";
 
@@ -137,7 +159,7 @@ export default function RunDetailPage() {
       </div>
 
       {isLoading && <RunSkeleton />}
-      {data && <RunView data={data} onEmail={() => emailMut.mutate()} onLinear={() => linearMut.mutate()} />}
+      {data && <RunView data={data} onEmail={() => emailMut.mutate()} onLinear={() => linearMut.mutate()} onSlack={() => slackMut.mutate()} />}
     </div>
   );
 }
@@ -146,10 +168,12 @@ function RunView({
   data,
   onEmail,
   onLinear,
+  onSlack,
 }: {
   data: Awaited<ReturnType<typeof api.getRunStatus>>;
   onEmail: () => void;
   onLinear: () => void;
+  onSlack: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const failure = data.status === "failed";
@@ -416,16 +440,7 @@ function RunView({
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    toast({
-                      title: "Coming soon",
-                      description:
-                        "Expose run numeric PK from status endpoint to wire one-click Linear tickets.",
-                    })
-                  }
-                >
+                <Button variant="outline" onClick={onLinear}>
                   <Ticket className="w-4 h-4 mr-2" />
                   Create Linear ticket
                 </Button>
@@ -447,6 +462,25 @@ function RunView({
                 <Button variant="outline" onClick={onEmail}>
                   <Mail className="w-4 h-4 mr-2" />
                   Send failure alert
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Bell className="w-4 h-4" />
+                  Slack alert
+                </CardTitle>
+                <CardDescription>
+                  Post a failure block message to the configured Slack incoming
+                  webhook with step count, duration, and error details.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button variant="outline" onClick={onSlack}>
+                  <Bell className="w-4 h-4 mr-2" />
+                  Send Slack alert
                 </Button>
               </CardContent>
             </Card>

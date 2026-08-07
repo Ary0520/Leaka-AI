@@ -1,5 +1,9 @@
+import atexit
+import logging
 import os
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Optional
 
@@ -23,7 +27,7 @@ from sqlalchemy.orm import Session
 from .celery_app import celery_app
 from .config import settings
 from .database import get_db, init_db
-from .integrations import linear_client, email_client
+from .integrations import linear_client, email_client, slack_client
 from .models import (
     LinearIssue,
     TestCase,
@@ -40,14 +44,83 @@ from .schemas import (
     ScreenshotOut,
     TestCaseCreate,
     TestCaseOut,
+    TestCaseUpdate,
     TestRunEnqueueResponse,
     TestRunListResponse,
     TestRunRequest,
     TestRunStatusResponse,
     TestSuiteCreate,
     TestSuiteOut,
+    TestSuiteRunResponse,
+    TestSuiteUpdate,
 )
 from .worker import run_browser_test
+
+logger = logging.getLogger("revguard")
+
+_SYNC_DEMO_EXECUTOR: Optional[ThreadPoolExecutor] = None
+_EXECUTOR_LOCK = threading.Lock()
+
+
+def _get_sync_executor() -> ThreadPoolExecutor:
+    global _SYNC_DEMO_EXECUTOR
+    with _EXECUTOR_LOCK:
+        if _SYNC_DEMO_EXECUTOR is None:
+            _SYNC_DEMO_EXECUTOR = ThreadPoolExecutor(
+                max_workers=2, thread_name_prefix="revguard_sync_demo"
+            )
+            atexit.register(lambda: _SYNC_DEMO_EXECUTOR.shutdown(wait=False))
+    return _SYNC_DEMO_EXECUTOR
+
+
+def _dispatch_run_task(
+    job_id: str,
+    *,
+    name: str,
+    prompt: str,
+    target_url: str,
+    success_criteria: Optional[str],
+    use_vision: bool,
+    max_steps: int,
+    test_case_id: Optional[int],
+) -> str:
+    """Dispatch a test run.
+
+    - RUN_MODE=celery    → push to Redis via run_browser_test.delay() (async, separate worker)
+    - RUN_MODE=sync_demo → run the EXACT SAME Celery task locally via .apply() in a
+                           background thread. No mocking. All DB writes, screenshots,
+                           DOM snapshots, and auto-integrations run identically.
+    """
+    kwargs = dict(
+        job_id=job_id,
+        name=name,
+        prompt=prompt,
+        target_url=target_url,
+        success_criteria=success_criteria,
+        use_vision=use_vision,
+        max_steps=max_steps,
+        test_case_id=test_case_id,
+    )
+
+    if settings.RUN_MODE == "sync_demo":
+        task_id = f"sync-{job_id}"
+
+        def _run_local():
+            try:
+                # run_browser_test.run is the raw underlying Python function
+                # with no Celery task binding — no self.update_state(), no
+                # self.retry(), no broker touched. 100% same worker logic:
+                # browser-use Agent, DB writes, screenshots, integrations.
+                run_browser_test.run(**kwargs)
+            except Exception as exc:  # noqa: BLE001 - worker already wrote FAILED to DB
+                logger.exception("sync_demo worker raised (job_id=%s): %s", job_id, exc)
+
+        _get_sync_executor().submit(_run_local)
+        return task_id
+
+    task = run_browser_test.delay(**kwargs)
+    return task.id
+
 
 
 app = FastAPI(
@@ -68,6 +141,28 @@ app.add_middleware(
 @app.on_event("startup")
 def _startup():
     init_db()
+    pb = settings.PLAYWRIGHT_BROWSERS_PATH
+    logger.info(
+        "Leaka AI RevGuard API starting — RUN_MODE=%s LLM=%s DB=%s PB=%s",
+        settings.RUN_MODE,
+        settings.LLM_PROVIDER,
+        settings.DATABASE_URL,
+        pb,
+    )
+    if settings.RUN_MODE == "sync_demo":
+        logger.warning(
+            "RUN_MODE=sync_demo: using in-process thread pool (no Redis/Celery broker). "
+            "This is for local demo/dev only. Set RUN_MODE=celery with Redis for production."
+        )
+    if settings.LLM_PROVIDER == "ollama":
+            logger.warning(
+                "LLM_PROVIDER=ollama: ensure Ollama is running locally on %s "
+                "with model '%s' pulled (run: ollama pull %s). "
+                "Otherwise agent tasks will fail with a connection error until Ollama is available.",
+                settings.OLLAMA_BASE_URL,
+                settings.OLLAMA_MODEL,
+                settings.OLLAMA_MODEL,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +206,35 @@ def get_test_case(id: int, db: Session = Depends(get_db)):
     return tc
 
 
+@app.put("/api/test-cases/{id}", response_model=TestCaseOut)
+def update_test_case(
+    id: int,
+    body: TestCaseUpdate,
+    db: Session = Depends(get_db),
+):
+    tc = db.query(TestCase).filter(TestCase.id == id).first()
+    if not tc:
+        raise HTTPException(404, "Test case not found")
+
+    update_data = body.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(tc, field, value)
+
+    db.commit()
+    db.refresh(tc)
+    return tc
+
+
+@app.delete("/api/test-cases/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_test_case(id: int, db: Session = Depends(get_db)):
+    tc = db.query(TestCase).filter(TestCase.id == id).first()
+    if not tc:
+        raise HTTPException(404, "Test case not found")
+    db.delete(tc)
+    db.commit()
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Test Suites CRUD
 # ---------------------------------------------------------------------------
@@ -140,6 +264,87 @@ def get_suite(id: int, db: Session = Depends(get_db)):
     if not s:
         raise HTTPException(404, "Suite not found")
     return s
+
+
+@app.put("/api/test-suites/{id}", response_model=TestSuiteOut)
+def update_suite(
+    id: int,
+    body: TestSuiteUpdate,
+    db: Session = Depends(get_db),
+):
+    s = db.query(TestSuite).filter(TestSuite.id == id).first()
+    if not s:
+        raise HTTPException(404, "Suite not found")
+
+    update_data = body.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(s, field, value)
+
+    db.commit()
+    db.refresh(s)
+    return s
+
+
+@app.delete("/api/test-suites/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_suite(id: int, db: Session = Depends(get_db)):
+    s = db.query(TestSuite).filter(TestSuite.id == id).first()
+    if not s:
+        raise HTTPException(404, "Suite not found")
+    db.delete(s)
+    db.commit()
+    return None
+
+
+@app.post("/api/test-suites/{id}/run", response_model=TestSuiteRunResponse)
+def run_suite(
+    id: int,
+    use_vision: bool = True,
+    max_steps: int = 100,
+    db: Session = Depends(get_db),
+):
+    suite = db.query(TestSuite).filter(TestSuite.id == id).first()
+    if not suite:
+        raise HTTPException(404, "Suite not found")
+
+    cases = db.query(TestCase).filter(TestCase.suite_id == id).all()
+    if not cases:
+        raise HTTPException(400, "Suite has no test cases — add test cases first.")
+
+    job_ids: list[str] = []
+    for tc in cases:
+        job_id = uuid.uuid4().hex
+        run_name = f"[Suite] {suite.name} — {tc.name}"
+        run = TestRun(
+            job_id=job_id,
+            test_case_id=tc.id,
+            name=run_name,
+            prompt=tc.prompt,
+            target_url=tc.target_url,
+            success_criteria=tc.success_criteria,
+            status=TestRunStatus.PENDING,
+        )
+        db.add(run)
+        db.flush()
+        task_id = _dispatch_run_task(
+            job_id=job_id,
+            name=run_name,
+            prompt=tc.prompt,
+            target_url=tc.target_url or "",
+            success_criteria=tc.success_criteria,
+            use_vision=use_vision,
+            max_steps=max_steps,
+            test_case_id=tc.id,
+        )
+        run.task_id = task_id
+        job_ids.append(job_id)
+
+    db.commit()
+    return TestSuiteRunResponse(
+        message=f"Enqueued {len(job_ids)} test run(s) for suite '{suite.name}'.",
+        suite_id=suite.id,
+        count=len(job_ids),
+        job_ids=job_ids,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -179,25 +384,25 @@ def enqueue_test(body: TestRunRequest, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(run)
 
-    # Enqueue to Celery
-    task = run_browser_test.delay(
+    # Dispatch the worker run (Celery queue OR in-process sync-demo thread pool)
+    task_id = _dispatch_run_task(
         job_id=job_id,
         name=run_name,
         prompt=prompt,
-        target_url=target_url,
+        target_url=target_url or "",
         success_criteria=success_criteria,
         use_vision=bool(body.use_vision),
         max_steps=body.max_steps or 100,
         test_case_id=test_case_id,
     )
 
-    # Update with celery task_id so we can poll via Celery too
-    run.task_id = task.id
+    # Update with task_id so status endpoint can reference it
+    run.task_id = task_id
     db.commit()
 
     return {
         "job_id": job_id,
-        "task_id": task.id,
+        "task_id": task_id,
         "status": TestRunStatus.PENDING.value,
     }
 
@@ -252,6 +457,7 @@ def get_run_status(job_id: str, db: Session = Depends(get_db)):
         status=run.status,
         name=run.name,
         prompt=run.prompt,
+        target_url=run.target_url,
         stage=stage,
         progress=progress,
         total_steps=run.total_steps,
@@ -260,6 +466,7 @@ def get_run_status(job_id: str, db: Session = Depends(get_db)):
         final_result=run.final_result,
         error_message=run.error_message,
         is_successful=run.is_successful,
+        created_at=run.created_at,
         started_at=run.started_at,
         completed_at=run.completed_at,
         screenshots=[ScreenshotOut.model_validate(s) for s in screenshots],
@@ -372,17 +579,17 @@ def ci_webhook(
         )
         db.add(run)
         db.flush()
-        task = run_browser_test.delay(
+        task_id = _dispatch_run_task(
             job_id=job_id,
             name=run.name,
             prompt=tc.prompt,
-            target_url=tc.target_url,
+            target_url=tc.target_url or "",
             success_criteria=tc.success_criteria,
             use_vision=True,
             max_steps=100,
             test_case_id=tc.id,
         )
-        run.task_id = task.id
+        run.task_id = task_id
         job_ids.append(job_id)
 
     db.commit()
@@ -397,7 +604,7 @@ def ci_webhook(
 # ---------------------------------------------------------------------------
 @app.post("/api/integrations/linear/issue", response_model=LinearTicketResponse)
 def create_linear_ticket(body: CreateLinearTicketRequest, db: Session = Depends(get_db)):
-    run = db.query(TestRun).filter(TestRun.id == body.test_run_id).first()
+    run = db.query(TestRun).filter(TestRun.job_id == body.job_id).first()
     if not run:
         raise HTTPException(404, "Test run not found")
 
@@ -509,3 +716,33 @@ def email_failure_alert(
         dashboard_url=dashboard_url,
     )
     return {"sent": True, "result": result}
+
+
+# ---------------------------------------------------------------------------
+# Slack Webhook Alert
+# ---------------------------------------------------------------------------
+@app.post("/api/integrations/slack/alert-failure/{job_id}")
+def slack_failure_alert(
+    job_id: str,
+    dashboard_base_url: Optional[str] = Form(default=None),
+    db: Session = Depends(get_db),
+):
+    run = db.query(TestRun).filter(TestRun.job_id == job_id).first()
+    if not run:
+        raise HTTPException(404, "Job not found")
+
+    dashboard_url = None
+    if dashboard_base_url:
+        dashboard_url = f"{dashboard_base_url.rstrip('/')}/runs/{job_id}"
+
+    result = slack_client.send_test_failure_alert(
+        test_name=run.name,
+        job_id=job_id,
+        total_steps=run.total_steps,
+        duration_seconds=run.duration_seconds,
+        success_criteria=run.success_criteria,
+        error_message=run.error_message,
+        target_url=run.target_url,
+        dashboard_url=dashboard_url,
+    )
+    return {"sent": bool(result.get("ok")), "result": result}

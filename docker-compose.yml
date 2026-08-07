@@ -1,0 +1,139 @@
+version: "3.9"
+
+name: revguard-qa
+
+networks:
+  revguard:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  screenshots:
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: revguard-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: revguard
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [revguard]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d revguard"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: revguard-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks: [revguard]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: revguard-backend
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/revguard
+      REDIS_URL: redis://redis:6379/0
+      REDIS_RESULT_BACKEND: redis://redis:6379/1
+      CORS_ORIGINS: http://localhost:3000
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      LLM_MODEL_OPENAI: ${LLM_MODEL_OPENAI:-gpt-4.1-mini}
+      LLM_MODEL_ANTHROPIC: ${LLM_MODEL_ANTHROPIC:-claude-sonnet-4-0}
+      LLM_MODEL_OPENROUTER: ${LLM_MODEL_OPENROUTER:-anthropic/claude-sonnet-4.5}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5-coder:7b}
+      LINEAR_API_KEY: ${LINEAR_API_KEY:-}
+      LINEAR_TEAM_ID: ${LINEAR_TEAM_ID:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-Leaka AI <qa@leaka.ai>}
+      EMAIL_ALERT_TO: ${EMAIL_ALERT_TO:-}
+      CI_WEBHOOK_TOKEN: ${CI_WEBHOOK_TOKEN:-revguard-ci-token-change-me}
+      SCREENSHOT_DIR: /data/screenshots
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8000:8000"
+    volumes:
+      - screenshots:/data/screenshots
+    networks: [revguard]
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: revguard-worker
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/revguard
+      REDIS_URL: redis://redis:6379/0
+      REDIS_RESULT_BACKEND: redis://redis:6379/1
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      LLM_MODEL_OPENAI: ${LLM_MODEL_OPENAI:-gpt-4.1-mini}
+      LLM_MODEL_ANTHROPIC: ${LLM_MODEL_ANTHROPIC:-claude-sonnet-4-0}
+      LLM_MODEL_OPENROUTER: ${LLM_MODEL_OPENROUTER:-anthropic/claude-sonnet-4.5}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5-coder:7b}
+      LINEAR_API_KEY: ${LINEAR_API_KEY:-}
+      LINEAR_TEAM_ID: ${LINEAR_TEAM_ID:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-Leaka AI <qa@leaka.ai>}
+      EMAIL_ALERT_TO: ${EMAIL_ALERT_TO:-}
+      SCREENSHOT_DIR: /data/screenshots
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - screenshots:/data/screenshots
+    networks: [revguard]
+    command: celery -A app.celery_app.celery_app worker --loglevel=info --concurrency=2
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_BACKEND_URL: ${NEXT_PUBLIC_BACKEND_URL:-http://localhost:8000}
+    container_name: revguard-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      NEXT_PUBLIC_BACKEND_URL: ${NEXT_PUBLIC_BACKEND_URL:-http://localhost:8000}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+    ports:
+      - "3000:3000"
+    networks: [revguard]

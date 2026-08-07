@@ -1,16 +1,45 @@
-fastapi==0.115.0
-uvicorn[standard]==0.30.6
-celery==5.4.0
-redis==5.0.8
+# ---------------------------------------------------------------------------
+# Leaka AI / RevGuard QA — Backend Python Dependencies
+#
+# ARCHITECTURAL PINNING STRATEGY (investor-grade, non-negotiable):
+#
+#   1. CORE ENGINE EXACT PIN (must never drift):
+#      browser-use==0.13.7 — the QA agent engine. All SDK internals
+#      (Agent, BrowserSession, AgentHistoryList API) were verified against
+#      0.13.x official docs. It pins ~40 transitive deps EXACTLY
+#      (pydantic, python-dotenv, requests, httpx, aiohttp, etc).
+#      --> NEVER re-pin those below.
+#
+#   2. WORKER STABILITY EXACT PIN:
+#      celery==5.6.2 — mandatory for the critical traceback-memory-leak fix
+#      on Python 3.11+ (Celery changelog verified). Browser-use does NOT
+#      constrain Celery, so we pin this explicitly.
+#
+#   3. ALL OTHER packages: major-version lower-bounds ONLY (or unpin).
+#      Pip will resolve them around the two exact pins above.
+#      This eliminates the 5+ transitive-dep conflicts we hit when
+#      trying to out-pin the browser-use SDK resolver.
+# ---------------------------------------------------------------------------
+
+# ---------- EXACT PINS (see strategy above) ----------
+celery==5.6.2
 browser-use==0.13.7
-playwright==1.48.0
-python-dotenv==1.0.1
-pydantic==2.8.2
-sqlalchemy==2.0.35
-psycopg2-binary==2.9.9
-python-multipart==0.0.12
-httpx==0.27.2
-resend==0.8.0
-requests==2.32.3
-langchain-ollama==0.2.0
-aiofiles==24.1.0
+
+# ---------- Web Framework (let pip resolve around SDK pins) ----------
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+
+# ---------- Queue / Browser / DB Drivers ----------
+redis>=5.0.0
+playwright>=1.48.0
+sqlalchemy>=2.0.30
+python-multipart>=0.0.12
+aiofiles>=24.1.0
+
+# Optional: PostgreSQL (uncomment for Postgres deployments; default = SQLite)
+# On Windows this requires PostgreSQL dev tools (pg_config on PATH).
+# psycopg2-binary>=2.9.9
+
+# ---------- Enterprise Integrations (unpinned — resolve around SDK) ----------
+resend
+langchain-ollama

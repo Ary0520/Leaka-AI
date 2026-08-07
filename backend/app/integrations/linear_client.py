@@ -3,7 +3,7 @@ from typing import Any, Optional
 
 import requests
 
-from .config import settings
+from ..config import settings
 
 LINEAR_ENDPOINT = "https://api.linear.app/graphql"
 

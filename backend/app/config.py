@@ -3,6 +3,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+_PB_PATH = os.getenv("PLAYWRIGHT_BROWSERS_PATH")
+if _PB_PATH:
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = os.path.abspath(_PB_PATH)
+
 
 def _parse_list(value: str | None, default: list[str] | None = None) -> list[str]:
     if not value:
@@ -11,6 +15,9 @@ def _parse_list(value: str | None, default: list[str] | None = None) -> list[str
 
 
 class Settings:
+    RUN_MODE: str = os.getenv("RUN_MODE", "celery").lower()
+    PLAYWRIGHT_BROWSERS_PATH: str | None = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./revguard.db")
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     REDIS_RESULT_BACKEND: str = os.getenv(
