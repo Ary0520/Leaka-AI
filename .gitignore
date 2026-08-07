@@ -1,18 +1,49 @@
-node_modules
-.next
-out
+# Dependencies
+node_modules/
+.venv/
+venv/
+
+# Next.js
+.next/
+out/
+
+# Env files (contain secrets — never commit)
 .env
 .env.local
-*.log
-.DS_Store
-screenshots/*
-!screenshots/.gitkeep
-__pycache__
+.env.*.local
+
+# Python
+__pycache__/
 *.pyc
-.venv
-venv
-*.sqlite*
+*.pyo
+*.pyd
+
+# Databases (SQLite dev DB — use Postgres in prod via docker-compose)
 *.db
-chat2.md 
-chat3.md 
-First_message.txt 
+*.sqlite
+*.sqlite3
+
+# Screenshots (large binary files — served via /api/screenshots)
+backend/screenshots/
+screenshots/
+
+# Playwright local browser install (large binary)
+backend/ms-playwright/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Chat / dev notes (not part of the product)
+chat2.md
+chat3.md
+First_message.txt
+_smoke_p2.py
+
+# IDE
+.vscode/
+.idea/

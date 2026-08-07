@@ -178,6 +178,8 @@ export const api = {
     request<RunStatusResponse>(`/api/tests/status/${jobId}`),
   getRunDetail: (jobId: string) =>
     request<RunStatusResponse>(`/api/tests/${jobId}`),
+  cancelRun: (jobId: string) =>
+    request<RunStatusResponse>(`/api/tests/${jobId}/cancel`, { method: "POST" }),
   listRuns: (params?: {
     status?: RunStatus;
     test_case_id?: number;

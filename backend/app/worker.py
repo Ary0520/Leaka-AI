@@ -1,28 +1,30 @@
 """
 Celery worker: runs a browser-use Agent for a given QA test.
 
-API verified against browser-use==0.13.7 (installed package introspection).
-Key differences from older versions:
-  - Chat LLMs are in browser_use.llm, not the top-level package
-  - BrowserSession(headless=True) is correct; `page` attr doesn't exist;
-    use `await session.get_current_page()` to get an actor Page
-  - actor Page.screenshot() returns a base64 PNG string (not a file path);
-    we decode and save it ourselves
-  - AgentHistoryList.screenshot_paths() returns list[str|None] — paths are
-    already persisted on disk by the agent; we just copy them to our dir
-  - AgentHistoryList.has_errors() is the correct bool method (not errors())
-  - AgentHistoryList.action_history() returns list[list[dict]] (per-step lists)
-  - total_duration_seconds() returns float (not int)
+WINDOWS NOTE: Python 3.13 on Windows uses SelectorEventLoop by default,
+which cannot spawn subprocesses (Playwright/Chromium). We must set
+WindowsProactorEventLoopPolicy before any asyncio.run() call.
 """
 
 import asyncio
 import base64
 import json
 import os
+import platform
 import shutil
+import sys
 import uuid
 from datetime import datetime
 from typing import Any, Optional
+
+# ── CRITICAL WINDOWS FIX ──────────────────────────────────────────────────────
+# On Windows, asyncio.run() defaults to SelectorEventLoop which raises
+# NotImplementedError when trying to spawn subprocesses (Playwright launching
+# Chromium). ProactorEventLoop supports subprocesses on Windows.
+# This must be set at module import time, before any asyncio.run() call.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+# ─────────────────────────────────────────────────────────────────────────────
 
 from .celery_app import celery_app
 from .config import settings
@@ -95,16 +97,13 @@ def _save_b64_screenshot(b64_data: str, dest_dir: str, name: str) -> Optional[st
 
 
 @celery_app.task(
-    bind=True,
     max_retries=3,
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_jitter=True,
     name="app.worker.run_browser_test",
-    ignore_result=False,  # keep False for celery mode; sync_demo uses .run() directly
 )
 def run_browser_test(
-    self,
     job_id: str,
     name: str,
     prompt: str,
@@ -127,10 +126,6 @@ def run_browser_test(
     """
     import traceback
 
-    self.update_state(
-        state="PROGRESS",
-        meta={"stage": "initializing_browser", "step": 0, "total": max_steps},
-    )
     _update_db_status(
         job_id,
         status=TestRunStatus.RUNNING,
@@ -160,21 +155,17 @@ def run_browser_test(
         task_parts.append(f"Success criteria to validate after execution: {success_criteria}")
     task_text = "\n".join(task_parts)
 
-    self.update_state(
-        state="PROGRESS",
-        meta={"stage": "running_agent", "step": 0, "total": max_steps},
-    )
-
     async def _run_agent():
         from browser_use import Agent
         from browser_use.browser.session import BrowserSession
 
         browser_session = BrowserSession(headless=True)
 
-        initial_actions = []
-        if target_url:
-            initial_actions.append({"go_to_url": {"url": target_url}})
-
+        # In browser-use 0.13.7 the correct action name for navigation
+        # is 'navigate', not 'go_to_url'. However initial_actions is not
+        # needed — the target URL is already baked into task_text so the
+        # LLM will navigate there as its first step. Remove initial_actions
+        # entirely to avoid version-specific action name issues.
         agent = Agent(
             task=task_text,
             llm=llm,
@@ -182,7 +173,6 @@ def run_browser_test(
             use_vision=use_vision,
             max_failures=3,
             max_actions_per_step=3,
-            initial_actions=initial_actions if initial_actions else None,
             step_timeout=180,
             llm_timeout=120,
         )

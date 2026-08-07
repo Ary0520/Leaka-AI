@@ -131,6 +131,19 @@ export default function RunDetailPage() {
       }),
   });
 
+  const cancelMut = useMutation({
+    mutationFn: () => api.cancelRun(jobId),
+    onSuccess: () => {
+      toast({ title: "Run cancelled" });
+    },
+    onError: (e: Error) =>
+      toast({
+        title: "Could not cancel run",
+        description: e.message,
+        variant: "destructive",
+      }),
+  });
+
   const status = data?.status;
   const isRunning = status === "running" || status === "pending";
 
@@ -151,6 +164,21 @@ export default function RunDetailPage() {
           )}
         </h1>
         {data && <StatusBadge status={data.status} />}
+        {isRunning && (
+          <Button
+            size="sm"
+            variant="destructive"
+            disabled={cancelMut.isPending}
+            onClick={() => cancelMut.mutate()}
+          >
+            {cancelMut.isPending ? (
+              <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+            ) : (
+              <X className="w-3 h-3 mr-1" />
+            )}
+            Cancel
+          </Button>
+        )}
         {isRefetching && (
           <span className="text-xs text-muted-foreground inline-flex items-center gap-1">
             <Loader2 className="w-3 h-3 animate-spin" /> refreshing

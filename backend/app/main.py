@@ -509,6 +509,42 @@ def get_run_detail(job_id: str, db: Session = Depends(get_db)):
     return get_run_status(job_id, db=db)
 
 
+@app.post("/api/tests/{job_id}/cancel", response_model=TestRunStatusResponse)
+def cancel_run(job_id: str, db: Session = Depends(get_db)):
+    """
+    Cancel a pending or running test run.
+    For sync_demo mode this marks the DB record cancelled immediately.
+    For celery mode it also revokes the task from the broker queue.
+    """
+    run = db.query(TestRun).filter(TestRun.job_id == job_id).first()
+    if not run:
+        raise HTTPException(404, "Job not found")
+
+    if run.status not in (TestRunStatus.PENDING, TestRunStatus.RUNNING):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Cannot cancel a run in '{run.status.value}' state.",
+        )
+
+    # Attempt broker-level revoke (no-op if no broker / sync_demo mode)
+    if run.task_id and settings.RUN_MODE == "celery":
+        try:
+            from celery.app.control import Control
+            ctrl = Control(app=celery_app)
+            ctrl.revoke(run.task_id, terminate=True, signal="SIGTERM")
+        except Exception:
+            pass  # revoke failure must never block the DB update
+
+    run.status = TestRunStatus.CANCELLED
+    run.completed_at = datetime.utcnow()
+    run.is_successful = False
+    if not run.error_message:
+        run.error_message = "Cancelled by user."
+    db.commit()
+
+    return get_run_status(job_id, db=db)
+
+
 # ---------------------------------------------------------------------------
 # Screenshot file serving
 # ---------------------------------------------------------------------------

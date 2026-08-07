@@ -32,7 +32,7 @@ class Settings:
     )
     OPENROUTER_API_KEY: str | None = os.getenv("OPENROUTER_API_KEY")
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:7b")
+    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "qwen3:4b")
 
     SCREENSHOT_DIR: str = os.getenv("SCREENSHOT_DIR", "screenshots")
     CORS_ORIGINS: list[str] = _parse_list(

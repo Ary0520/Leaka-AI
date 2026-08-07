@@ -1,8 +1,8 @@
 "use client";
 
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useState, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api, type TestCaseOut } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,17 +31,36 @@ import { toast } from "@/components/ui/use-toast";
 
 export default function NewTestPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const preselectedSuiteId = searchParams.get("suite_id")
+    ? Number(searchParams.get("suite_id"))
+    : undefined;
+
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
   const [targetUrl, setTargetUrl] = useState("");
   const [success, setSuccess] = useState("");
-  const [saveAsCase, setSaveAsCase] = useState(false);
+  const [saveAsCase, setSaveAsCase] = useState(!!preselectedSuiteId);
   const [caseName, setCaseName] = useState("");
   const [existingCaseId, setExistingCaseId] = useState<string>("");
+  const [suiteId, setSuiteId] = useState<number | undefined>(preselectedSuiteId);
+
+  // If suite_id lands from URL, auto-enable save-as-case
+  useEffect(() => {
+    if (preselectedSuiteId) {
+      setSaveAsCase(true);
+      setSuiteId(preselectedSuiteId);
+    }
+  }, [preselectedSuiteId]);
 
   const { data: cases } = useQuery({
     queryKey: ["testcases"],
     queryFn: () => api.listTestCases({ limit: 100 }),
+  });
+
+  const { data: suites } = useQuery({
+    queryKey: ["suites"],
+    queryFn: () => api.listSuites({ limit: 100 }),
   });
 
   const enqueueMut = useMutation({
@@ -68,6 +87,7 @@ export default function NewTestPage() {
           prompt: finalPrompt,
           success_criteria: finalSuccess,
           target_url: finalUrl,
+          suite_id: suiteId ?? null,
         });
         test_case_id = saved.id;
       } else if (resolvedCase) {
@@ -252,15 +272,38 @@ export default function NewTestPage() {
               </div>
             </label>
             {saveAsCase && (
-              <div>
-                <Label htmlFor="caseName">Case name</Label>
-                <Input
-                  id="caseName"
-                  value={caseName}
-                  onChange={(e) => setCaseName(e.target.value)}
-                  placeholder="e.g. Checkout: WELCOME promo applies 10% off"
-                  className="mt-1"
-                />
+              <div className="space-y-3">
+                <div>
+                  <Label htmlFor="caseName">Case name</Label>
+                  <Input
+                    id="caseName"
+                    value={caseName}
+                    onChange={(e) => setCaseName(e.target.value)}
+                    placeholder="e.g. Checkout: WELCOME promo applies 10% off"
+                    className="mt-1"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="suiteSelect">Add to suite (optional)</Label>
+                  <Select
+                    value={suiteId ? String(suiteId) : "none"}
+                    onValueChange={(v) =>
+                      setSuiteId(v === "none" ? undefined : Number(v))
+                    }
+                  >
+                    <SelectTrigger id="suiteSelect" className="mt-1">
+                      <SelectValue placeholder="No suite" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No suite</SelectItem>
+                      {suites?.map((s) => (
+                        <SelectItem key={s.id} value={String(s.id)}>
+                          {s.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             )}
           </CardContent>
@@ -278,6 +321,7 @@ export default function NewTestPage() {
                     prompt: prompt.trim(),
                     success_criteria: success.trim() || undefined,
                     target_url: targetUrl.trim() || undefined,
+                    suite_id: suiteId ?? null,
                   })
                   .then((c) => {
                     toast({ title: "Case saved", description: c.name });

@@ -1,16 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { ShieldCheck, LayoutDashboard, FileText, Sparkles, Layers } from "lucide-react";
+import { ShieldCheck, LayoutDashboard, FileText, Sparkles, Layers, History, Webhook } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePathname } from "next/navigation";
 import React from "react";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/runs", label: "All Runs", icon: History },
   { href: "/tests", label: "Test Cases", icon: FileText },
   { href: "/suites", label: "Test Suites", icon: Layers },
   { href: "/new", label: "Run a Test", icon: Sparkles },
+  { href: "/ci", label: "CI / CD", icon: Webhook },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
