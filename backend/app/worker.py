@@ -101,6 +101,7 @@ def _save_b64_screenshot(b64_data: str, dest_dir: str, name: str) -> Optional[st
     retry_backoff=True,
     retry_jitter=True,
     name="app.worker.run_browser_test",
+    ignore_result=False,  # keep False for celery mode; sync_demo uses .run() directly
 )
 def run_browser_test(
     self,
