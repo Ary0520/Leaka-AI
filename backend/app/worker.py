@@ -251,7 +251,12 @@ def run_browser_test(
         is_done = history.is_done()
         any_errors = history.has_errors()            # bool in 0.13.7
 
-        is_successful = is_done and not any_errors
+        # A run is successful if the agent called done() AND produced a
+        # final result. Intermediate step errors (retries, timeouts,
+        # element-not-found) are normal browser-use behavior — they
+        # should not mark the entire run failed when the agent ultimately
+        # completed the task and returned a meaningful result.
+        is_successful = is_done and bool(final_result_text)
 
         # Copy agent-saved screenshot files into our managed dir
         for idx, src in enumerate(shot_paths):
@@ -303,7 +308,7 @@ def run_browser_test(
             "dom_snapshot": dom_html,
             "result_summary": (
                 f"Steps: {total_steps_count} | Duration: {duration}s | "
-                f"Done: {is_done} | Has errors: {any_errors}"
+                f"Done: {is_done} | Intermediate errors: {any_errors}"
             ),
             "has_visual_proof": len(screenshots_persisted) > 0,
             "is_successful": is_successful,
