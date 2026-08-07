@@ -22,6 +22,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from .celery_app import celery_app
@@ -166,9 +167,220 @@ def _startup():
 
 
 # ---------------------------------------------------------------------------
+# Integration Settings — read/write .env values at runtime
+# ---------------------------------------------------------------------------
+_ENV_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+
+
+def _read_env_file() -> dict[str, str]:
+    """Read the backend .env file into a dict."""
+    result: dict[str, str] = {}
+    if not os.path.isfile(_ENV_PATH):
+        return result
+    with open(_ENV_PATH) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            result[key.strip()] = val.strip()
+    return result
+
+
+def _write_env_file(updates: dict[str, str]) -> None:
+    """Merge updates into the .env file, preserving comments and order."""
+    lines: list[str] = []
+    if os.path.isfile(_ENV_PATH):
+        with open(_ENV_PATH) as f:
+            lines = f.readlines()
+
+    written_keys: set[str] = set()
+    new_lines: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("#") or not stripped or "=" not in stripped:
+            new_lines.append(line)
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if key in updates:
+            new_lines.append(f"{key}={updates[key]}\n")
+            written_keys.add(key)
+        else:
+            new_lines.append(line)
+
+    # Append any keys not already in the file
+    for key, val in updates.items():
+        if key not in written_keys:
+            new_lines.append(f"{key}={val}\n")
+
+    with open(_ENV_PATH, "w") as f:
+        f.writelines(new_lines)
+
+
+def _mask(val: str | None) -> str:
+    """Mask a secret: show first 8 chars then ***"""
+    if not val:
+        return ""
+    if len(val) <= 8:
+        return "***"
+    return val[:8] + "***"
+
+
+@app.get("/api/settings/integrations")
+def get_integration_settings():
+    """Return current integration config, secrets masked."""
+    env = _read_env_file()
+    return {
+        "linear": {
+            "api_key": _mask(env.get("LINEAR_API_KEY")),
+            "api_key_set": bool(env.get("LINEAR_API_KEY")),
+            "team_id": env.get("LINEAR_TEAM_ID", ""),
+        },
+        "resend": {
+            "api_key": _mask(env.get("RESEND_API_KEY")),
+            "api_key_set": bool(env.get("RESEND_API_KEY")),
+            "email_from": env.get("EMAIL_FROM", ""),
+            "email_alert_to": env.get("EMAIL_ALERT_TO", ""),
+        },
+        "slack": {
+            "webhook_url": _mask(env.get("SLACK_WEBHOOK_URL")),
+            "webhook_url_set": bool(env.get("SLACK_WEBHOOK_URL")),
+        },
+        "llm": {
+            "provider": env.get("LLM_PROVIDER", ""),
+            "openrouter_model": env.get("LLM_MODEL_OPENROUTER", ""),
+            "openai_model": env.get("LLM_MODEL_OPENAI", ""),
+            "anthropic_model": env.get("LLM_MODEL_ANTHROPIC", ""),
+            "ollama_model": env.get("OLLAMA_MODEL", ""),
+            "openrouter_key_set": bool(env.get("OPENROUTER_API_KEY")),
+            "openai_key_set": bool(env.get("OPENAI_API_KEY")),
+            "anthropic_key_set": bool(env.get("ANTHROPIC_API_KEY")),
+        },
+        "ci": {
+            "webhook_token": env.get("CI_WEBHOOK_TOKEN", ""),
+        },
+    }
+
+
+class IntegrationSettingsUpdate(BaseModel):
+    # Linear
+    linear_api_key: Optional[str] = None
+    linear_team_id: Optional[str] = None
+    # Resend
+    resend_api_key: Optional[str] = None
+    email_from: Optional[str] = None
+    email_alert_to: Optional[str] = None
+    # Slack
+    slack_webhook_url: Optional[str] = None
+    # LLM
+    llm_provider: Optional[str] = None
+    llm_model_openrouter: Optional[str] = None
+    openrouter_api_key: Optional[str] = None
+    openai_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
+    # CI
+    ci_webhook_token: Optional[str] = None
+
+
+@app.patch("/api/settings/integrations")
+def update_integration_settings(body: IntegrationSettingsUpdate):
+    """
+    Persist integration settings to backend/.env.
+    Empty string = clear the value. None = leave unchanged.
+    Restart the backend after saving for changes to take effect.
+    """
+    field_map = {
+        "linear_api_key": "LINEAR_API_KEY",
+        "linear_team_id": "LINEAR_TEAM_ID",
+        "resend_api_key": "RESEND_API_KEY",
+        "email_from": "EMAIL_FROM",
+        "email_alert_to": "EMAIL_ALERT_TO",
+        "slack_webhook_url": "SLACK_WEBHOOK_URL",
+        "llm_provider": "LLM_PROVIDER",
+        "llm_model_openrouter": "LLM_MODEL_OPENROUTER",
+        "openrouter_api_key": "OPENROUTER_API_KEY",
+        "openai_api_key": "OPENAI_API_KEY",
+        "anthropic_api_key": "ANTHROPIC_API_KEY",
+        "ci_webhook_token": "CI_WEBHOOK_TOKEN",
+    }
+
+    updates: dict[str, str] = {}
+    for field, env_key in field_map.items():
+        val = getattr(body, field)
+        if val is not None:  # None = skip; "" = clear
+            updates[env_key] = val
+
+    if not updates:
+        return {"message": "Nothing to update", "updated": []}
+
+    _write_env_file(updates)
+
+    # Also update os.environ in-process so current requests reflect the change
+    for env_key, val in updates.items():
+        if val:
+            os.environ[env_key] = val
+        elif env_key in os.environ:
+            del os.environ[env_key]
+
+    return {
+        "message": "Settings saved. Restart the backend server for LLM/provider changes to take effect.",
+        "updated": list(updates.keys()),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
 @app.get("/api/health")
+@app.post("/api/demo/seed", status_code=201)
+def seed_demo_data(db: Session = Depends(get_db)):
+    """
+    Idempotent: creates 3 example test cases if none exist yet.
+    Safe to call multiple times.
+    """
+    existing = db.query(TestCase).count()
+    if existing > 0:
+        return {"message": f"Already seeded ({existing} cases exist)", "created": 0}
+
+    demos = [
+        TestCase(
+            name="Checkout flow — promo code",
+            prompt=(
+                "Go to the target URL. Add the first product to the cart. "
+                "Apply promo code WELCOME10 at checkout. "
+                "Verify the discount is applied and the order total is reduced."
+            ),
+            target_url="https://demo.vercel.store",
+            success_criteria="Discount applied. Order total shows reduced amount.",
+        ),
+        TestCase(
+            name="Pricing page — CTA visible",
+            prompt=(
+                "Navigate to the pricing page. "
+                "Verify that at least one pricing tier is visible with a price and a call-to-action button. "
+                "Report the names and prices of all tiers shown."
+            ),
+            target_url="https://vercel.com/pricing",
+            success_criteria="At least one pricing tier visible with a CTA button.",
+        ),
+        TestCase(
+            name="User onboarding — signup form loads",
+            prompt=(
+                "Go to the target URL. "
+                "Find the sign-up or get-started form. "
+                "Verify the email input field and submit button are present and functional (do not submit). "
+                "Report what fields are present."
+            ),
+            target_url="https://app.supabase.com",
+            success_criteria="Sign-up form is visible with email field and submit button.",
+        ),
+    ]
+
+    for tc in demos:
+        db.add(tc)
+    db.commit()
+
+    return {"message": "Demo data seeded successfully", "created": len(demos)}
 def health():
     model = (
         settings.LLM_MODEL_OPENROUTER if settings.LLM_PROVIDER == "openrouter"

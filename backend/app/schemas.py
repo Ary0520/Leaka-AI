@@ -112,6 +112,8 @@ class TestRunStatusResponse(BaseModel):
     result_summary: Optional[str] = None
     final_result: Optional[str] = None
     error_message: Optional[str] = None
+    steps_log: Optional[str] = None        # JSON string: list[dict] — agent action history
+    visited_urls: Optional[str] = None     # JSON string: list[str]
     is_successful: Optional[bool] = None
     created_at: Optional[datetime] = None
     started_at: Optional[datetime] = None

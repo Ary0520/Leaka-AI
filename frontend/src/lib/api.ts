@@ -77,6 +77,8 @@ export interface RunStatusResponse {
   result_summary?: string | null;
   final_result?: string | null;
   error_message?: string | null;
+  steps_log?: string | null;
+  visited_urls?: string | null;
   is_successful?: boolean | null;
   created_at?: string | null;
   started_at?: string | null;
@@ -166,7 +168,30 @@ export interface TestSuiteRunResponse {
 
 // ---------- API ----------
 export const api = {
-  health: () => request<{ status: string; llm_provider: string }>("/api/health"),
+  health: () => request<{ status: string; llm_provider: string; llm_model: string }>("/api/health"),
+
+  // Demo seed
+  seedDemo: () => request<{ message: string; created: number }>("/api/demo/seed", { method: "POST" }),
+
+  // Integration settings
+  getIntegrationSettings: () => request<{
+    linear: { api_key: string; api_key_set: boolean; team_id: string };
+    resend: { api_key: string; api_key_set: boolean; email_from: string; email_alert_to: string };
+    slack: { webhook_url: string; webhook_url_set: boolean };
+    llm: { provider: string; openrouter_model: string; openai_model: string; anthropic_model: string; ollama_model: string; openrouter_key_set: boolean; openai_key_set: boolean; anthropic_key_set: boolean };
+    ci: { webhook_token: string };
+  }>("/api/settings/integrations"),
+  updateIntegrationSettings: (body: {
+    linear_api_key?: string; linear_team_id?: string;
+    resend_api_key?: string; email_from?: string; email_alert_to?: string;
+    slack_webhook_url?: string;
+    llm_provider?: string; llm_model_openrouter?: string;
+    openrouter_api_key?: string; openai_api_key?: string; anthropic_api_key?: string;
+    ci_webhook_token?: string;
+  }) => request<{ message: string; updated: string[] }>("/api/settings/integrations", {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  }),
 
   // Runs
   enqueueRun: (body: TestRunRequest) =>
@@ -196,7 +221,6 @@ export const api = {
       `/api/tests${q ? `?${q}` : ""}`,
     );
   },
-
   // Test cases
   listTestCases: (params?: { suite_id?: number; skip?: number; limit?: number }) => {
     const qs = new URLSearchParams();

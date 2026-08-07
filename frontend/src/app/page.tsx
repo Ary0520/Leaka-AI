@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { api, type RunListEntry } from "@/lib/api";
 import { StatusBadge } from "@/components/status-badge";
@@ -21,13 +21,25 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Sparkles, ArrowRight, Image, ListChecks } from "lucide-react";
+import { Sparkles, ArrowRight, Image, ListChecks, Zap } from "lucide-react";
+import { toast } from "@/components/ui/use-toast";
 import { formatDate, formatDuration, truncate, cn } from "@/lib/utils";
 
 export default function DashboardPage() {
+  const qc = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ["runs"],
     queryFn: () => api.listRuns({ limit: 50 }),
+  });
+
+  const seedMut = useMutation({
+    mutationFn: () => api.seedDemo(),
+    onSuccess: (r) => {
+      toast({ title: r.created > 0 ? "Demo data loaded" : "Already seeded", description: r.message });
+      qc.invalidateQueries({ queryKey: ["runs"] });
+      qc.invalidateQueries({ queryKey: ["testcases-page"] });
+    },
+    onError: (e: Error) => toast({ title: "Seed failed", description: e.message, variant: "destructive" }),
   });
 
   const stats = getStats(data || []);
@@ -96,7 +108,7 @@ export default function DashboardPage() {
               ))}
             </div>
           ) : !data?.length ? (
-            <EmptyRuns />
+            <EmptyRuns onSeed={() => seedMut.mutate()} isSeeding={seedMut.isPending} />
           ) : (
             <Table>
               <TableHeader>
@@ -223,7 +235,7 @@ function getStats(runs: RunListEntry[]) {
   return { total, passed, failed, inProgress };
 }
 
-function EmptyRuns() {
+function EmptyRuns({ onSeed, isSeeding }: { onSeed: () => void; isSeeding: boolean }) {
   return (
     <div className="text-center py-10 space-y-3">
       <div className="w-12 h-12 rounded-full bg-muted mx-auto grid place-items-center">
@@ -231,15 +243,23 @@ function EmptyRuns() {
       </div>
       <div className="font-medium">No runs yet</div>
       <p className="text-sm text-muted-foreground max-w-md mx-auto">
-        Run your first natural-language QA test. The browser-use agent will
-        execute it headlessly and store the results.
+        Run your first natural-language QA test, or load example test cases to explore the platform.
       </p>
-      <Button asChild className="mt-2">
-        <Link href="/new">
-          <Sparkles className="w-4 h-4 mr-2" />
-          Create your first run
-        </Link>
-      </Button>
+      <div className="flex items-center justify-center gap-3 mt-2 flex-wrap">
+        <Button asChild>
+          <Link href="/new">
+            <Sparkles className="w-4 h-4 mr-2" />
+            Create your first run
+          </Link>
+        </Button>
+        <Button variant="outline" onClick={onSeed} disabled={isSeeding}>
+          {isSeeding ? (
+            <><span className="w-4 h-4 mr-2 border-2 border-current border-t-transparent rounded-full animate-spin inline-block" />Loading…</>
+          ) : (
+            <><Zap className="w-4 h-4 mr-2" />Load demo cases</>
+          )}
+        </Button>
+      </div>
     </div>
   );
 }
