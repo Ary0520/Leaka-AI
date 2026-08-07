@@ -333,6 +333,57 @@ def update_integration_settings(body: IntegrationSettingsUpdate, user: dict = De
 # Health
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
+# Dashboard health overview — test cases with run history
+# ---------------------------------------------------------------------------
+@app.get("/api/dashboard/health")
+def dashboard_health(
+    limit: int = 14,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    owner = user["sub"]
+    cases = (
+        db.query(TestCase)
+        .filter(TestCase.owner_id == owner)
+        .order_by(TestCase.created_at.asc())
+        .all()
+    )
+    result = []
+    for tc in cases:
+        runs = (
+            db.query(TestRun)
+            .filter(TestRun.test_case_id == tc.id, TestRun.owner_id == owner)
+            .order_by(TestRun.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        runs_data = [
+            {
+                "job_id": r.job_id,
+                "status": r.status.value,
+                "is_successful": r.is_successful,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "duration_seconds": r.duration_seconds,
+            }
+            for r in reversed(runs)
+        ]
+        last = runs[0] if runs else None
+        total = len(runs)
+        passed = sum(1 for r in runs if r.is_successful is True)
+        result.append({
+            "id": tc.id,
+            "name": tc.name,
+            "target_url": tc.target_url,
+            "last_status": last.status.value if last else None,
+            "last_successful": last.is_successful if last else None,
+            "pass_rate": round(passed * 100 / total) if total > 0 else None,
+            "total_runs": total,
+            "runs": runs_data,
+        })
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
 @app.get("/api/health")

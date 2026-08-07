@@ -183,6 +183,25 @@ export interface TestSuiteRunResponse {
 export const api = {
   health: () => request<{ status: string; llm_provider: string; llm_model: string }>("/api/health"),
 
+  // Dashboard health grid
+  dashboardHealth: (limit = 14) =>
+    request<Array<{
+      id: number;
+      name: string;
+      target_url: string | null;
+      last_status: string | null;
+      last_successful: boolean | null;
+      pass_rate: number | null;
+      total_runs: number;
+      runs: Array<{
+        job_id: string;
+        status: string;
+        is_successful: boolean | null;
+        created_at: string | null;
+        duration_seconds: number | null;
+      }>;
+    }>>(`/api/dashboard/health?limit=${limit}`),
+
   // Demo seed
   seedDemo: () => request<{ message: string; created: number }>("/api/demo/seed", { method: "POST" }),
 
