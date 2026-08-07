@@ -678,6 +678,8 @@ def get_run_status(job_id: str, db: Session = Depends(get_db), user: dict = Depe
         result_summary=run.result_summary,
         final_result=run.final_result,
         error_message=run.error_message,
+        steps_log=run.steps_log,
+        visited_urls=run.visited_urls,
         is_successful=run.is_successful,
         created_at=run.created_at,
         started_at=run.started_at,

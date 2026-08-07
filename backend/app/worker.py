@@ -296,13 +296,24 @@ def run_browser_test(
 
         # Build structured steps log from action_history()
         # Returns list[list[dict]] — one inner list per step; flatten to 200 actions
+        # In browser-use 0.13.7, each dict has the action name as top-level key
+        # e.g. {"navigate": {"url": "..."}, "result": "...", "interacted_element": ...}
         try:
             actions_flat: list[dict] = []
             for step_idx, step_actions in enumerate(history.action_history() or []):
-                for action in step_actions:
-                    entry = {k: v for k, v in action.items()
-                             if k in {"action", "url", "result", "error", "interacted_element"}}
-                    entry["step"] = step_idx
+                for action_dict in step_actions:
+                    # Find the action key (everything except known meta keys)
+                    meta_keys = {"result", "error", "interacted_element", "step"}
+                    action_keys = [k for k in action_dict if k not in meta_keys]
+                    action_name = action_keys[0] if action_keys else "unknown"
+                    action_params = action_dict.get(action_name, {})
+
+                    entry: dict = {
+                        "step": step_idx,
+                        "action": {action_name: action_params},
+                        "result": action_dict.get("result"),
+                        "error": action_dict.get("error"),
+                    }
                     actions_flat.append(entry)
                     if len(actions_flat) >= 200:
                         break

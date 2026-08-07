@@ -15,42 +15,104 @@ def _parse_list(value: str | None, default: list[str] | None = None) -> list[str
 
 
 class Settings:
-    RUN_MODE: str = os.getenv("RUN_MODE", "celery").lower()
-    PLAYWRIGHT_BROWSERS_PATH: str | None = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    """
+    Dynamic settings — every attribute reads from os.environ at access time.
+    This means changes via /api/settings/integrations (which updates os.environ)
+    take effect immediately for the next request, with no restart needed.
+    In production (docker/cloud), env vars are injected at container start.
+    """
 
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./revguard.db")
-    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-    REDIS_RESULT_BACKEND: str = os.getenv(
-        "REDIS_RESULT_BACKEND", "redis://localhost:6379/1"
-    )
+    @property
+    def RUN_MODE(self) -> str:
+        return os.getenv("RUN_MODE", "celery").lower()
 
-    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openai")
-    LLM_MODEL_OPENAI: str = os.getenv("LLM_MODEL_OPENAI", "gpt-4.1-mini")
-    LLM_MODEL_ANTHROPIC: str = os.getenv("LLM_MODEL_ANTHROPIC", "claude-sonnet-4-0")
-    LLM_MODEL_OPENROUTER: str = os.getenv(
-        "LLM_MODEL_OPENROUTER", "anthropic/claude-sonnet-4.5"
-    )
-    OPENROUTER_API_KEY: str | None = os.getenv("OPENROUTER_API_KEY")
-    OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "qwen3:4b")
+    @property
+    def PLAYWRIGHT_BROWSERS_PATH(self) -> str | None:
+        return os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
 
-    SCREENSHOT_DIR: str = os.getenv("SCREENSHOT_DIR", "screenshots")
-    CORS_ORIGINS: list[str] = _parse_list(
-        os.getenv("CORS_ORIGINS"), ["http://localhost:3000"]
-    )
+    @property
+    def DATABASE_URL(self) -> str:
+        return os.getenv("DATABASE_URL", "sqlite:///./revguard.db")
 
-    LINEAR_API_KEY: str | None = os.getenv("LINEAR_API_KEY")
-    LINEAR_TEAM_ID: str | None = os.getenv("LINEAR_TEAM_ID")
+    @property
+    def REDIS_URL(self) -> str:
+        return os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-    SUPABASE_JWKS_URL: str | None = os.getenv("SUPABASE_JWKS_URL")
-    SUPABASE_URL: str | None = os.getenv("SUPABASE_URL")
+    @property
+    def REDIS_RESULT_BACKEND(self) -> str:
+        return os.getenv("REDIS_RESULT_BACKEND", "redis://localhost:6379/1")
 
-    RESEND_API_KEY: str | None = os.getenv("RESEND_API_KEY")
-    EMAIL_FROM: str = os.getenv("EMAIL_FROM", "Leaka AI <qa@leaka.ai>")
-    EMAIL_ALERT_TO: list[str] = _parse_list(os.getenv("EMAIL_ALERT_TO"))
+    @property
+    def LLM_PROVIDER(self) -> str:
+        return os.getenv("LLM_PROVIDER", "openai")
 
-    SLACK_WEBHOOK_URL: str | None = os.getenv("SLACK_WEBHOOK_URL")
-    CI_WEBHOOK_TOKEN: str = os.getenv("CI_WEBHOOK_TOKEN", "revguard-ci-token-change-me")
+    @property
+    def LLM_MODEL_OPENAI(self) -> str:
+        return os.getenv("LLM_MODEL_OPENAI", "gpt-4.1-mini")
+
+    @property
+    def LLM_MODEL_ANTHROPIC(self) -> str:
+        return os.getenv("LLM_MODEL_ANTHROPIC", "claude-sonnet-4-0")
+
+    @property
+    def LLM_MODEL_OPENROUTER(self) -> str:
+        return os.getenv("LLM_MODEL_OPENROUTER", "anthropic/claude-sonnet-4.5")
+
+    @property
+    def OPENROUTER_API_KEY(self) -> str | None:
+        return os.getenv("OPENROUTER_API_KEY")
+
+    @property
+    def OLLAMA_BASE_URL(self) -> str:
+        return os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
+    @property
+    def OLLAMA_MODEL(self) -> str:
+        return os.getenv("OLLAMA_MODEL", "qwen3:4b")
+
+    @property
+    def SCREENSHOT_DIR(self) -> str:
+        return os.getenv("SCREENSHOT_DIR", "screenshots")
+
+    @property
+    def CORS_ORIGINS(self) -> list[str]:
+        return _parse_list(os.getenv("CORS_ORIGINS"), ["http://localhost:3000"])
+
+    @property
+    def LINEAR_API_KEY(self) -> str | None:
+        return os.getenv("LINEAR_API_KEY")
+
+    @property
+    def LINEAR_TEAM_ID(self) -> str | None:
+        return os.getenv("LINEAR_TEAM_ID")
+
+    @property
+    def SUPABASE_JWKS_URL(self) -> str | None:
+        return os.getenv("SUPABASE_JWKS_URL")
+
+    @property
+    def SUPABASE_URL(self) -> str | None:
+        return os.getenv("SUPABASE_URL")
+
+    @property
+    def RESEND_API_KEY(self) -> str | None:
+        return os.getenv("RESEND_API_KEY")
+
+    @property
+    def EMAIL_FROM(self) -> str:
+        return os.getenv("EMAIL_FROM", "Leaka AI <qa@leaka.ai>")
+
+    @property
+    def EMAIL_ALERT_TO(self) -> list[str]:
+        return _parse_list(os.getenv("EMAIL_ALERT_TO"))
+
+    @property
+    def SLACK_WEBHOOK_URL(self) -> str | None:
+        return os.getenv("SLACK_WEBHOOK_URL")
+
+    @property
+    def CI_WEBHOOK_TOKEN(self) -> str:
+        return os.getenv("CI_WEBHOOK_TOKEN", "revguard-ci-token-change-me")
 
 
 settings = Settings()
