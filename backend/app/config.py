@@ -42,6 +42,9 @@ class Settings:
     LINEAR_API_KEY: str | None = os.getenv("LINEAR_API_KEY")
     LINEAR_TEAM_ID: str | None = os.getenv("LINEAR_TEAM_ID")
 
+    SUPABASE_JWKS_URL: str | None = os.getenv("SUPABASE_JWKS_URL")
+    SUPABASE_URL: str | None = os.getenv("SUPABASE_URL")
+
     RESEND_API_KEY: str | None = os.getenv("RESEND_API_KEY")
     EMAIL_FROM: str = os.getenv("EMAIL_FROM", "Leaka AI <qa@leaka.ai>")
     EMAIL_ALERT_TO: list[str] = _parse_list(os.getenv("EMAIL_ALERT_TO"))

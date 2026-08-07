@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from .celery_app import celery_app
 from .config import settings
 from .database import get_db, init_db
+from .auth import get_current_user
 from .integrations import linear_client, email_client, slack_client
 from .models import (
     LinearIssue,
@@ -227,7 +228,7 @@ def _mask(val: str | None) -> str:
 
 
 @app.get("/api/settings/integrations")
-def get_integration_settings():
+def get_integration_settings(user: dict = Depends(get_current_user)):
     """Return current integration config, secrets masked."""
     env = _read_env_file()
     return {
@@ -283,7 +284,7 @@ class IntegrationSettingsUpdate(BaseModel):
 
 
 @app.patch("/api/settings/integrations")
-def update_integration_settings(body: IntegrationSettingsUpdate):
+def update_integration_settings(body: IntegrationSettingsUpdate, user: dict = Depends(get_current_user)):
     """
     Persist integration settings to backend/.env.
     Empty string = clear the value. None = leave unchanged.
@@ -331,7 +332,24 @@ def update_integration_settings(body: IntegrationSettingsUpdate):
 # ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Health
+# ---------------------------------------------------------------------------
 @app.get("/api/health")
+def health():
+    model = (
+        settings.LLM_MODEL_OPENROUTER if settings.LLM_PROVIDER == "openrouter"
+        else settings.LLM_MODEL_OPENAI if settings.LLM_PROVIDER == "openai"
+        else settings.LLM_MODEL_ANTHROPIC if settings.LLM_PROVIDER == "anthropic"
+        else settings.OLLAMA_MODEL if settings.LLM_PROVIDER == "ollama"
+        else "unknown"
+    )
+    return {"status": "ok", "llm_provider": settings.LLM_PROVIDER, "llm_model": model}
+
+
+# ---------------------------------------------------------------------------
+# Demo seed — pre-populate example test cases for investor demos
+# ---------------------------------------------------------------------------
 @app.post("/api/demo/seed", status_code=201)
 def seed_demo_data(db: Session = Depends(get_db)):
     """
@@ -381,23 +399,14 @@ def seed_demo_data(db: Session = Depends(get_db)):
     db.commit()
 
     return {"message": "Demo data seeded successfully", "created": len(demos)}
-def health():
-    model = (
-        settings.LLM_MODEL_OPENROUTER if settings.LLM_PROVIDER == "openrouter"
-        else settings.LLM_MODEL_OPENAI if settings.LLM_PROVIDER == "openai"
-        else settings.LLM_MODEL_ANTHROPIC if settings.LLM_PROVIDER == "anthropic"
-        else settings.OLLAMA_MODEL if settings.LLM_PROVIDER == "ollama"
-        else "unknown"
-    )
-    return {"status": "ok", "llm_provider": settings.LLM_PROVIDER, "llm_model": model}
 
 
 # ---------------------------------------------------------------------------
 # Test Cases CRUD
 # ---------------------------------------------------------------------------
 @app.post("/api/test-cases", response_model=TestCaseOut)
-def create_test_case(body: TestCaseCreate, db: Session = Depends(get_db)):
-    tc = TestCase(**body.model_dump())
+def create_test_case(body: TestCaseCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    tc = TestCase(**body.model_dump(), owner_id=user["sub"])
     db.add(tc)
     db.commit()
     db.refresh(tc)
@@ -410,16 +419,17 @@ def list_test_cases(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
 ):
-    q = db.query(TestCase)
+    q = db.query(TestCase).filter(TestCase.owner_id == user["sub"])
     if suite_id:
         q = q.filter(TestCase.suite_id == suite_id)
     return q.order_by(TestCase.created_at.desc()).offset(skip).limit(limit).all()
 
 
 @app.get("/api/test-cases/{id}", response_model=TestCaseOut)
-def get_test_case(id: int, db: Session = Depends(get_db)):
-    tc = db.query(TestCase).filter(TestCase.id == id).first()
+def get_test_case(id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    tc = db.query(TestCase).filter(TestCase.id == id, TestCase.owner_id == user["sub"]).first()
     if not tc:
         raise HTTPException(404, "Test case not found")
     return tc
@@ -430,23 +440,21 @@ def update_test_case(
     id: int,
     body: TestCaseUpdate,
     db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
 ):
-    tc = db.query(TestCase).filter(TestCase.id == id).first()
+    tc = db.query(TestCase).filter(TestCase.id == id, TestCase.owner_id == user["sub"]).first()
     if not tc:
         raise HTTPException(404, "Test case not found")
-
-    update_data = body.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
+    for field, value in body.model_dump(exclude_unset=True).items():
         setattr(tc, field, value)
-
     db.commit()
     db.refresh(tc)
     return tc
 
 
 @app.delete("/api/test-cases/{id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_test_case(id: int, db: Session = Depends(get_db)):
-    tc = db.query(TestCase).filter(TestCase.id == id).first()
+def delete_test_case(id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    tc = db.query(TestCase).filter(TestCase.id == id, TestCase.owner_id == user["sub"]).first()
     if not tc:
         raise HTTPException(404, "Test case not found")
     db.delete(tc)
@@ -458,8 +466,8 @@ def delete_test_case(id: int, db: Session = Depends(get_db)):
 # Test Suites CRUD
 # ---------------------------------------------------------------------------
 @app.post("/api/test-suites", response_model=TestSuiteOut)
-def create_suite(body: TestSuiteCreate, db: Session = Depends(get_db)):
-    s = TestSuite(**body.model_dump())
+def create_suite(body: TestSuiteCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    s = TestSuite(**body.model_dump(), owner_id=user["sub"])
     db.add(s)
     db.commit()
     db.refresh(s)
@@ -467,46 +475,37 @@ def create_suite(body: TestSuiteCreate, db: Session = Depends(get_db)):
 
 
 @app.get("/api/test-suites", response_model=list[TestSuiteOut])
-def list_suites(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def list_suites(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     return (
-        db.query(TestSuite)
+        db.query(TestSuite).filter(TestSuite.owner_id == user["sub"])
         .order_by(TestSuite.created_at.desc())
-        .offset(skip)
-        .limit(limit)
-        .all()
+        .offset(skip).limit(limit).all()
     )
 
 
 @app.get("/api/test-suites/{id}", response_model=TestSuiteOut)
-def get_suite(id: int, db: Session = Depends(get_db)):
-    s = db.query(TestSuite).filter(TestSuite.id == id).first()
+def get_suite(id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    s = db.query(TestSuite).filter(TestSuite.id == id, TestSuite.owner_id == user["sub"]).first()
     if not s:
         raise HTTPException(404, "Suite not found")
     return s
 
 
 @app.put("/api/test-suites/{id}", response_model=TestSuiteOut)
-def update_suite(
-    id: int,
-    body: TestSuiteUpdate,
-    db: Session = Depends(get_db),
-):
-    s = db.query(TestSuite).filter(TestSuite.id == id).first()
+def update_suite(id: int, body: TestSuiteUpdate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    s = db.query(TestSuite).filter(TestSuite.id == id, TestSuite.owner_id == user["sub"]).first()
     if not s:
         raise HTTPException(404, "Suite not found")
-
-    update_data = body.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
+    for field, value in body.model_dump(exclude_unset=True).items():
         setattr(s, field, value)
-
     db.commit()
     db.refresh(s)
     return s
 
 
 @app.delete("/api/test-suites/{id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_suite(id: int, db: Session = Depends(get_db)):
-    s = db.query(TestSuite).filter(TestSuite.id == id).first()
+def delete_suite(id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    s = db.query(TestSuite).filter(TestSuite.id == id, TestSuite.owner_id == user["sub"]).first()
     if not s:
         raise HTTPException(404, "Suite not found")
     db.delete(s)
@@ -518,10 +517,11 @@ def delete_suite(id: int, db: Session = Depends(get_db)):
 def run_suite(
     id: int,
     use_vision: bool = True,
-    max_steps: int = 100,
+    max_steps: int = 25,
     db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
 ):
-    suite = db.query(TestSuite).filter(TestSuite.id == id).first()
+    suite = db.query(TestSuite).filter(TestSuite.id == id, TestSuite.owner_id == user["sub"]).first()
     if not suite:
         raise HTTPException(404, "Suite not found")
 
@@ -535,6 +535,7 @@ def run_suite(
         run_name = f"[Suite] {suite.name} — {tc.name}"
         run = TestRun(
             job_id=job_id,
+            owner_id=user["sub"],
             test_case_id=tc.id,
             name=run_name,
             prompt=tc.prompt,
@@ -570,17 +571,17 @@ def run_suite(
 # Test Run Enqueue + Poll (THE CORE FLOW)
 # ---------------------------------------------------------------------------
 @app.post("/api/tests/run", response_model=TestRunEnqueueResponse)
-def enqueue_test(body: TestRunRequest, db: Session = Depends(get_db)):
+def enqueue_test(body: TestRunRequest, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     job_id = uuid.uuid4().hex
     run_name = body.name or (body.prompt[:60].strip() or f"Run {job_id[:8]}")
+    owner_id = user["sub"]
 
-    # Resolve full prompt + target_url from test_case_id if given
     prompt = body.prompt
     target_url = body.target_url
     success_criteria = body.success_criteria
     test_case_id = body.test_case_id
     if test_case_id:
-        tc = db.query(TestCase).filter(TestCase.id == test_case_id).first()
+        tc = db.query(TestCase).filter(TestCase.id == test_case_id, TestCase.owner_id == owner_id).first()
         if tc:
             prompt = prompt or tc.prompt
             target_url = target_url or tc.target_url
@@ -588,10 +589,10 @@ def enqueue_test(body: TestRunRequest, db: Session = Depends(get_db)):
             if not body.name:
                 run_name = tc.name
 
-    # Create DB record (PENDING)
     run = TestRun(
         job_id=job_id,
         task_id=None,
+        owner_id=owner_id,
         test_case_id=test_case_id,
         name=run_name,
         prompt=prompt,
@@ -603,7 +604,6 @@ def enqueue_test(body: TestRunRequest, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(run)
 
-    # Dispatch the worker run (Celery queue OR in-process sync-demo thread pool)
     task_id = _dispatch_run_task(
         job_id=job_id,
         name=run_name,
@@ -611,23 +611,17 @@ def enqueue_test(body: TestRunRequest, db: Session = Depends(get_db)):
         target_url=target_url or "",
         success_criteria=success_criteria,
         use_vision=bool(body.use_vision),
-        max_steps=body.max_steps or 100,
+        max_steps=body.max_steps or 25,
         test_case_id=test_case_id,
     )
-
-    # Update with task_id so status endpoint can reference it
     run.task_id = task_id
     db.commit()
 
-    return {
-        "job_id": job_id,
-        "task_id": task_id,
-        "status": TestRunStatus.PENDING.value,
-    }
+    return {"job_id": job_id, "task_id": task_id, "status": TestRunStatus.PENDING.value}
 
 
 @app.get("/api/tests/status/{job_id}", response_model=TestRunStatusResponse)
-def get_run_status(job_id: str, db: Session = Depends(get_db)):
+def get_run_status(job_id: str, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     run = db.query(TestRun).filter(TestRun.job_id == job_id).first()
     if not run:
         raise HTTPException(404, "Job not found")
@@ -699,37 +693,32 @@ def list_runs(
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
 ):
-    q = db.query(TestRun)
+    q = db.query(TestRun).filter(TestRun.owner_id == user["sub"])
     if status:
         q = q.filter(TestRun.status == status)
     if test_case_id:
         q = q.filter(TestRun.test_case_id == test_case_id)
-    rows = (
-        q.order_by(TestRun.created_at.desc()).offset(skip).limit(limit).all()
-    )
+    rows = q.order_by(TestRun.created_at.desc()).offset(skip).limit(limit).all()
     return [
         TestRunListResponse(
-            job_id=r.job_id,
-            name=r.name,
-            status=r.status,
-            is_successful=r.is_successful,
-            duration_seconds=r.duration_seconds,
+            job_id=r.job_id, name=r.name, status=r.status,
+            is_successful=r.is_successful, duration_seconds=r.duration_seconds,
             has_visual_proof=r.has_visual_proof or False,
-            created_at=r.created_at,
-            completed_at=r.completed_at,
+            created_at=r.created_at, completed_at=r.completed_at,
         )
         for r in rows
     ]
 
 
 @app.get("/api/tests/{job_id}", response_model=TestRunStatusResponse)
-def get_run_detail(job_id: str, db: Session = Depends(get_db)):
-    return get_run_status(job_id, db=db)
+def get_run_detail(job_id: str, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    return get_run_status(job_id, db=db, user=user)
 
 
 @app.post("/api/tests/{job_id}/cancel", response_model=TestRunStatusResponse)
-def cancel_run(job_id: str, db: Session = Depends(get_db)):
+def cancel_run(job_id: str, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     """
     Cancel a pending or running test run.
     For sync_demo mode this marks the DB record cancelled immediately.
@@ -858,7 +847,7 @@ def ci_webhook(
 # Linear Integration
 # ---------------------------------------------------------------------------
 @app.post("/api/integrations/linear/issue", response_model=LinearTicketResponse)
-def create_linear_ticket(body: CreateLinearTicketRequest, db: Session = Depends(get_db)):
+def create_linear_ticket(body: CreateLinearTicketRequest, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     run = db.query(TestRun).filter(TestRun.job_id == body.job_id).first()
     if not run:
         raise HTTPException(404, "Test run not found")
@@ -926,6 +915,7 @@ def email_failure_alert(
     job_id: str,
     dashboard_base_url: Optional[str] = Form(default=None),
     db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
 ):
     run = db.query(TestRun).filter(TestRun.job_id == job_id).first()
     if not run:
@@ -981,6 +971,7 @@ def slack_failure_alert(
     job_id: str,
     dashboard_base_url: Optional[str] = Form(default=None),
     db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
 ):
     run = db.query(TestRun).filter(TestRun.job_id == job_id).first()
     if not run:

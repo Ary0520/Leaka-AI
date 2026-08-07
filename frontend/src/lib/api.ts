@@ -2,6 +2,15 @@ const BASE =
   (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_BACKEND_URL) ||
   "http://localhost:8000";
 
+// ── Auth token storage (set by providers.tsx on session change) ───────────────
+let _authToken: string | null = null;
+export function setAuthToken(token: string | null) {
+  _authToken = token;
+}
+export function getAuthToken(): string | null {
+  return _authToken;
+}
+
 async function request<T>(
   path: string,
   init: RequestInit = {},
@@ -20,6 +29,10 @@ async function request<T>(
     !headers["Content-Type"]
   ) {
     headers["Content-Type"] = "application/json";
+  }
+  // Attach Supabase JWT to every request
+  if (_authToken) {
+    headers["Authorization"] = `Bearer ${_authToken}`;
   }
 
   const res = await fetch(url, { ...init, headers });
@@ -340,3 +353,12 @@ export const api = {
 };
 
 export const BACKEND_URL = BASE;
+
+// Supabase sign-out helper (client-side)
+export async function signOut() {
+  const { createClient } = await import("@/lib/supabase/client");
+  const supabase = createClient();
+  await supabase.auth.signOut();
+  setAuthToken(null);
+  window.location.href = "/login";
+}

@@ -20,6 +20,7 @@ class TestSuite(Base):
     __tablename__ = "test_suites"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(String(64), nullable=True, index=True)  # Supabase user UUID
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -32,6 +33,7 @@ class TestCase(Base):
     __tablename__ = "test_cases"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(String(64), nullable=True, index=True)  # Supabase user UUID
     suite_id = Column(Integer, ForeignKey("test_suites.id"), nullable=True)
     name = Column(String(255), nullable=False)
     prompt = Column(Text, nullable=False)
@@ -48,6 +50,7 @@ class TestRun(Base):
     __tablename__ = "test_runs"
 
     id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(String(64), nullable=True, index=True)  # Supabase user UUID
     job_id = Column(String(64), unique=True, index=True, nullable=False)
     task_id = Column(String(128), unique=True, index=True, nullable=True)
     test_case_id = Column(Integer, ForeignKey("test_cases.id"), nullable=True)

@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Leaka AI / RevGuard QA — Backend Python Dependencies
+# Leaka AI — Backend Python Dependencies
 #
 # ARCHITECTURAL PINNING STRATEGY (investor-grade, non-negotiable):
 #
@@ -36,9 +36,11 @@ sqlalchemy>=2.0.30
 python-multipart>=0.0.12
 aiofiles>=24.1.0
 
-# Optional: PostgreSQL (uncomment for Postgres deployments; default = SQLite)
-# On Windows this requires PostgreSQL dev tools (pg_config on PATH).
-# psycopg2-binary>=2.9.9
+# Optional: PostgreSQL (Supabase Postgres — active)
+psycopg2-binary>=2.9.9
+
+# Auth — Supabase JWT verification via JWKS (ES256)
+python-jose[cryptography]>=3.3.0
 
 # ---------- Enterprise Integrations (unpinned — resolve around SDK) ----------
 resend
