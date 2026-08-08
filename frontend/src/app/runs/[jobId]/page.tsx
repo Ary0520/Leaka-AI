@@ -77,6 +77,94 @@ function actionMeta(action: Record<string, unknown> | undefined): {
   };
 }
 
+// ── Self-healing analysis ─────────────────────────────────────────────────────
+// Reads the step list and surfaces evidence of adaptive behaviour —
+// things Cypress would have broken on but the agent handled automatically.
+interface SelfHealingInsight {
+  icon: string;
+  text: string;
+}
+
+function analyzeSelfHealing(steps: StepAction[], isSuccessful: boolean | null): SelfHealingInsight[] {
+  const insights: SelfHealingInsight[] = [];
+  if (!steps.length) return insights;
+
+  // Count scroll actions — agent had to explore to find content
+  const scrollCount = steps.filter((s) => {
+    const key = Object.keys(s.action || {})[0] || "";
+    return key === "scroll";
+  }).length;
+  if (scrollCount > 0) {
+    insights.push({
+      icon: "↕️",
+      text: `Scrolled ${scrollCount} time${scrollCount > 1 ? "s" : ""} to locate content not visible in the initial viewport. Cypress would have thrown "element not found".`,
+    });
+  }
+
+  // Detected retry/fallback in result text
+  const retryStep = steps.find((s) =>
+    typeof s.result === "string" &&
+    (s.result.toLowerCase().includes("retry") ||
+      s.result.toLowerCase().includes("trying") ||
+      s.result.toLowerCase().includes("alternative"))
+  );
+  if (retryStep) {
+    insights.push({
+      icon: "🔄",
+      text: "Agent detected an obstacle and tried an alternative approach automatically.",
+    });
+  }
+
+  // Multiple URLs visited — agent navigated across pages
+  const urls = new Set(steps.map((s) => s.url).filter(Boolean));
+  if (urls.size > 1) {
+    insights.push({
+      icon: "🌐",
+      text: `Navigated across ${urls.size} different pages to complete the task — no hard-coded URL paths needed.`,
+    });
+  }
+
+  // Task completed despite having errors in intermediate steps
+  const hasErrors = steps.some((s) => s.error);
+  if (hasErrors && isSuccessful) {
+    insights.push({
+      icon: "♻️",
+      text: "Recovered from intermediate errors and still completed the task successfully. Cypress would have stopped at the first failure.",
+    });
+  }
+
+  return insights;
+}
+
+function SelfHealingCard({ steps, isSuccessful }: { steps: StepAction[]; isSuccessful: boolean | null }) {
+  const insights = analyzeSelfHealing(steps, isSuccessful);
+  if (!insights.length) return null;
+
+  return (
+    <Card className="border-emerald-500/30 bg-emerald-500/5">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
+          <span>✦</span> Self-healing in action
+        </CardTitle>
+        <CardDescription>
+          Evidence of adaptive behaviour that would have broken a Cypress test.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {insights.map((ins, i) => (
+          <div key={i} className="flex items-start gap-3 text-sm">
+            <span className="text-base shrink-0 mt-0.5">{ins.icon}</span>
+            <p className="text-muted-foreground leading-relaxed">{ins.text}</p>
+          </div>
+        ))}
+        <div className="pt-2 border-t border-emerald-500/20 text-xs text-emerald-700 dark:text-emerald-500">
+          Unlike Cypress or Playwright selectors, Leaka AI reasons visually — it adapts to UI changes automatically.
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function RunDetailPage() {
   const params = useParams<{ jobId: string }>();
   const jobId = params.jobId!;
@@ -125,13 +213,16 @@ export default function RunDetailPage() {
 
   const status = data?.status;
   const isRunning = status === "running" || status === "pending";
-  const steps = parseStepsLog(data?.steps_log);
+
+  // Use live_steps while running for real-time updates, steps_log after completion
+  const stepsSource = (isRunning && data?.live_steps) ? data.live_steps : data?.steps_log;
+  const steps = parseStepsLog(stepsSource);
 
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3 flex-wrap">
         <Button asChild variant="outline" size="sm">
-          <Link href="/"><ArrowLeft className="w-4 h-4 mr-2" />Dashboard</Link>
+          <Link href="/dashboard"><ArrowLeft className="w-4 h-4 mr-2" />Dashboard</Link>
         </Button>
         <h1 className="text-xl md:text-2xl font-semibold tracking-tight flex-1 truncate">
           {isLoading ? <Skeleton className="h-6 w-64 inline-block align-middle" /> : data?.name}
@@ -323,15 +414,35 @@ function RunView({
                         </li>
                       );
                     })}
+                    {/* Live pulse — show when agent is still running */}
+                    {(data.status === "running") && (
+                      <li className="relative">
+                        <span className="absolute -left-[26px] top-2 w-5 h-5 rounded-full border-2 border-blue-400 bg-blue-400/10 flex items-center justify-center">
+                          <Loader2 className="w-2.5 h-2.5 text-blue-500 animate-spin" />
+                        </span>
+                        <div className="rounded-md border border-blue-400/30 bg-blue-400/5 px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-mono text-muted-foreground w-10 shrink-0">…</span>
+                            <span className="text-xs text-blue-600 dark:text-blue-400 animate-pulse">
+                              Agent is working…
+                            </span>
+                          </div>
+                        </div>
+                      </li>
+                    )}
                   </ol>
                 </div>
               )}
             </CardContent>
           </Card>
 
+          {/* Self-healing insights — shown when run is complete */}
+          {data.status !== "running" && data.status !== "pending" && steps.length > 0 && (
+            <SelfHealingCard steps={steps} isSuccessful={data.is_successful ?? null} />
+          )}
+
           {/* Final result inline in steps tab */}
-          {data.final_result && (
-            <Card>
+          {data.final_result && (            <Card>
               <CardHeader>
                 <CardTitle className="text-base flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-500" />

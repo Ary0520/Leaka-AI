@@ -1,139 +1,529 @@
 "use client";
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { api, type RunListEntry } from "@/lib/api";
-import { StatusBadge } from "@/components/status-badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Sparkles, ArrowRight, Image, ListChecks, Zap, CheckCircle2, XCircle, Activity } from "lucide-react";
-import { toast } from "@/components/ui/use-toast";
-import { formatDate, formatDuration, truncate, cn } from "@/lib/utils";
+import Image from "next/image";
 
-// ── Health Grid ───────────────────────────────────────────────────────────────
+// ─── Figma asset: nav arrow ───────────────────────────────────────────────────
+const NAV_ARROW = "/figma-assets/leaka-nav-arrow.svg";
 
-type HealthRow = Awaited<ReturnType<typeof api.dashboardHealth>>[number];
-type RunCell = HealthRow["runs"][number];
+// ─── Steps data ───────────────────────────────────────────────────────────────
+const STEPS = [
+  {
+    label: "STEP 01",
+    title: "Describe the flow",
+    body: `Input your test scenario in natural language. "Go to pricing, select Pro plan, fill out checkout with dummy data, verify success page."`,
+  },
+  {
+    label: "STEP 02",
+    title: "Asynchronous Execution",
+    body: "Leaka spins up a secure browser instance, interpreting the steps and navigating the UI just like a human user would, adapting to minor changes.",
+  },
+  {
+    label: "STEP 03",
+    title: "Analysis & Output",
+    body: "Receive a detailed report. If the test fails, Leaka provides a step-by-step trace, visual evidence, and a pre-drafted ticket detailing exactly what broke.",
+  },
+];
 
-function cellColor(run: RunCell): string {
-  if (run.status === "running" || run.status === "pending")
-    return "bg-blue-400 animate-pulse";
-  if (run.is_successful === true) return "bg-emerald-500";
-  if (run.is_successful === false || run.status === "failed") return "bg-destructive";
-  return "bg-muted-foreground/20";
-}
+const CAPABILITY_CARDS = [
+  {
+    id: "LKA-TXT-01",
+    accent: "rgba(87,241,219,0.05)",
+    glow: "rgba(87,241,219,0.05)",
+    title: "Write tests in plain English",
+    body: "Describe a flow, and Leaka turns it into a real browser test without code. No brittle selectors or complex syntax.",
+    offsetClass: "",
+  },
+  {
+    id: "LKA-HLG-02",
+    accent: "rgba(227,192,160,0.05)",
+    glow: "rgba(227,192,160,0.05)",
+    title: "Self-heal as UI changes",
+    body: "Button moved, class changed, layout shifted — Leaka keeps going. Our agent understands intent, not just coordinates.",
+    offsetClass: "-mt-8",
+  },
+  {
+    id: "LKA-PRF-03",
+    accent: "rgba(87,241,219,0.05)",
+    glow: "rgba(87,241,219,0.05)",
+    title: "Capture proof instantly",
+    body: "On failure, get screenshots, steps taken, and a clean bug summary. Ready to be handed straight to engineering.",
+    offsetClass: "mt-8",
+  },
+];
 
-function HealthStatusDot({ row }: { row: HealthRow }) {
-  if (!row.total_runs) return <span className="w-2 h-2 rounded-full bg-muted-foreground/20 inline-block" />;
-  if (row.last_successful === true) return <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />;
-  if (row.last_successful === false) return <span className="w-2 h-2 rounded-full bg-destructive inline-block" />;
-  return <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse inline-block" />;
-}
+const INTEGRATIONS = ["Linear", "Jira", "GitHub Actions", "Slack", "Resend"];
 
-function PassRateBadge({ rate }: { rate: number | null }) {
-  if (rate === null) return <span className="text-xs text-muted-foreground">—</span>;
-  const color = rate >= 90 ? "text-emerald-600 dark:text-emerald-400"
-    : rate >= 70 ? "text-yellow-600 dark:text-yellow-400"
-      : "text-destructive";
-  return <span className={cn("text-xs font-mono font-medium tabular-nums", color)}>{rate}%</span>;
-}
+const FEATURE_TAGS = [
+  "NATURAL LANGUAGE TESTS",
+  "SELF-HEALING EXECUTION",
+  "VISUAL PROOF ON FAILURE",
+  "AUTO-TICKETING",
+];
 
-function HealthGrid({ data }: { data: HealthRow[] }) {
-  const CELLS = 14;
-
+// ─── Component ────────────────────────────────────────────────────────────────
+export default function LandingPage() {
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Activity className="w-5 h-5 text-primary" />
-              Revenue flow health
-            </CardTitle>
-            <CardDescription className="mt-1">
-              Last {CELLS} runs per test. Green = pass · Red = fail · Grey = no run. Click any cell to inspect.
-            </CardDescription>
-          </div>
-          <Button asChild size="sm" variant="outline">
-            <Link href="/tests">Manage test cases</Link>
-          </Button>
+    <div
+      className="min-h-screen w-full text-[#e1e2e4] overflow-x-hidden"
+      style={{ background: "#111415" }}
+    >
+      {/* ── HEADER ─────────────────────────────────────────────────────────── */}
+      <header className="fixed top-0 left-0 right-0 z-50 flex h-20 items-center justify-between px-6 max-w-[1440px] mx-auto">
+        {/* Logo */}
+        <div className="flex items-center">
+          <Image
+            src="/leaka-logo.png"
+            alt="Leaka AI"
+            width={80}
+            height={40}
+            className="object-contain"
+            priority
+          />
         </div>
-      </CardHeader>
-      <CardContent>
-        {data.length === 0 ? (
-          <div className="text-sm text-muted-foreground py-6 text-center">
-            No test cases yet. Create a test case and run it to see health data here.
+
+        {/* Nav pill */}
+        <nav
+          className="hidden md:flex items-center gap-12 px-12 py-3 rounded-xl"
+          style={{
+            background: "rgba(29,32,33,0.2)",
+            border: "1px solid rgba(186,202,197,0.05)",
+            backdropFilter: "blur(6px)",
+          }}
+        >
+          <span className="text-[#57f1db] text-base font-medium cursor-default">Home</span>
+          <a
+            href="#capabilities"
+            className="text-[#bacac5] text-[11px] tracking-[1.65px] uppercase hover:text-[#e1e2e4] transition-colors"
+            style={{ fontFamily: "serif" }}
+          >
+            Product
+          </a>
+          <a
+            href="#how-it-works"
+            className="text-[#bacac5] text-[11px] tracking-[1.65px] uppercase hover:text-[#e1e2e4] transition-colors"
+            style={{ fontFamily: "serif" }}
+          >
+            Solutions
+          </a>
+          <a
+            href="#integrations"
+            className="text-[#bacac5] text-[11px] tracking-[1.65px] uppercase hover:text-[#e1e2e4] transition-colors"
+            style={{ fontFamily: "serif" }}
+          >
+            Pricing
+          </a>
+        </nav>
+
+        {/* CTA icon button */}
+        <Link href="/login">
+          <div
+            className="flex items-center justify-center rounded-xl size-8 shrink-0 cursor-pointer"
+            style={{
+              background: "#57f1db",
+              boxShadow: "0px 0px 7.5px rgba(87,241,219,0.3)",
+            }}
+          >
+            <Image src={NAV_ARROW} alt="Sign in" width={12} height={12} />
           </div>
-        ) : (
-          <div className="space-y-3">
-            {data.map((row) => {
-              // Pad left with empty slots so newest run is always rightmost
-              const padCount = Math.max(0, CELLS - row.runs.length);
-              return (
-                <div key={row.id} className="flex items-center gap-3">
-                  {/* Status dot + name */}
-                  <div className="flex items-center gap-2 w-52 shrink-0">
-                    <HealthStatusDot row={row} />
-                    <Link
-                      href={`/tests`}
-                      className="text-sm font-medium truncate hover:underline"
-                      title={row.name}
-                    >
-                      {row.name}
-                    </Link>
-                  </div>
+        </Link>
+      </header>
 
-                  {/* Run cells */}
-                  <div className="flex items-center gap-1 flex-1">
-                    {/* Empty padding cells */}
-                    {Array.from({ length: padCount }).map((_, i) => (
-                      <div
-                        key={`pad-${i}`}
-                        className="w-5 h-5 rounded-sm bg-muted/40 shrink-0"
-                      />
-                    ))}
-                    {/* Run cells */}
-                    {row.runs.map((run) => (
-                      <Link
-                        key={run.job_id}
-                        href={`/runs/${run.job_id}`}
-                        title={`${run.status} · ${run.created_at ? new Date(run.created_at).toLocaleString() : ""} · ${run.duration_seconds ?? 0}s`}
-                        className={cn(
-                          "w-5 h-5 rounded-sm shrink-0 transition-all hover:scale-125 hover:ring-2 hover:ring-offset-1 hover:ring-ring",
-                          cellColor(run),
-                        )}
-                      />
-                    ))}
-                  </div>
+      {/* ── MAIN ───────────────────────────────────────────────────────────── */}
+      <main>
 
-                  {/* Pass rate */}
-                  <div className="w-10 text-right shrink-0">
-                    <PassRateBadge rate={row.pass_rate} />
-                  </div>
-                </div>
-              );
-            })}
+        {/* ── HERO ─────────────────────────────────────────────────────────── */}
+        <section className="relative w-full min-h-[921px] flex items-center pt-20 pb-32 overflow-hidden" style={{ paddingTop: "160px" }}>
+          {/* Ambient glow layer */}
+          <div
+            className="absolute inset-0 mix-blend-screen opacity-20 pointer-events-none"
+            style={{
+              backgroundImage: `
+                radial-gradient(ellipse 510px 510px at 70% 30%, rgba(45,212,191,0.15) 0%, rgba(45,212,191,0) 60%),
+                radial-gradient(ellipse 510px 510px at 30% 70%, rgba(255,218,185,0.05) 0%, rgba(255,218,185,0) 60%)
+              `,
+            }}
+          />
 
-            {/* Legend */}
-            <div className="flex items-center gap-4 pt-2 border-t text-xs text-muted-foreground">
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-sm bg-emerald-500 inline-block" /> Pass
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-sm bg-destructive inline-block" /> Fail
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-sm bg-blue-400 inline-block" /> Running
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-sm bg-muted-foreground/20 inline-block" /> No run
-              </span>
+          {/* ─ Hero video slot (replaces Figma dashboard image) ─ */}
+          <div className="absolute inset-0 pointer-events-none">
+            {/* Left-to-right fade overlay so text stays readable */}
+            <div
+              className="absolute inset-0 z-10"
+              style={{
+                background:
+                  "linear-gradient(90deg, #111415 0%, rgba(17,20,21,0.8) 50%, rgba(17,20,21,0) 100%)",
+              }}
+            />
+            {/* Bottom fade */}
+            <div
+              className="absolute inset-0 z-10"
+              style={{
+                background:
+                  "linear-gradient(to top, #111415 0%, rgba(17,20,21,0) 50%)",
+              }}
+            />
+            {/* VIDEO — positioned so the top portion of the clip is visible */}
+            <video
+              className="absolute w-full h-full object-cover opacity-100"
+              style={{ top: "-27%", left: 0, objectPosition: "center top" }}
+              src="/hero-section-video.mp4"
+              autoPlay
+              muted
+              loop
+              playsInline
+            />
+          </div>
+
+          {/* Hero content */}
+          <div className="relative z-20 max-w-[1440px] mx-auto px-6 grid grid-cols-12 gap-6 w-full items-end" style={{ paddingTop: "100px" }}>
+            <div className="col-span-12 md:col-span-6 flex flex-col items-start justify-end gap-0">
+              {/* Heading */}
+              <div className="mb-6">
+                <h1
+                  className="text-[64px] md:text-[72px] leading-[1.1] tracking-[-1.44px] text-[#e1e2e4]"
+                  style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
+                >
+                  Autonomous QA for
+                  <br />
+                  revenue-critical
+                  <br />
+                  flows.
+                </h1>
+              </div>
+
+              {/* Sub-copy */}
+              <p className="text-[#bacac5] text-[18px] leading-[1.6] tracking-[0.18px] max-w-[520px] font-light mb-10">
+                Leaka AI runs browser tests in plain English, self-heals when UI changes, and turns
+                failures into screenshots, replayable steps, and auto-drafted tickets before broken
+                flows cost you revenue.
+              </p>
+
+              {/* CTAs */}
+              <div className="flex items-center gap-6 mb-10 flex-wrap">
+                <Link href="/login">
+                  <button
+                    className="px-8 py-5 rounded-xl text-[11px] tracking-[1.1px] uppercase text-[#57f1db] cursor-pointer transition-all hover:shadow-[0_0_20px_rgba(87,241,219,0.2)]"
+                    style={{
+                      fontFamily: "Georgia, serif",
+                      background: "rgba(87,241,219,0.05)",
+                      border: "1px solid rgba(87,241,219,0.2)",
+                    }}
+                  >
+                    START A TEST
+                  </button>
+                </Link>
+                <Link href="/dashboard">
+                  <button
+                    className="px-8 py-5 rounded-xl text-[11px] tracking-[1.1px] uppercase text-[#e1e2e4] cursor-pointer transition-all hover:border-[rgba(225,226,228,0.3)]"
+                    style={{
+                      fontFamily: "Georgia, serif",
+                      border: "1px solid rgba(225,226,228,0.1)",
+                    }}
+                  >
+                    WATCH THE FLOW
+                  </button>
+                </Link>
+              </div>
+
+              {/* Tagline */}
+              <div
+                className="pl-4 mb-10"
+                style={{ borderLeft: "1px solid rgba(60,74,70,0.3)" }}
+              >
+                <p
+                  className="text-[#3c4a46] text-[13px] tracking-[1.3px] uppercase leading-[1.5]"
+                  style={{ fontFamily: "Georgia, serif" }}
+                >
+                  BUILT FOR PMS, REVOPS, AND FOUNDERS.
+                  <br />
+                  NO CODE. NO BABYSITTING. NO FLAKE.
+                </p>
+              </div>
+
+              {/* Feature tags */}
+              <div className="flex flex-wrap gap-3">
+                {FEATURE_TAGS.map((tag) => (
+                  <span
+                    key={tag}
+                    className="text-[10px] tracking-[1px] uppercase text-[#bacac5] px-3 py-2 rounded-xl"
+                    style={{
+                      background: "rgba(29,32,33,0.5)",
+                      border: "1px solid rgba(186,202,197,0.1)",
+                      backdropFilter: "blur(2px)",
+                      fontFamily: "Georgia, serif",
+                    }}
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
             </div>
           </div>
-        )}
-      </CardContent>
-    </Card>
+        </section>
+
+        {/* ── CAPABILITIES ─────────────────────────────────────────────────── */}
+        <section
+          id="capabilities"
+          className="w-full py-32"
+          style={{ background: "#111415" }}
+        >
+          <div className="max-w-[1440px] mx-auto px-6 flex flex-col gap-20">
+            {/* Section header */}
+            <div
+              className="pb-6 flex flex-col gap-4"
+              style={{ borderBottom: "1px solid rgba(186,202,197,0.05)" }}
+            >
+              <span
+                className="text-[#57f1db] text-[11px] tracking-[2.2px] uppercase"
+                style={{ fontFamily: "Georgia, serif" }}
+              >
+                01 / CAPABILITIES
+              </span>
+              <h2
+                className="text-[40px] leading-[1.5] text-[#e1e2e4]"
+                style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
+              >
+                What Leaka does
+              </h2>
+            </div>
+
+            {/* Cards */}
+            <div className="flex flex-col md:flex-row items-start gap-12 justify-center">
+              {CAPABILITY_CARDS.map((card) => (
+                <div
+                  key={card.id}
+                  className={`relative flex flex-col gap-4 p-8 rounded-2xl overflow-hidden flex-1 ${card.offsetClass}`}
+                  style={{
+                    background: "rgba(29,32,33,0.2)",
+                    border: "1px solid rgba(225,226,228,0.05)",
+                    backdropFilter: "blur(10px)",
+                  }}
+                >
+                  {/* Corner glow */}
+                  <div
+                    className="absolute rounded-xl size-48 -top-24 -left-24 blur-[32px] pointer-events-none"
+                    style={{ background: card.glow }}
+                  />
+                  <span
+                    className="text-[#bacac5] text-[10px] tracking-[1px] uppercase opacity-50"
+                    style={{ fontFamily: "Georgia, serif" }}
+                  >
+                    {card.id}
+                  </span>
+                  <h3
+                    className="text-[#e1e2e4] text-[24px] leading-[32px] mt-8"
+                    style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
+                  >
+                    {card.title}
+                  </h3>
+                  <p className="text-[#bacac5] text-[16px] leading-[24px]">{card.body}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ── HOW IT WORKS ─────────────────────────────────────────────────── */}
+        <section
+          id="how-it-works"
+          className="w-full py-32 px-6"
+          style={{ background: "#111415" }}
+        >
+          <div className="max-w-[1440px] mx-auto grid grid-cols-12 gap-20">
+            {/* Left copy */}
+            <div className="col-span-12 md:col-span-4 flex flex-col justify-center py-16">
+              <div className="mb-4">
+                <span
+                  className="text-[#e3c0a0] text-[11px] tracking-[2.2px] uppercase"
+                  style={{ fontFamily: "Georgia, serif" }}
+                >
+                  02 / EXECUTION
+                </span>
+              </div>
+              <h2
+                className="text-[40px] leading-[1.5] text-[#e1e2e4] mb-6"
+                style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
+              >
+                How it works
+              </h2>
+              <p className="text-[#bacac5] text-[16px] leading-[24px]">
+                A streamlined pipeline from human intent to robust verification, designed to run
+                autonomously in the background.
+              </p>
+            </div>
+
+            {/* Right steps */}
+            <div className="col-span-12 md:col-span-8 relative flex flex-col">
+              {/* Vertical timeline line */}
+              <div
+                className="absolute left-8 top-0 bottom-0 w-px"
+                style={{
+                  background:
+                    "linear-gradient(to bottom, rgba(87,241,219,0.0) 0%, rgba(87,241,219,0.3) 20%, rgba(87,241,219,0.3) 80%, rgba(87,241,219,0) 100%)",
+                }}
+              />
+
+              <div className="flex flex-col gap-16 pl-24">
+                {STEPS.map((step, i) => (
+                  <div key={i} className="relative flex flex-col gap-2">
+                    {/* Timeline dot */}
+                    <div
+                      className="absolute -left-16 top-1 size-2 rounded-sm"
+                      style={{
+                        background: "#111415",
+                        border: "1px solid #57f1db",
+                        boxShadow: "0px 0px 10px 0px rgba(45,212,191,0.5)",
+                      }}
+                    />
+                    <span
+                      className="text-[#57f1db] text-[12px] tracking-[1.2px]"
+                      style={{ fontFamily: "Georgia, serif" }}
+                    >
+                      {step.label}
+                    </span>
+                    <h4
+                      className="text-[#e1e2e4] text-[20px] leading-[28px]"
+                      style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
+                    >
+                      {step.title}
+                    </h4>
+                    <p className="text-[#bacac5] text-[16px] leading-[24px]">{step.body}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ── INTEGRATIONS ─────────────────────────────────────────────────── */}
+        <section
+          id="integrations"
+          className="w-full py-24"
+          style={{ background: "#111415" }}
+        >
+          <div className="max-w-[1440px] mx-auto px-6 flex flex-col gap-8">
+            <div className="flex justify-center">
+              <span
+                className="text-[#3c4a46] text-[11px] tracking-[2.2px] uppercase text-center"
+                style={{ fontFamily: "Georgia, serif" }}
+              >
+                03 / INTEGRATIONS
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-4">
+              {INTEGRATIONS.map((name) => (
+                <div
+                  key={name}
+                  className="px-6 py-3 rounded-xl text-[14px] text-[#bacac5] text-center"
+                  style={{
+                    background: "rgba(40,42,44,0.3)",
+                    border: "1px solid rgba(186,202,197,0.1)",
+                    backdropFilter: "blur(6px)",
+                    fontFamily: "Georgia, serif",
+                  }}
+                >
+                  {name}
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ── CTA ──────────────────────────────────────────────────────────── */}
+        <section
+          className="relative w-full py-48 overflow-hidden"
+          style={{ background: "#111415" }}
+        >
+          {/* Decorative concentric borders */}
+          <div className="absolute inset-0 pointer-events-none opacity-10">
+            <div
+              className="absolute rounded-xl"
+              style={{
+                width: 800,
+                height: 800,
+                left: "calc(50% - 400px)",
+                top: -75,
+                border: "1px solid rgba(87,241,219,0.2)",
+              }}
+            />
+            <div
+              className="absolute rounded-xl"
+              style={{
+                width: 600,
+                height: 600,
+                left: "calc(50% - 300px)",
+                top: 25,
+                border: "1px solid rgba(87,241,219,0.3)",
+              }}
+            />
+            <div
+              className="absolute rounded-xl"
+              style={{
+                width: 400,
+                height: 400,
+                left: "calc(50% - 200px)",
+                top: 125,
+                border: "1px solid rgba(87,241,219,0.4)",
+              }}
+            />
+          </div>
+
+          <div className="relative z-10 flex flex-col items-center gap-12 max-w-3xl mx-auto px-6 text-center">
+            <h2
+              className="text-[48px] md:text-[64px] leading-[1.25] text-[#e1e2e4]"
+              style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
+            >
+              Stop broken flows before
+              <br />
+              they cost you money.
+            </h2>
+            <Link href="/login">
+              <button
+                className="px-12 py-5 rounded-xl text-[14px] tracking-[2.8px] uppercase font-bold text-[#57f1db] transition-all hover:shadow-[0_0_40px_rgba(45,212,191,0.2)] cursor-pointer"
+                style={{
+                  fontFamily: "Georgia, serif",
+                  background: "rgba(87,241,219,0.1)",
+                  border: "1px solid rgba(87,241,219,0.3)",
+                  boxShadow: "0px 0px 30px 0px rgba(45,212,191,0.1)",
+                }}
+              >
+                BOOK A DEMO
+              </button>
+            </Link>
+          </div>
+        </section>
+      </main>
+
+      {/* ── FOOTER ─────────────────────────────────────────────────────────── */}
+      <footer
+        className="border-t opacity-20"
+        style={{ borderColor: "rgba(186,202,197,0.05)" }}
+      >
+        <div className="max-w-[1440px] mx-auto px-6 pt-12 pb-8 flex items-center justify-between">
+          <span
+            className="text-[#bacac5] text-[11px] tracking-[1.65px]"
+            style={{ fontFamily: "Georgia, serif" }}
+          >
+            © 2024 Leaka Research
+          </span>
+          <div className="flex items-center gap-12">
+            <span
+              className="text-[#bacac5] text-[11px] tracking-[1.65px]"
+              style={{ fontFamily: "Georgia, serif" }}
+            >
+              Orbital Status: Nominal
+            </span>
+            <Link
+              href="/dashboard"
+              className="text-[#bacac5] text-[11px] tracking-[1.65px] hover:text-[#e1e2e4] transition-colors"
+              style={{ fontFamily: "Georgia, serif" }}
+            >
+              Terminal Protocols
+            </Link>
+          </div>
+        </div>
+      </footer>
+    </div>
   );
 }

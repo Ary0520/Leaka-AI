@@ -10,7 +10,7 @@ import { signOut } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 
 const NAV = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/runs", label: "All Runs", icon: History },
   { href: "/tests", label: "Test Cases", icon: FileText },
   { href: "/suites", label: "Test Suites", icon: Layers },
@@ -40,8 +40,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {NAV.map((item) => {
             const Icon = item.icon;
             const active =
-              item.href === "/"
-                ? pathname === "/"
+              item.href === "/dashboard"
+                ? pathname === "/dashboard"
                 : pathname?.startsWith(item.href);
             return (
               <Link

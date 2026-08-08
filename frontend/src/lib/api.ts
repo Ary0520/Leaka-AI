@@ -92,6 +92,7 @@ export interface RunStatusResponse {
   error_message?: string | null;
   steps_log?: string | null;
   visited_urls?: string | null;
+  live_steps?: string | null;
   is_successful?: boolean | null;
   created_at?: string | null;
   started_at?: string | null;

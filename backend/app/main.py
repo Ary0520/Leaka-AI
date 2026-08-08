@@ -342,13 +342,15 @@ def dashboard_health(
     user: dict = Depends(get_current_user),
 ):
     owner = user["sub"]
+    result = []
+
+    # 1. Test cases that have associated runs
     cases = (
         db.query(TestCase)
         .filter(TestCase.owner_id == owner)
         .order_by(TestCase.created_at.asc())
         .all()
     )
-    result = []
     for tc in cases:
         runs = (
             db.query(TestRun)
@@ -380,6 +382,52 @@ def dashboard_health(
             "total_runs": total,
             "runs": runs_data,
         })
+
+    # 2. Ad-hoc runs (no test_case_id) — group by name, show as anonymous rows
+    adhoc_runs = (
+        db.query(TestRun)
+        .filter(
+            TestRun.owner_id == owner,
+            TestRun.test_case_id.is_(None),
+        )
+        .order_by(TestRun.created_at.desc())
+        .limit(limit * 5)  # fetch more to group
+        .all()
+    )
+
+    # Group by name
+    from collections import defaultdict
+    adhoc_groups: dict = defaultdict(list)
+    for r in adhoc_runs:
+        adhoc_groups[r.name].append(r)
+
+    for name, group_runs in adhoc_groups.items():
+        # Keep only the most recent `limit` runs per group
+        group_runs = sorted(group_runs, key=lambda r: r.created_at or datetime.min)[-limit:]
+        runs_data = [
+            {
+                "job_id": r.job_id,
+                "status": r.status.value,
+                "is_successful": r.is_successful,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "duration_seconds": r.duration_seconds,
+            }
+            for r in group_runs
+        ]
+        last = group_runs[-1]
+        total = len(group_runs)
+        passed = sum(1 for r in group_runs if r.is_successful is True)
+        result.append({
+            "id": None,
+            "name": name,
+            "target_url": last.target_url,
+            "last_status": last.status.value,
+            "last_successful": last.is_successful,
+            "pass_rate": round(passed * 100 / total) if total > 0 else None,
+            "total_runs": total,
+            "runs": runs_data,
+        })
+
     return result
 
 
@@ -731,6 +779,7 @@ def get_run_status(job_id: str, db: Session = Depends(get_db), user: dict = Depe
         error_message=run.error_message,
         steps_log=run.steps_log,
         visited_urls=run.visited_urls,
+        live_steps=run.live_steps,
         is_successful=run.is_successful,
         created_at=run.created_at,
         started_at=run.started_at,

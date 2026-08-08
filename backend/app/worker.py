@@ -161,11 +161,50 @@ def run_browser_test(
 
         browser_session = BrowserSession(headless=True)
 
-        # In browser-use 0.13.7 the correct action name for navigation
-        # is 'navigate', not 'go_to_url'. However initial_actions is not
-        # needed — the target URL is already baked into task_text so the
-        # LLM will navigate there as its first step. Remove initial_actions
-        # entirely to avoid version-specific action name issues.
+        # ── Live step writer ──────────────────────────────────────────────────
+        # Fired by browser-use after EVERY agent step.
+        # Writes the step immediately to DB so the frontend can show it live
+        # while the agent is still running (via the 3-second polling loop).
+        live_step_buffer: list[dict] = []
+
+        def _on_step(browser_state_summary, agent_output, step_index: int):
+            """Sync callback — extract action + result and persist immediately."""
+            try:
+                step_entry: dict = {"step": step_index, "action": {}, "result": None}
+
+                # Extract the action name + params from agent_output
+                if agent_output and hasattr(agent_output, "action"):
+                    actions = agent_output.action
+                    if actions:
+                        action = actions[0]  # first action of this step
+                        action_dict = action.model_dump(exclude_none=True, mode="json")
+                        meta_keys = {"result", "error", "interacted_element", "step"}
+                        action_keys = [k for k in action_dict if k not in meta_keys]
+                        if action_keys:
+                            name = action_keys[0]
+                            step_entry["action"] = {name: action_dict.get(name, {})}
+
+                # Extract URL from browser state
+                if browser_state_summary and hasattr(browser_state_summary, "url"):
+                    step_entry["url"] = browser_state_summary.url
+
+                live_step_buffer.append(step_entry)
+
+                # Write to DB
+                db = SessionLocal()
+                try:
+                    run = db.query(TestRun).filter(TestRun.job_id == job_id).first()
+                    if run:
+                        run.live_steps = json.dumps(live_step_buffer, default=str)
+                        run.total_steps = step_index + 1
+                        db.commit()
+                except Exception:
+                    pass
+                finally:
+                    db.close()
+            except Exception:
+                pass  # never let callback errors break the agent
+
         agent = Agent(
             task=task_text,
             llm=llm,
@@ -175,6 +214,7 @@ def run_browser_test(
             max_actions_per_step=5,
             step_timeout=60,
             llm_timeout=60,
+            register_new_step_callback=_on_step,
         )
         history = await agent.run(max_steps=max_steps)
 

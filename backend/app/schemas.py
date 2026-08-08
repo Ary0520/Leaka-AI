@@ -114,6 +114,7 @@ class TestRunStatusResponse(BaseModel):
     error_message: Optional[str] = None
     steps_log: Optional[str] = None        # JSON string: list[dict] — agent action history
     visited_urls: Optional[str] = None     # JSON string: list[str]
+    live_steps: Optional[str] = None       # JSON string: steps written live during run
     is_successful: Optional[bool] = None
     created_at: Optional[datetime] = None
     started_at: Optional[datetime] = None

@@ -71,6 +71,7 @@ class TestRun(Base):
 
     dom_snapshot = Column(Text, nullable=True)
     steps_log = Column(Text, nullable=True)
+    live_steps = Column(Text, nullable=True)   # incremental steps written per-step during run
 
     is_successful = Column(Boolean, nullable=True)
     has_visual_proof = Column(Boolean, default=False)

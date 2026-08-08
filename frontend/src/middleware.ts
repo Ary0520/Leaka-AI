@@ -25,21 +25,29 @@ export async function middleware(request: NextRequest) {
     },
   );
 
-  // Refresh session — must use getClaims() not getSession()
   const { data: { user } } = await supabase.auth.getUser();
 
-  // Redirect unauthenticated users to /login
-  // Allow: /login, /auth/callback, static files
   const { pathname } = request.nextUrl;
+
+  // Public paths — never redirect these to login
   const isPublic =
+    pathname === "/" ||                    // landing page
     pathname.startsWith("/login") ||
     pathname.startsWith("/auth") ||
     pathname.startsWith("/_next") ||
-    pathname.includes(".");
+    pathname.includes(".");               // static files
 
+  // Protected: unauthenticated users on app routes → /login
   if (!user && !isPublic) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
+    return NextResponse.redirect(url);
+  }
+
+  // Optional: authenticated users hitting /login → /dashboard
+  if (user && pathname === "/login") {
+    const url = request.nextUrl.clone();
+    url.pathname = "/dashboard";
     return NextResponse.redirect(url);
   }
 
