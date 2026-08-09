@@ -40,6 +40,17 @@ from .models import (
     TestScreenshot,
 )
 
+# ---------------------------------------------------------------------------
+# Patch browser-use SchemaOptimizer to strip 'minimum'/'maximum' from schemas.
+# Anthropic, Azure Bedrock, and other providers reject JSON schemas that
+# contain 'minimum'/'maximum' on integer fields (OpenAI extension, not
+# standard JSON Schema Draft 7). browser-use keeps these for OpenAI strict
+# mode but they cause 400 errors on every other provider.
+# ---------------------------------------------------------------------------
+# SchemaOptimizer patch no longer needed — minimum/maximum removed directly
+# from the installed browser_use/llm/schema.py to fix 400 errors on
+# Anthropic/Azure/Bedrock providers.
+
 # Ensure all tables exist in the worker process.
 # The FastAPI app calls init_db() on startup, but the Celery worker
 # is a separate process and must create tables itself — otherwise
@@ -169,7 +180,7 @@ def _build_incident_context(
         "job_id": job_id,
         "timestamp_iso": completed_at.isoformat() if completed_at else None,
         "target_url": target_url,
-        "expected_result": success_criteria,
+        "expected_result": success_criteria or None,
         "actual_result": str(final_result_text)[:500] if final_result_text else None,
         "failed_step_index": failed_step_index,
         "total_steps": total_steps_count,
@@ -356,6 +367,7 @@ def run_browser_test(
             max_actions_per_step=5,
             step_timeout=60,
             llm_timeout=60,
+            message_compaction=False,   # disable cross-run memory contamination
             register_new_step_callback=_on_step,
         )
         history = await agent.run(max_steps=max_steps)
@@ -430,6 +442,35 @@ def run_browser_test(
                 "is_successful": False,
             },
         )
+        # Fire Slack alert for hard crashes (timeouts, OOM, etc.)
+        # The normal integration block below is never reached on re-raise.
+        try:
+            from .integrations import slack_client as _sc
+            from .models import UserSettings as _US
+            _db = SessionLocal()
+            try:
+                _run = _db.query(TestRun).filter(TestRun.job_id == job_id).first()
+                _owner = _run.owner_id if _run else None
+                _u = _db.query(_US).filter(_US.owner_id == _owner).first() if _owner else None
+                _wh = (_u.slack_webhook_url if _u else None) or settings.SLACK_WEBHOOK_URL
+                _enabled = _u.slack_auto_alert_on_failure if _u else True
+                _dash = (_u.dashboard_base_url if _u else None) or settings.DASHBOARD_BASE_URL
+                if _wh and _enabled:
+                    _sc.send_qa_incident(
+                        webhook_url=_wh,
+                        test_name=name,
+                        job_id=job_id,
+                        target_url=target_url,
+                        expected_result=success_criteria or None,
+                        actual_result=None,
+                        error_message=f"Agent runtime error: {str(exc)[:400]}",
+                        dashboard_run_url=f"{_dash.rstrip('/')}/runs/{job_id}" if _dash else None,
+                    )
+                    logger.info("Slack crash alert sent (job_id=%s)", job_id)
+            finally:
+                _db.close()
+        except Exception as _se:
+            logger.warning("Slack crash alert failed (job_id=%s): %s", job_id, _se)
         raise
 
     # --- Process result history ---
@@ -602,6 +643,7 @@ def run_browser_test(
 
         # --- Auto-integrations on FAILURE ---
         if final_status == TestRunStatus.FAILED:
+            logger.info("AUTO-INTEGRATIONS TRIGGERED for job_id=%s", job_id)
             try:
                 from .integrations import linear_client, email_client, slack_client
 
@@ -704,7 +746,7 @@ def run_browser_test(
                             if u_cfg:
                                 user_slack_url = u_cfg.slack_webhook_url
                                 user_slack_enabled = u_cfg.slack_auto_alert_on_failure
-                                user_dashboard_base = u_cfg.dashboard_base_url
+                                user_dashboard_base = u_cfg.dashboard_base_url.strip() if u_cfg.dashboard_base_url else None
                                 logger.info(
                                     "Slack lookup: owner=%s url_set=%s enabled=%s",
                                     run.owner_id, bool(user_slack_url), user_slack_enabled,

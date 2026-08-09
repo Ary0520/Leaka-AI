@@ -1150,7 +1150,7 @@ def update_user_slack_settings(
     if body.slack_auto_alert_on_failure is not None:
         cfg.slack_auto_alert_on_failure = body.slack_auto_alert_on_failure
     if body.dashboard_base_url is not None:
-        cfg.dashboard_base_url = body.dashboard_base_url or None
+        cfg.dashboard_base_url = body.dashboard_base_url.strip() or None
 
     db.commit()
     return {"message": "Slack settings saved.", "auto_alert": cfg.slack_auto_alert_on_failure}
