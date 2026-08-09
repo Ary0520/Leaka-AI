@@ -1,6 +1,6 @@
 from datetime import datetime
 from sqlalchemy import (
-    Column, Integer, String, Text, DateTime, ForeignKey, Enum as SAEnum, Boolean
+    Column, Integer, String, Text, DateTime, ForeignKey, Enum as SAEnum, Boolean, UniqueConstraint
 )
 from sqlalchemy.orm import relationship
 import enum
@@ -116,3 +116,26 @@ class LinearIssue(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     test_run = relationship("TestRun", back_populates="linear_issue")
+
+
+class UserSettings(Base):
+    """
+    Per-user integration settings stored in the database.
+    Each Supabase user (owner_id = sub claim) gets one row.
+    This allows every Leaka user to connect their own Slack workspace,
+    configure their own dashboard URL, etc. — independent of the global .env.
+    """
+    __tablename__ = "user_settings"
+    __table_args__ = (UniqueConstraint("owner_id", name="uq_user_settings_owner"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(String(64), nullable=False, unique=True, index=True)
+
+    # Slack
+    slack_webhook_url = Column(String(2048), nullable=True)
+    slack_auto_alert_on_failure = Column(Boolean, default=True, nullable=False)
+    # Dashboard deep-link base (e.g. "https://app.leaka.ai" or "http://localhost:3000")
+    dashboard_base_url = Column(String(512), nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

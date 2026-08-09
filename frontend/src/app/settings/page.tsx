@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Save, CheckCircle2, Ticket, Mail, Bell, Zap, Webhook, Settings2 } from "lucide-react";
+import { Loader2, Save, CheckCircle2, Ticket, Mail, Bell, Zap, Webhook, Settings2, Send } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 
 type IntegrationSettings = Awaited<ReturnType<typeof api.getIntegrationSettings>>;
@@ -29,6 +29,206 @@ function SectionHeader({ icon, title, description }: { icon: React.ReactNode; ti
       <CardTitle className="text-base flex items-center gap-2">{icon}{title}</CardTitle>
       <CardDescription>{description}</CardDescription>
     </CardHeader>
+  );
+}
+
+// ── Slack settings card (per-user, stored in DB) ─────────────────────────────
+function SlackSettingsCard() {
+  const qc = useQueryClient();
+  const { data, isLoading } = useQuery({
+    queryKey: ["user-slack-settings"],
+    queryFn: () => api.getUserSlackSettings(),
+  });
+
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [autoAlert, setAutoAlert] = useState(true);
+  const [dashboardUrl, setDashboardUrl] = useState("");
+  const [pingResult, setPingResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  useEffect(() => {
+    if (!data) return;
+    setAutoAlert(data.slack_auto_alert_on_failure);
+    setDashboardUrl(data.dashboard_base_url ?? "");
+  }, [data]);
+
+  const saveMut = useMutation({
+    mutationFn: () =>
+      api.updateUserSlackSettings({
+        slack_webhook_url: webhookUrl || undefined,
+        slack_auto_alert_on_failure: autoAlert,
+        dashboard_base_url: dashboardUrl || undefined,
+      }),
+    onSuccess: (r) => {
+      toast({ title: "Slack settings saved", description: r.message });
+      setWebhookUrl("");
+      qc.invalidateQueries({ queryKey: ["user-slack-settings"] });
+    },
+    onError: (e: Error) =>
+      toast({ title: "Save failed", description: e.message, variant: "destructive" }),
+  });
+
+  const pingMut = useMutation({
+    mutationFn: () => api.testSlackPing(),
+    onSuccess: (r) => {
+      setPingResult(r);
+      toast({
+        title: r.ok ? "Ping sent ✓" : "Ping failed",
+        description: r.message,
+        variant: r.ok ? "default" : "destructive",
+      });
+    },
+    onError: (e: Error) =>
+      toast({ title: "Ping failed", description: e.message, variant: "destructive" }),
+  });
+
+  if (isLoading) return <div className="h-48 rounded-lg bg-muted animate-pulse" />;
+
+  return (
+    <Card>
+      <SectionHeader
+        icon={<Bell className="w-4 h-4 text-primary" />}
+        title="Slack — QA Incident Alerts"
+        description="Auto-post structured QA incident reports to your Slack channel when a test fails. Each alert includes the failure summary, reproduction steps, evidence links, an automated assessment of the likely failure category, and suggested severity. No cost — uses Slack Incoming Webhooks."
+      />
+      <CardContent className="space-y-5">
+
+        {/* Connection status */}
+        <div className="flex items-center gap-2">
+          <StatusDot set={data?.slack_webhook_url_set ?? false} />
+          <span className="text-sm text-muted-foreground">
+            {data?.slack_webhook_url_set
+              ? `Webhook connected (${data.slack_webhook_url_masked})`
+              : "Not connected"}
+          </span>
+        </div>
+
+        {/* Webhook URL */}
+        <div>
+          <Label>Incoming webhook URL</Label>
+          <Input
+            className="mt-1 font-mono"
+            type="password"
+            placeholder={
+              data?.slack_webhook_url_set
+                ? "Enter new URL to replace current webhook"
+                : "https://hooks.slack.com/services/T…/B…/…"
+            }
+            value={webhookUrl}
+            onChange={(e) => setWebhookUrl(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground mt-1">
+            Create a free Slack app at{" "}
+            <a
+              href="https://api.slack.com/apps"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+            >
+              api.slack.com/apps
+            </a>{" "}
+            → Features → Incoming Webhooks → Activate → Add to workspace.
+          </p>
+        </div>
+
+        {/* Dashboard base URL */}
+        <div>
+          <Label>Your Leaka dashboard URL</Label>
+          <Input
+            className="mt-1 font-mono"
+            placeholder="https://app.leaka.ai  or  http://localhost:3000"
+            value={dashboardUrl}
+            onChange={(e) => setDashboardUrl(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground mt-1">
+            Used to generate deep links in the Slack message pointing directly to the failed run.
+          </p>
+        </div>
+
+        {/* Auto-alert toggle */}
+        <div className="flex items-center justify-between rounded-lg border p-4">
+          <div className="space-y-0.5">
+            <p className="text-sm font-medium">Auto-alert on test failure</p>
+            <p className="text-xs text-muted-foreground">
+              When enabled, Leaka automatically sends a QA incident report to Slack
+              every time a test run completes with a failure. No manual action required.
+            </p>
+          </div>
+          <button
+            role="switch"
+            aria-checked={autoAlert}
+            onClick={() => setAutoAlert((v) => !v)}
+            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+              autoAlert ? "bg-primary" : "bg-input"
+            }`}
+          >
+            <span
+              className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-background shadow-lg ring-0 transition-transform ${
+                autoAlert ? "translate-x-5" : "translate-x-0"
+              }`}
+            />
+          </button>
+        </div>
+
+        {/* Alert scope note */}
+        <div className="rounded-md bg-muted/50 border p-3 text-xs text-muted-foreground space-y-1">
+          <p className="font-medium text-foreground">What the Slack alert contains:</p>
+          <ul className="list-disc list-inside space-y-0.5 ml-1">
+            <li>Test name, timestamp, and target environment</li>
+            <li>Expected vs. actual result from the agent execution</li>
+            <li>Failed step number and the action that triggered the failure</li>
+            <li>Reproduction steps derived from the actual execution trace</li>
+            <li>Automated failure category assessment <em>(not a confirmed root cause)</em></li>
+            <li>Suggested severity — labelled as a suggestion, not a QA decision</li>
+            <li>Action buttons: View Run, View Screenshot, Technical Evidence, Create Linear Issue</li>
+          </ul>
+          <p className="mt-2 italic">
+            Alerts fire on failure only. Success notifications are not sent.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3 flex-wrap">
+          <Button
+            size="sm"
+            disabled={saveMut.isPending}
+            onClick={() => saveMut.mutate()}
+          >
+            {saveMut.isPending ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Save className="w-4 h-4 mr-2" />
+            )}
+            Save Slack settings
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={pingMut.isPending || !data?.slack_webhook_url_set}
+            onClick={() => pingMut.mutate()}
+            title={!data?.slack_webhook_url_set ? "Save a webhook URL first" : ""}
+          >
+            {pingMut.isPending ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Send className="w-4 h-4 mr-2" />
+            )}
+            Send test ping
+          </Button>
+        </div>
+
+        {pingResult && (
+          <div
+            className={`rounded-md border p-3 text-sm ${
+              pingResult.ok
+                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300"
+                : "bg-destructive/10 border-destructive/30 text-destructive"
+            }`}
+          >
+            {pingResult.ok ? "✅ " : "❌ "}
+            {pingResult.message}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -220,27 +420,7 @@ export default function SettingsPage() {
       </Card>
 
       {/* ── SLACK ── */}
-      <Card>
-        <SectionHeader icon={<Bell className="w-4 h-4 text-primary" />} title="Slack"
-          description="Post rich failure alerts to a Slack channel via Incoming Webhooks." />
-        <CardContent className="space-y-4">
-          <div className="flex items-center gap-2">
-            <StatusDot set={data?.slack.webhook_url_set ?? false} />
-            <span className="text-sm text-muted-foreground">
-              {data?.slack.webhook_url_set ? `Connected (${data.slack.webhook_url})` : "Not configured"}
-            </span>
-          </div>
-          <div>
-            <Label>Incoming webhook URL</Label>
-            <Input className="mt-1 font-mono" type="password" placeholder="https://hooks.slack.com/services/..." value={slackUrl} onChange={e => setSlackUrl(e.target.value)} />
-            <p className="text-xs text-muted-foreground mt-1">Create at api.slack.com → Your Apps → Incoming Webhooks</p>
-          </div>
-          <Button size="sm" disabled={saveMut.isPending} onClick={() => saveSection({ slack_webhook_url: slackUrl || undefined })}>
-            {saveMut.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-            Save Slack settings
-          </Button>
-        </CardContent>
-      </Card>
+      <SlackSettingsCard />
 
       {/* ── CI TOKEN ── */}
       <Card>

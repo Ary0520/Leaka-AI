@@ -274,15 +274,32 @@ function RunView({
   return (
     <>
       {/* Status banners */}
-      {data.status === "failed" && (
-        <Alert variant="destructive">
-          <XCircle className="w-4 h-4" />
-          <AlertTitle>Test failed</AlertTitle>
-          <AlertDescription>
-            The browser-use agent could not complete this run. Review the steps timeline and failure screenshot below.
-          </AlertDescription>
-        </Alert>
-      )}
+      {data.status === "failed" && (() => {
+        // Distinguish: did the agent complete and report a QA failure,
+        // or did the agent itself crash/timeout before finishing?
+        const finalResult = data.final_result ?? "";
+        const agentReportedFailure =
+          finalResult.toLowerCase().includes("test") &&
+          (finalResult.toLowerCase().includes("failed") ||
+           finalResult.toLowerCase().includes("fail"));
+        const isAgentCrash = !finalResult || finalResult.trim() === "";
+
+        return (
+          <Alert variant="destructive">
+            <XCircle className="w-4 h-4" />
+            <AlertTitle>
+              {agentReportedFailure ? "QA Test Failed" : "Test run failed"}
+            </AlertTitle>
+            <AlertDescription>
+              {agentReportedFailure
+                ? "The agent completed execution and reported a QA failure. Review the final result and steps below."
+                : isAgentCrash
+                ? "The agent stopped before completing the run. Review the steps timeline and error details below."
+                : "The test run did not pass. Review the steps timeline and failure screenshot below."}
+            </AlertDescription>
+          </Alert>
+        );
+      })()}
       {data.status === "completed" && (
         <Alert className="bg-emerald-500/10 border-emerald-500/40 text-emerald-700 dark:text-emerald-300">
           <CheckCircle2 className="w-4 h-4" />

@@ -353,6 +353,30 @@ export const api = {
     );
   },
 
+  // Per-user Slack settings
+  getUserSlackSettings: () =>
+    request<{
+      slack_webhook_url_set: boolean;
+      slack_webhook_url_masked: string;
+      slack_auto_alert_on_failure: boolean;
+      dashboard_base_url: string;
+    }>("/api/user/slack-settings"),
+
+  updateUserSlackSettings: (body: {
+    slack_webhook_url?: string;
+    slack_auto_alert_on_failure?: boolean;
+    dashboard_base_url?: string;
+  }) =>
+    request<{ message: string; auto_alert: boolean }>("/api/user/slack-settings", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  testSlackPing: () =>
+    request<{ ok: boolean; message: string }>("/api/user/slack-settings/test-ping", {
+      method: "POST",
+    }),
+
   // CI webhook
   triggerCI: (body: {
     suite_id?: number | null;

@@ -9,6 +9,7 @@ WindowsProactorEventLoopPolicy before any asyncio.run() call.
 import asyncio
 import base64
 import json
+import logging
 import os
 import platform
 import shutil
@@ -16,6 +17,8 @@ import sys
 import uuid
 from datetime import datetime
 from typing import Any, Optional
+
+logger = logging.getLogger("revguard.worker")
 
 # ── CRITICAL WINDOWS FIX ──────────────────────────────────────────────────────
 # On Windows, asyncio.run() defaults to SelectorEventLoop which raises
@@ -37,9 +40,148 @@ from .models import (
     TestScreenshot,
 )
 
+# Ensure all tables exist in the worker process.
+# The FastAPI app calls init_db() on startup, but the Celery worker
+# is a separate process and must create tables itself — otherwise
+# any table added after the worker was first started (e.g. UserSettings)
+# will be missing and queries will raise OperationalError, silently
+# swallowed by the integration try/except blocks.
+from .database import init_db as _init_db
+_init_db()
+
 
 SCREENSHOT_ROOT = os.path.abspath(settings.SCREENSHOT_DIR)
 os.makedirs(SCREENSHOT_ROOT, exist_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# QA Incident context extractor
+# ---------------------------------------------------------------------------
+
+def _build_incident_context(
+    *,
+    name: str,
+    job_id: str,
+    prompt: str,
+    target_url: Optional[str],
+    success_criteria: Optional[str],
+    steps_log_json: str,
+    final_result_text: Any,
+    error_message: Optional[str],
+    total_steps_count: int,
+    duration: int,
+    screenshots_persisted: list,
+    final_failure_shot_rel: Optional[str],
+    completed_at: "datetime",
+    dashboard_base_url: Optional[str],
+    linear_issue_url: Optional[str],
+    linear_identifier: Optional[str],
+) -> dict[str, Any]:
+    """
+    Extracts all real, available execution fields into a flat dict
+    ready for slack_client.send_qa_incident().
+    Nothing is fabricated — if a field isn't available it is None.
+    """
+
+    # ── Parse steps log ───────────────────────────────────────────────────────
+    actions: list[dict] = []
+    try:
+        raw = json.loads(steps_log_json) if isinstance(steps_log_json, str) else []
+        if isinstance(raw, list):
+            actions = raw
+    except Exception:
+        pass
+
+    # ── Find first step that has an error ─────────────────────────────────────
+    failed_step_index: Optional[int] = None
+    failed_action_label: Optional[str] = None
+    preceding_action_label: Optional[str] = None
+
+    for i, entry in enumerate(actions):
+        if entry.get("error"):
+            # 1-based for human display
+            failed_step_index = entry.get("step", i) + 1
+            action_dict = entry.get("action", {})
+            action_name = next(iter(action_dict), None) if action_dict else None
+            if action_name:
+                params = action_dict[action_name]
+                if isinstance(params, dict):
+                    param_str = ", ".join(
+                        f"{k}={str(v)[:60]}" for k, v in list(params.items())[:2]
+                    )
+                    failed_action_label = f"{action_name}({param_str})" if param_str else action_name
+                else:
+                    failed_action_label = action_name
+            # Preceding action
+            if i > 0:
+                prev = actions[i - 1]
+                prev_action_dict = prev.get("action", {})
+                prev_name = next(iter(prev_action_dict), None) if prev_action_dict else None
+                if prev_name:
+                    preceding_action_label = prev_name
+            break
+
+    # ── Reproduction steps from actions (up to 10, readable labels) ──────────
+    repro_steps: list[str] = []
+    for entry in actions[:15]:
+        action_dict = entry.get("action", {})
+        action_name = next(iter(action_dict), None) if action_dict else None
+        if not action_name or action_name in ("unknown", "done"):
+            continue
+        params = action_dict.get(action_name, {})
+        if isinstance(params, dict):
+            # navigate → "Navigate to https://..."
+            if action_name == "navigate" and params.get("url"):
+                repro_steps.append(f"Navigate to {params['url'][:80]}")
+            elif action_name in ("click", "type", "fill") and params.get("selector"):
+                repro_steps.append(f"{action_name.capitalize()} `{params['selector'][:60]}`")
+            elif action_name == "type" and params.get("text"):
+                repro_steps.append(f"Type: {params['text'][:60]}")
+            elif params:
+                first_val = str(list(params.values())[0])[:60]
+                repro_steps.append(f"{action_name}: {first_val}")
+            else:
+                repro_steps.append(action_name)
+        else:
+            repro_steps.append(str(action_name)[:60])
+
+        if len(repro_steps) >= 10:
+            break
+
+    # ── Screenshot URL ─────────────────────────────────────────────────────────
+    # Find the failure-point screenshot; prefer the explicit final_failure_shot_rel
+    screenshot_server_url: Optional[str] = None
+    if dashboard_base_url:
+        # Find the screenshot DB id from persisted list — we only have paths here,
+        # so we build a URL using the run detail page which shows screenshots inline
+        if final_failure_shot_rel or screenshots_persisted:
+            # Point to the run's evidence section; the exact screenshot is one click away
+            screenshot_server_url = None  # set after DB write — handled in caller
+
+    # ── Dashboard deep link ───────────────────────────────────────────────────
+    dashboard_run_url: Optional[str] = None
+    if dashboard_base_url:
+        base = dashboard_base_url.rstrip("/")
+        dashboard_run_url = f"{base}/runs/{job_id}"
+
+    return {
+        "test_name": name,
+        "job_id": job_id,
+        "timestamp_iso": completed_at.isoformat() if completed_at else None,
+        "target_url": target_url,
+        "expected_result": success_criteria,
+        "actual_result": str(final_result_text)[:500] if final_result_text else None,
+        "failed_step_index": failed_step_index,
+        "total_steps": total_steps_count,
+        "failed_action_label": failed_action_label,
+        "preceding_action_label": preceding_action_label,
+        "duration_seconds": duration,
+        "repro_steps": repro_steps if repro_steps else None,
+        "dashboard_run_url": dashboard_run_url,
+        "error_message": error_message,
+        "linear_issue_url": linear_issue_url,
+        "linear_identifier": linear_identifier,
+    }
 
 
 def _job_screenshot_dir(job_id: str) -> str:
@@ -306,12 +448,65 @@ def run_browser_test(
         is_done = history.is_done()
         any_errors = history.has_errors()            # bool in 0.13.7
 
-        # A run is successful if the agent called done() AND produced a
-        # final result. Intermediate step errors (retries, timeouts,
-        # element-not-found) are normal browser-use behavior — they
-        # should not mark the entire run failed when the agent ultimately
-        # completed the task and returned a meaningful result.
-        is_successful = is_done and bool(final_result_text)
+        # ── Determine success correctly ───────────────────────────────────────
+        # browser-use's done() action accepts a boolean success flag.
+        # history.is_done() returns True for ANY done() call — including
+        # done(False) / done("FAILED ..."). We must check is_successful()
+        # which reflects the actual flag the agent passed to done().
+        #
+        # Additionally guard against agents that write "FAILED" / "failed"
+        # in their final result text (as seen in the wild) without using
+        # done(False) — treat those as failures too.
+        #
+        # Precedence:
+        #  1. history.is_successful() if available (most accurate)
+        #  2. Explicit failure keywords in final_result_text
+        #  3. Original fallback: is_done and non-empty result
+        try:
+            # browser-use ≥ 0.1.x exposes is_successful() on AgentHistory
+            agent_says_successful: Optional[bool] = history.is_successful()
+        except Exception:
+            agent_says_successful = None
+
+        _result_lower = (final_result_text or "").lower()
+        _result_signals_failure = any(
+            kw in _result_lower
+            for kw in (
+                "test failed",
+                "test marked as failed",
+                "marked as failed",
+                "task failed",
+                "verification failed",
+                "assertion failed",
+                "did not match",
+                "not found",
+                "qa test failed",
+                "expected number",
+                "actual number",
+            )
+        )
+
+        if agent_says_successful is False:
+            # Agent explicitly called done(success=False) — trust this above all
+            is_successful = False
+        elif _result_signals_failure:
+            # Agent wrote clear failure language in result text
+            is_successful = False
+        elif agent_says_successful is True and not _result_signals_failure:
+            # Agent called done(success=True) and result has no failure language
+            is_successful = True
+        else:
+            # Original fallback
+            is_successful = is_done and bool(final_result_text)
+
+        logger.info(
+            "Success determination: job_id=%s agent_says_successful=%s "
+            "result_signals_failure=%s is_done=%s → is_successful=%s | "
+            "final_result_preview=%s",
+            job_id, agent_says_successful, _result_signals_failure,
+            is_done, is_successful,
+            (final_result_text or "")[:120],
+        )
 
         # Copy agent-saved screenshot files into our managed dir
         for idx, src in enumerate(shot_paths):
@@ -490,20 +685,98 @@ def run_browser_test(
                         except Exception:
                             pass
 
-                    # ---- Slack webhook auto-alert ----
-                    if settings.SLACK_WEBHOOK_URL:
+                    # ---- Slack QA incident auto-alert (per-user) ----
+                    # Look up the run owner's saved Slack settings first.
+                    # Falls back to global SLACK_WEBHOOK_URL from .env for
+                    # single-tenant / self-hosted deployments.
+                    from ..models import UserSettings as _UserSettings
+                    user_slack_url: Optional[str] = None
+                    user_slack_enabled: bool = True
+                    user_dashboard_base: Optional[str] = None
+
+                    if run and run.owner_id:
                         try:
-                            slack_client.send_test_failure_alert(
-                                test_name=name,
-                                job_id=job_id,
-                                total_steps=total_steps_count,
-                                duration_seconds=duration,
-                                success_criteria=success_criteria,
-                                error_message=None,
-                                target_url=target_url,
+                            u_cfg = (
+                                db.query(_UserSettings)
+                                .filter(_UserSettings.owner_id == run.owner_id)
+                                .first()
                             )
-                        except Exception:
-                            pass
+                            if u_cfg:
+                                user_slack_url = u_cfg.slack_webhook_url
+                                user_slack_enabled = u_cfg.slack_auto_alert_on_failure
+                                user_dashboard_base = u_cfg.dashboard_base_url
+                                logger.info(
+                                    "Slack lookup: owner=%s url_set=%s enabled=%s",
+                                    run.owner_id, bool(user_slack_url), user_slack_enabled,
+                                )
+                            else:
+                                logger.info(
+                                    "Slack lookup: no UserSettings row for owner=%s",
+                                    run.owner_id,
+                                )
+                        except Exception as _lookup_exc:
+                            logger.warning(
+                                "Slack UserSettings lookup failed (owner=%s): %s",
+                                run.owner_id, _lookup_exc,
+                            )
+                    else:
+                        logger.info(
+                            "Slack lookup: run has no owner_id (job_id=%s), "
+                            "falling back to global SLACK_WEBHOOK_URL",
+                            job_id,
+                        )
+
+                    effective_webhook = user_slack_url or settings.SLACK_WEBHOOK_URL
+                    logger.info(
+                        "Slack gate: effective_webhook=%s enabled=%s (job_id=%s)",
+                        bool(effective_webhook), user_slack_enabled, job_id,
+                    )
+
+                    if effective_webhook and user_slack_enabled:
+                        try:
+                            # Resolve any Linear issue just created
+                            lin_url: Optional[str] = None
+                            lin_id: Optional[str] = None
+                            if run_id is not None:
+                                lin_issue = (
+                                    db.query(LinearIssue)
+                                    .filter(LinearIssue.test_run_id == run_id)
+                                    .first()
+                                )
+                                if lin_issue:
+                                    lin_url = lin_issue.url
+                                    lin_id = lin_issue.identifier
+
+                            ctx = _build_incident_context(
+                                name=name,
+                                job_id=job_id,
+                                prompt=prompt,
+                                target_url=target_url,
+                                success_criteria=success_criteria,
+                                steps_log_json=steps_log_json,
+                                final_result_text=final_result_text,
+                                error_message=run.error_message if run else None,
+                                total_steps_count=total_steps_count,
+                                duration=duration,
+                                screenshots_persisted=screenshots_persisted,
+                                final_failure_shot_rel=final_failure_shot_rel,
+                                completed_at=datetime.utcnow(),
+                                dashboard_base_url=(
+                                    user_dashboard_base
+                                    or settings.DASHBOARD_BASE_URL
+                                ),
+                                linear_issue_url=lin_url,
+                                linear_identifier=lin_id,
+                            )
+                            slack_client.send_qa_incident(
+                                webhook_url=effective_webhook,
+                                **ctx,
+                            )
+                        except Exception as _slack_exc:
+                            logger.warning(
+                                "Slack QA incident send failed (job_id=%s): %s",
+                                job_id, _slack_exc, exc_info=True,
+                            )
                 finally:
                     db.close()
             except Exception:

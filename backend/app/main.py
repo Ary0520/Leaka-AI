@@ -1094,3 +1094,97 @@ def slack_failure_alert(
         dashboard_url=dashboard_url,
     )
     return {"sent": bool(result.get("ok")), "result": result}
+
+
+# ---------------------------------------------------------------------------
+# Per-user Slack settings (stored in DB, per Supabase user)
+# ---------------------------------------------------------------------------
+from .models import UserSettings as _UserSettings  # noqa: E402
+
+
+class SlackSettingsBody(BaseModel):
+    slack_webhook_url: Optional[str] = None       # empty string = clear
+    slack_auto_alert_on_failure: Optional[bool] = None
+    dashboard_base_url: Optional[str] = None
+
+
+@app.get("/api/user/slack-settings")
+def get_user_slack_settings(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    owner = user["sub"]
+    cfg = db.query(_UserSettings).filter(_UserSettings.owner_id == owner).first()
+    if not cfg:
+        return {
+            "slack_webhook_url_set": False,
+            "slack_webhook_url_masked": "",
+            "slack_auto_alert_on_failure": True,
+            "dashboard_base_url": "",
+        }
+    masked = ""
+    if cfg.slack_webhook_url:
+        masked = cfg.slack_webhook_url[:34] + "…" if len(cfg.slack_webhook_url) > 34 else cfg.slack_webhook_url
+    return {
+        "slack_webhook_url_set": bool(cfg.slack_webhook_url),
+        "slack_webhook_url_masked": masked,
+        "slack_auto_alert_on_failure": cfg.slack_auto_alert_on_failure,
+        "dashboard_base_url": cfg.dashboard_base_url or "",
+    }
+
+
+@app.patch("/api/user/slack-settings")
+def update_user_slack_settings(
+    body: SlackSettingsBody,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    owner = user["sub"]
+    cfg = db.query(_UserSettings).filter(_UserSettings.owner_id == owner).first()
+    if not cfg:
+        cfg = _UserSettings(owner_id=owner)
+        db.add(cfg)
+
+    if body.slack_webhook_url is not None:
+        cfg.slack_webhook_url = body.slack_webhook_url or None  # "" → None (clear)
+    if body.slack_auto_alert_on_failure is not None:
+        cfg.slack_auto_alert_on_failure = body.slack_auto_alert_on_failure
+    if body.dashboard_base_url is not None:
+        cfg.dashboard_base_url = body.dashboard_base_url or None
+
+    db.commit()
+    return {"message": "Slack settings saved.", "auto_alert": cfg.slack_auto_alert_on_failure}
+
+
+@app.post("/api/user/slack-settings/test-ping")
+def test_slack_ping(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Send a test ping to verify the webhook URL is working."""
+    owner = user["sub"]
+    cfg = db.query(_UserSettings).filter(_UserSettings.owner_id == owner).first()
+    webhook = (cfg and cfg.slack_webhook_url) or settings.SLACK_WEBHOOK_URL
+    if not webhook:
+        raise HTTPException(400, "No Slack webhook URL configured.")
+
+    import requests as _req
+    payload = {
+        "text": "✅ *Leaka AI — Slack connection verified.*\nYou'll receive QA incident alerts here when tests fail.",
+        "blocks": [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "✅ *Leaka AI — Slack connection verified.*\nYou'll receive QA incident alerts here when tests fail.",
+                },
+            }
+        ],
+    }
+    try:
+        resp = _req.post(webhook, json=payload, timeout=10)
+        if 200 <= resp.status_code < 300:
+            return {"ok": True, "message": "Test ping sent successfully."}
+        return {"ok": False, "message": f"Slack returned HTTP {resp.status_code}: {resp.text[:200]}"}
+    except Exception as exc:
+        return {"ok": False, "message": f"Request failed: {exc}"}

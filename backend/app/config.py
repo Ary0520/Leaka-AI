@@ -111,6 +111,11 @@ class Settings:
         return os.getenv("SLACK_WEBHOOK_URL")
 
     @property
+    def DASHBOARD_BASE_URL(self) -> str | None:
+        """Fallback dashboard base URL for single-tenant / self-hosted use."""
+        return os.getenv("DASHBOARD_BASE_URL")
+
+    @property
     def CI_WEBHOOK_TOKEN(self) -> str:
         return os.getenv("CI_WEBHOOK_TOKEN", "revguard-ci-token-change-me")
 
