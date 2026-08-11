@@ -1235,3 +1235,35 @@ def test_slack_ping(
         return {"ok": False, "message": f"Slack returned HTTP {resp.status_code}: {resp.text[:200]}"}
     except Exception as exc:
         return {"ok": False, "message": f"Request failed: {exc}"}
+
+
+# ---------------------------------------------------------------------------
+# Onboarding state — track whether user has completed the onboarding flow
+# ---------------------------------------------------------------------------
+
+@app.get("/api/user/onboarding")
+def get_onboarding_status(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Return whether the current user has completed onboarding."""
+    owner = user["sub"]
+    cfg = db.query(UserSettings).filter(UserSettings.owner_id == owner).first()
+    completed = bool(cfg and cfg.onboarding_completed)
+    return {"onboarding_completed": completed}
+
+
+@app.post("/api/user/onboarding/complete")
+def complete_onboarding(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Mark onboarding as complete for the current user."""
+    owner = user["sub"]
+    cfg = db.query(UserSettings).filter(UserSettings.owner_id == owner).first()
+    if not cfg:
+        cfg = UserSettings(owner_id=owner)
+        db.add(cfg)
+    cfg.onboarding_completed = True
+    db.commit()
+    return {"onboarding_completed": True}

@@ -137,5 +137,8 @@ class UserSettings(Base):
     # Dashboard deep-link base (e.g. "https://app.leaka.ai" or "http://localhost:3000")
     dashboard_base_url = Column(String(512), nullable=True)
 
+    # Onboarding
+    onboarding_completed = Column(Boolean, default=False, nullable=False)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

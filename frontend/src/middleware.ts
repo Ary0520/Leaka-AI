@@ -31,9 +31,10 @@ export async function middleware(request: NextRequest) {
 
   // Public paths — never redirect these to login
   const isPublic =
-    pathname === "/" ||                    // landing page
+    pathname === "/" ||
     pathname.startsWith("/login") ||
     pathname.startsWith("/auth") ||
+    pathname.startsWith("/onboard") ||   // onboarding is auth-gated client-side
     pathname.startsWith("/_next") ||
     pathname.includes(".");               // static files
 
@@ -44,7 +45,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Optional: authenticated users hitting /login → /dashboard
+  // Authenticated users hitting /login → /dashboard
   if (user && pathname === "/login") {
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";

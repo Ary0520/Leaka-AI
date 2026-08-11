@@ -106,14 +106,29 @@ async def _test_llm_connection() -> dict[str, Any]:
             return {"ok": False, "provider": provider, "model": settings.LLM_MODEL_OPENROUTER,
                     "detail": "OPENROUTER_API_KEY is not set. Add it in Settings."}
         try:
-            from openai import AsyncOpenAI
-            client = AsyncOpenAI(
-                api_key=api_key,
-                base_url="https://openrouter.ai/api/v1",
-            )
-            await client.models.list()
-            return {"ok": True, "provider": provider, "model": settings.LLM_MODEL_OPENROUTER,
-                    "detail": "API key is valid and active."}
+            import httpx
+            # OpenRouter's /auth/key endpoint validates the key and returns
+            # account metadata. It returns 401 for invalid/missing keys.
+            # Do NOT use /models — that endpoint is public and accepts any key.
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                resp = await client.get(
+                    "https://openrouter.ai/api/v1/auth/key",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+            if resp.status_code == 200:
+                data = resp.json().get("data", {})
+                label = data.get("label") or "connected"
+                limit = data.get("limit")
+                usage = data.get("usage", 0)
+                remaining = f" · ${round(limit - usage, 4)} remaining" if limit else ""
+                return {"ok": True, "provider": provider, "model": settings.LLM_MODEL_OPENROUTER,
+                        "detail": f"API key is valid ({label}){remaining}."}
+            elif resp.status_code in (401, 403):
+                return {"ok": False, "provider": provider, "model": settings.LLM_MODEL_OPENROUTER,
+                        "detail": _classify_api_error(resp.text[:200])}
+            else:
+                return {"ok": False, "provider": provider, "model": settings.LLM_MODEL_OPENROUTER,
+                        "detail": f"OpenRouter returned HTTP {resp.status_code}."}
         except Exception as exc:
             return {"ok": False, "provider": provider, "model": settings.LLM_MODEL_OPENROUTER,
                     "detail": _classify_api_error(str(exc))}

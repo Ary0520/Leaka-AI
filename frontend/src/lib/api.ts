@@ -384,6 +384,14 @@ export const api = {
       method: "POST",
     }),
 
+  // Onboarding
+  getOnboardingStatus: () =>
+    request<{ onboarding_completed: boolean }>("/api/user/onboarding"),
+  completeOnboarding: () =>
+    request<{ onboarding_completed: boolean }>("/api/user/onboarding/complete", {
+      method: "POST",
+    }),
+
   // CI webhook
   triggerCI: (body: {
     suite_id?: number | null;
