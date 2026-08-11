@@ -134,27 +134,58 @@ def _build_incident_context(
 
     # ── Reproduction steps from actions (up to 10, readable labels) ──────────
     repro_steps: list[str] = []
-    for entry in actions[:15]:
+    seen_step_indices: set = set()
+    for entry in actions:
         action_dict = entry.get("action", {})
         action_name = next(iter(action_dict), None) if action_dict else None
-        if not action_name or action_name in ("unknown", "done"):
+        step_idx = entry.get("step", -1)
+
+        # Skip non-user-facing noise and dedup within same step
+        if not action_name or action_name in ("unknown", "done", "wait",
+                                               "search_page", "scroll"):
             continue
+
         params = action_dict.get(action_name, {})
+        result_text = str(entry.get("result", "") or "").strip()
+        result_first_line = result_text.split("\n")[0][:120] if result_text else ""
+
+        step_label: Optional[str] = None
+
         if isinstance(params, dict):
-            # navigate → "Navigate to https://..."
-            if action_name == "navigate" and params.get("url"):
-                repro_steps.append(f"Navigate to {params['url'][:80]}")
-            elif action_name in ("click", "type", "fill") and params.get("selector"):
-                repro_steps.append(f"{action_name.capitalize()} `{params['selector'][:60]}`")
-            elif action_name == "type" and params.get("text"):
-                repro_steps.append(f"Type: {params['text'][:60]}")
-            elif params:
-                first_val = str(list(params.values())[0])[:60]
-                repro_steps.append(f"{action_name}: {first_val}")
+            if action_name == "navigate":
+                url = params.get("url", "")
+                step_label = f"Navigate to {url[:80]}" if url else None
+
+            elif action_name in ("click",):
+                # Use result text if it describes what was clicked
+                # e.g. "Clicked element 'Upload Content'"
+                if result_first_line and len(result_first_line) > 3:
+                    step_label = result_first_line
+                elif params.get("selector"):
+                    step_label = f"Click {params['selector'][:60]}"
+                else:
+                    step_label = None  # bare index with no result — skip
+
+            elif action_name in ("input", "type", "fill"):
+                text_val = params.get("text", "")
+                # Use the result which says "Typed 'xyz'"
+                if result_first_line and "typed" in result_first_line.lower():
+                    step_label = result_first_line
+                elif text_val:
+                    step_label = f"Enter '{text_val[:60]}'"
+                else:
+                    step_label = None
+
             else:
-                repro_steps.append(action_name)
-        else:
-            repro_steps.append(str(action_name)[:60])
+                if result_first_line and len(result_first_line) > 3:
+                    step_label = result_first_line
+                elif params:
+                    first_val = str(list(params.values())[0])[:60]
+                    if first_val and not first_val.isdigit():
+                        step_label = f"{action_name}: {first_val}"
+
+        if step_label and step_label not in repro_steps:
+            repro_steps.append(step_label)
 
         if len(repro_steps) >= 10:
             break
@@ -363,11 +394,12 @@ def run_browser_test(
             llm=llm,
             browser_session=browser_session,
             use_vision=use_vision,
+            use_thinking=False,         # disable: causes parse failures via OpenRouter
             max_failures=5,
             max_actions_per_step=5,
             step_timeout=60,
             llm_timeout=60,
-            message_compaction=False,   # disable cross-run memory contamination
+            message_compaction=False,
             register_new_step_callback=_on_step,
         )
         history = await agent.run(max_steps=max_steps)
@@ -821,8 +853,11 @@ def run_browser_test(
                             )
                 finally:
                     db.close()
-            except Exception:
-                pass
+            except Exception as _integ_exc:
+                logger.error(
+                    "Auto-integration block CRASHED (job_id=%s): %s",
+                    job_id, _integ_exc, exc_info=True,
+                )
 
         return {
             "job_id": job_id,
