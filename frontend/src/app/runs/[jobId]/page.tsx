@@ -194,13 +194,13 @@ export default function RunDetailPage() {
   });
 
   const emailMut = useMutation({
-    mutationFn: () => api.sendFailureEmail(jobId, typeof window !== "undefined" ? `${window.location.origin}/runs` : undefined),
+    mutationFn: () => api.sendFailureEmail(jobId, typeof window !== "undefined" ? window.location.origin : undefined),
     onSuccess: () => toast({ title: "Failure alert email sent" }),
     onError: (e: Error) => toast({ title: "Email failed", description: e.message, variant: "destructive" }),
   });
 
   const slackMut = useMutation({
-    mutationFn: () => api.sendSlackAlert(jobId, typeof window !== "undefined" ? `${window.location.origin}/runs` : undefined),
+    mutationFn: () => api.sendSlackAlert(jobId, typeof window !== "undefined" ? window.location.origin : undefined),
     onSuccess: (r) => toast({ title: r.sent ? "Slack alert sent" : "Slack alert failed", variant: r.sent ? "default" : "destructive" }),
     onError: (e: Error) => toast({ title: "Slack failed", description: e.message, variant: "destructive" }),
   });

@@ -37,6 +37,7 @@ from .models import (
     TestRunStatus,
     TestScreenshot,
     TestSuite,
+    UserSettings,
 )
 from .schemas import (
     CIWebhookRequest,
@@ -1079,27 +1080,47 @@ def slack_failure_alert(
     if not run:
         raise HTTPException(404, "Job not found")
 
-    dashboard_url = None
-    if dashboard_base_url:
-        dashboard_url = f"{dashboard_base_url.rstrip('/')}/runs/{job_id}"
+    cfg = db.query(UserSettings).filter(UserSettings.owner_id == user["sub"]).first()
+    webhook = (cfg.slack_webhook_url if cfg else None) or settings.SLACK_WEBHOOK_URL
+    if not webhook:
+        raise HTTPException(400, "No Slack webhook URL configured.")
 
-    result = slack_client.send_test_failure_alert(
-        test_name=run.name,
-        job_id=job_id,
-        total_steps=run.total_steps,
-        duration_seconds=run.duration_seconds,
-        success_criteria=run.success_criteria,
-        error_message=run.error_message,
-        target_url=run.target_url,
-        dashboard_url=dashboard_url,
+    dash_base = (
+        (cfg.dashboard_base_url if cfg and cfg.dashboard_base_url else None)
+        or (dashboard_base_url.strip() if dashboard_base_url else None)
+        or settings.DASHBOARD_BASE_URL
     )
+
+    lin = db.query(LinearIssue).filter(LinearIssue.test_run_id == run.id).first()
+
+    # Reuse the same incident builder as the worker auto-alert path
+    from .worker import _build_incident_context
+
+    ctx = _build_incident_context(
+        name=run.name,
+        job_id=job_id,
+        prompt=run.prompt,
+        target_url=run.target_url,
+        success_criteria=run.success_criteria,
+        steps_log_json=run.steps_log or "[]",
+        final_result_text=run.final_result,
+        error_message=run.error_message,
+        total_steps_count=run.total_steps or 0,
+        duration=run.duration_seconds or 0,
+        screenshots_persisted=[],
+        final_failure_shot_rel=None,
+        completed_at=run.completed_at or datetime.utcnow(),
+        dashboard_base_url=dash_base,
+        linear_issue_url=lin.url if lin else None,
+        linear_identifier=lin.identifier if lin else None,
+    )
+    result = slack_client.send_qa_incident(webhook_url=webhook, **ctx)
     return {"sent": bool(result.get("ok")), "result": result}
 
 
 # ---------------------------------------------------------------------------
 # Per-user Slack settings (stored in DB, per Supabase user)
 # ---------------------------------------------------------------------------
-from .models import UserSettings as _UserSettings  # noqa: E402
 
 
 class SlackSettingsBody(BaseModel):
@@ -1114,7 +1135,7 @@ def get_user_slack_settings(
     user: dict = Depends(get_current_user),
 ):
     owner = user["sub"]
-    cfg = db.query(_UserSettings).filter(_UserSettings.owner_id == owner).first()
+    cfg = db.query(UserSettings).filter(UserSettings.owner_id == owner).first()
     if not cfg:
         return {
             "slack_webhook_url_set": False,
@@ -1140,9 +1161,9 @@ def update_user_slack_settings(
     user: dict = Depends(get_current_user),
 ):
     owner = user["sub"]
-    cfg = db.query(_UserSettings).filter(_UserSettings.owner_id == owner).first()
+    cfg = db.query(UserSettings).filter(UserSettings.owner_id == owner).first()
     if not cfg:
-        cfg = _UserSettings(owner_id=owner)
+        cfg = UserSettings(owner_id=owner)
         db.add(cfg)
 
     if body.slack_webhook_url is not None:
@@ -1163,7 +1184,7 @@ def test_slack_ping(
 ):
     """Send a test ping to verify the webhook URL is working."""
     owner = user["sub"]
-    cfg = db.query(_UserSettings).filter(_UserSettings.owner_id == owner).first()
+    cfg = db.query(UserSettings).filter(UserSettings.owner_id == owner).first()
     webhook = (cfg and cfg.slack_webhook_url) or settings.SLACK_WEBHOOK_URL
     if not webhook:
         raise HTTPException(400, "No Slack webhook URL configured.")

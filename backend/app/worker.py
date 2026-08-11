@@ -38,6 +38,7 @@ from .models import (
     TestRun,
     TestRunStatus,
     TestScreenshot,
+    UserSettings,
 )
 
 # ---------------------------------------------------------------------------
@@ -478,17 +479,19 @@ def run_browser_test(
         # The normal integration block below is never reached on re-raise.
         try:
             from .integrations import slack_client as _sc
-            from .models import UserSettings as _US
             _db = SessionLocal()
             try:
                 _run = _db.query(TestRun).filter(TestRun.job_id == job_id).first()
                 _owner = _run.owner_id if _run else None
-                _u = _db.query(_US).filter(_US.owner_id == _owner).first() if _owner else None
+                _u = (
+                    _db.query(UserSettings).filter(UserSettings.owner_id == _owner).first()
+                    if _owner else None
+                )
                 _wh = (_u.slack_webhook_url if _u else None) or settings.SLACK_WEBHOOK_URL
                 _enabled = _u.slack_auto_alert_on_failure if _u else True
                 _dash = (_u.dashboard_base_url if _u else None) or settings.DASHBOARD_BASE_URL
                 if _wh and _enabled:
-                    _sc.send_qa_incident(
+                    _crash_res = _sc.send_qa_incident(
                         webhook_url=_wh,
                         test_name=name,
                         job_id=job_id,
@@ -498,7 +501,13 @@ def run_browser_test(
                         error_message=f"Agent runtime error: {str(exc)[:400]}",
                         dashboard_run_url=f"{_dash.rstrip('/')}/runs/{job_id}" if _dash else None,
                     )
-                    logger.info("Slack crash alert sent (job_id=%s)", job_id)
+                    if _crash_res.get("ok"):
+                        logger.info("Slack crash alert sent (job_id=%s)", job_id)
+                    else:
+                        logger.warning(
+                            "Slack crash alert rejected (job_id=%s): %s",
+                            job_id, _crash_res,
+                        )
             finally:
                 _db.close()
         except Exception as _se:
@@ -763,7 +772,6 @@ def run_browser_test(
                     # Look up the run owner's saved Slack settings first.
                     # Falls back to global SLACK_WEBHOOK_URL from .env for
                     # single-tenant / self-hosted deployments.
-                    from ..models import UserSettings as _UserSettings
                     user_slack_url: Optional[str] = None
                     user_slack_enabled: bool = True
                     user_dashboard_base: Optional[str] = None
@@ -771,8 +779,8 @@ def run_browser_test(
                     if run and run.owner_id:
                         try:
                             u_cfg = (
-                                db.query(_UserSettings)
-                                .filter(_UserSettings.owner_id == run.owner_id)
+                                db.query(UserSettings)
+                                .filter(UserSettings.owner_id == run.owner_id)
                                 .first()
                             )
                             if u_cfg:
@@ -842,10 +850,20 @@ def run_browser_test(
                                 linear_issue_url=lin_url,
                                 linear_identifier=lin_id,
                             )
-                            slack_client.send_qa_incident(
+                            slack_res = slack_client.send_qa_incident(
                                 webhook_url=effective_webhook,
                                 **ctx,
                             )
+                            if slack_res.get("ok"):
+                                logger.info(
+                                    "Slack QA incident sent (job_id=%s dedup=%s)",
+                                    job_id, slack_res.get("dedup_key"),
+                                )
+                            else:
+                                logger.warning(
+                                    "Slack QA incident rejected (job_id=%s): %s",
+                                    job_id, slack_res,
+                                )
                         except Exception as _slack_exc:
                             logger.warning(
                                 "Slack QA incident send failed (job_id=%s): %s",

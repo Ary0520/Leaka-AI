@@ -202,10 +202,11 @@ def send_qa_incident(
     ts_display = timestamp_iso or "—"
     if ts_display and "T" in ts_display:
         # "2026-08-08T14:32:11.000000" → "Aug 8, 2026 · 14:32"
+        # Avoid %-d (POSIX-only); strip leading zero from %d for Windows too.
         try:
             from datetime import datetime as _dt
             dt = _dt.fromisoformat(ts_display.replace("Z", ""))
-            ts_display = dt.strftime("%b %-d, %Y · %H:%M")
+            ts_display = dt.strftime("%b %d, %Y · %H:%M").replace(" 0", " ", 1)
         except Exception:
             ts_display = ts_display[:16].replace("T", " · ")
 
