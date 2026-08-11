@@ -287,9 +287,13 @@ class IntegrationSettingsUpdate(BaseModel):
 @app.patch("/api/settings/integrations")
 def update_integration_settings(body: IntegrationSettingsUpdate, user: dict = Depends(get_current_user)):
     """
-    Persist integration settings to backend/.env.
+    Persist integration settings to backend/.env AND into os.environ in-process.
+
+    All changes take effect immediately for the next test run — no restart needed.
+    get_llm() reads os.environ fresh on every run, so LLM key/provider switches
+    are live as soon as this endpoint returns.
+
     Empty string = clear the value. None = leave unchanged.
-    Restart the backend after saving for changes to take effect.
     """
     field_map = {
         "linear_api_key": "LINEAR_API_KEY",
@@ -315,17 +319,25 @@ def update_integration_settings(body: IntegrationSettingsUpdate, user: dict = De
     if not updates:
         return {"message": "Nothing to update", "updated": []}
 
+    # 1. Persist to .env so changes survive a restart
     _write_env_file(updates)
 
-    # Also update os.environ in-process so current requests reflect the change
+    # 2. Apply immediately to os.environ so the running process picks them up
+    #    right now — no restart needed. get_llm(), slack_client, linear_client,
+    #    and all integrations read settings via os.getenv() at call time.
     for env_key, val in updates.items():
         if val:
             os.environ[env_key] = val
         elif env_key in os.environ:
             del os.environ[env_key]
 
+    logger.info(
+        "Integration settings updated live (no restart needed): %s",
+        list(updates.keys()),
+    )
+
     return {
-        "message": "Settings saved. Restart the backend server for LLM/provider changes to take effect.",
+        "message": "Settings saved and active immediately.",
         "updated": list(updates.keys()),
     }
 
@@ -445,6 +457,20 @@ def health():
         else "unknown"
     )
     return {"status": "ok", "llm_provider": settings.LLM_PROVIDER, "llm_model": model}
+
+
+@app.post("/api/settings/llm/test-connection")
+async def test_llm_connection(user: dict = Depends(get_current_user)):
+    """
+    Validate the currently configured LLM provider and API key by making a
+    lightweight live API call (no tokens consumed for OpenAI/OpenRouter/Anthropic).
+
+    Returns:
+        {"ok": bool, "provider": str, "model": str, "detail": str}
+    """
+    from .llm import _test_llm_connection
+    result = await _test_llm_connection()
+    return result
 
 
 # ---------------------------------------------------------------------------

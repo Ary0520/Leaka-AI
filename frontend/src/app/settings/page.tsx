@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Save, CheckCircle2, Ticket, Mail, Bell, Zap, Webhook, Settings2, Send } from "lucide-react";
+import { Loader2, Save, CheckCircle2, Ticket, Mail, Bell, Zap, Webhook, Settings2, Send, FlaskConical } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 
 type IntegrationSettings = Awaited<ReturnType<typeof api.getIntegrationSettings>>;
@@ -252,6 +252,7 @@ export default function SettingsPage() {
   const [openaiKey, setOpenaiKey] = useState("");
   const [anthropicKey, setAnthropicKey] = useState("");
   const [ciToken, setCiToken] = useState("");
+  const [llmTestResult, setLlmTestResult] = useState<{ ok: boolean; provider: string; model: string; detail: string } | null>(null);
 
   // Populate non-secret fields from server
   useEffect(() => {
@@ -278,6 +279,20 @@ export default function SettingsPage() {
     saveMut.mutate(payload);
   };
 
+  const llmTestMut = useMutation({
+    mutationFn: () => api.testLlmConnection(),
+    onSuccess: (r) => {
+      setLlmTestResult(r);
+      toast({
+        title: r.ok ? "LLM connection verified ✓" : "LLM connection failed",
+        description: r.detail,
+        variant: r.ok ? "default" : "destructive",
+      });
+    },
+    onError: (e: Error) =>
+      toast({ title: "Connection test failed", description: e.message, variant: "destructive" }),
+  });
+
   if (isLoading) return (
     <div className="space-y-4 max-w-2xl">
       {Array.from({ length: 4 }).map((_, i) => (
@@ -293,19 +308,18 @@ export default function SettingsPage() {
           <Settings2 className="w-6 h-6" /> Integration Settings
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Configure your integrations. Secrets are stored in the backend <code>.env</code> file.
-          A backend restart is required for LLM changes to take effect.
+          All changes take effect immediately — no restart needed.
         </p>
       </div>
 
       {/* ── LLM ── */}
       <Card>
         <SectionHeader icon={<Zap className="w-4 h-4 text-primary" />} title="LLM Provider"
-          description="The AI model that drives the browser-use agent. Restart backend after changing." />
+          description="The AI model that drives the browser-use agent. Changes apply immediately to the next test run." />
         <CardContent className="space-y-4">
           <div>
             <Label>Provider</Label>
-            <Select value={llmProvider} onValueChange={setLlmProvider}>
+            <Select value={llmProvider} onValueChange={(v) => { setLlmProvider(v); setLlmTestResult(null); }}>
               <SelectTrigger className="mt-1"><SelectValue placeholder="Select provider" /></SelectTrigger>
               <SelectContent>
                 {LLM_PROVIDERS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
@@ -340,16 +354,49 @@ export default function SettingsPage() {
           {llmProvider === "ollama" && (
             <p className="text-sm text-muted-foreground">Ollama runs locally — no API key needed. Make sure Ollama is running on port 11434.</p>
           )}
-          <Button size="sm" disabled={saveMut.isPending} onClick={() => saveSection({
-            llm_provider: llmProvider || undefined,
-            llm_model_openrouter: openrouterModel || undefined,
-            openrouter_api_key: openrouterKey || undefined,
-            openai_api_key: openaiKey || undefined,
-            anthropic_api_key: anthropicKey || undefined,
-          })}>
-            {saveMut.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-            Save LLM settings
-          </Button>
+          <div className="flex items-center gap-3 flex-wrap">
+            <Button size="sm" disabled={saveMut.isPending} onClick={() => {
+              setLlmTestResult(null);
+              saveSection({
+                llm_provider: llmProvider || undefined,
+                llm_model_openrouter: openrouterModel || undefined,
+                openrouter_api_key: openrouterKey || undefined,
+                openai_api_key: openaiKey || undefined,
+                anthropic_api_key: anthropicKey || undefined,
+              });
+            }}>
+              {saveMut.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+              Save LLM settings
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={llmTestMut.isPending}
+              onClick={() => llmTestMut.mutate()}
+            >
+              {llmTestMut.isPending
+                ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                : <FlaskConical className="w-4 h-4 mr-2" />}
+              Test connection
+            </Button>
+          </div>
+
+          {/* Live test result banner */}
+          {llmTestResult && (
+            <div className={`rounded-md border p-3 text-sm ${
+              llmTestResult.ok
+                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300"
+                : "bg-destructive/10 border-destructive/30 text-destructive"
+            }`}>
+              <p className="font-medium">
+                {llmTestResult.ok ? "✅ Connected" : "❌ Connection failed"}
+                <span className="font-normal text-xs ml-2 opacity-70">
+                  {llmTestResult.provider} · {llmTestResult.model}
+                </span>
+              </p>
+              <p className="mt-0.5">{llmTestResult.detail}</p>
+            </div>
+          )}
         </CardContent>
       </Card>
 

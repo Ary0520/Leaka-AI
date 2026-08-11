@@ -184,6 +184,13 @@ export interface TestSuiteRunResponse {
 export const api = {
   health: () => request<{ status: string; llm_provider: string; llm_model: string }>("/api/health"),
 
+  // LLM connection test
+  testLlmConnection: () =>
+    request<{ ok: boolean; provider: string; model: string; detail: string }>(
+      "/api/settings/llm/test-connection",
+      { method: "POST" },
+    ),
+
   // Dashboard health grid
   dashboardHealth: (limit = 14) =>
     request<Array<{

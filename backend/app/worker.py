@@ -338,6 +338,36 @@ def run_browser_test(
     task_parts.append(f"Task: {prompt}")
     if success_criteria:
         task_parts.append(f"Success criteria to validate after execution: {success_criteria}")
+
+    # ── Visual-observation rule ───────────────────────────────────────────────
+    # Many modern SPAs (React, Next.js, Web3 apps) render result messages
+    # inside portals, modals, or async-updated components whose text content
+    # is NOT reliably found by search_page (DOM text search).
+    # This instruction tells the agent to use its visual perception — which
+    # reads the rendered pixels — instead of relying solely on text search,
+    # especially after any action that triggers async processing.
+    # This does NOT change any architecture; it is purely a task-prompt suffix.
+    task_parts.append(
+        "\n--- OBSERVATION RULES (follow strictly) ---\n"
+        "1. After ANY form submission, button click, or action that triggers "
+        "async processing (e.g. blockchain transactions, API calls, uploads): "
+        "WAIT 3-5 seconds for the page to fully update, then use your VISUAL "
+        "perception to directly read any messages, modals, banners, alerts, or "
+        "status indicators that appear on screen. Do NOT rely solely on "
+        "search_page — modern web apps render result messages via JavaScript "
+        "after the initial DOM load, and search_page may miss them entirely.\n"
+        "2. If you visually see a success or error message, READ it directly "
+        "and report exactly what it says — do not search for keywords.\n"
+        "3. When determining the final outcome, use extract_content or direct "
+        "visual observation as your primary method. Use search_page only as a "
+        "secondary confirmation.\n"
+        "4. If the page shows an error message (even inside a modal or overlay), "
+        "that IS your answer — report it accurately as the test result using "
+        "done(success=False, result='<exact error text you see on screen>').\n"
+        "5. If the page shows a success message, report it using "
+        "done(success=True, result='<exact success text you see on screen>')."
+    )
+
     task_text = "\n".join(task_parts)
 
     async def _run_agent():
@@ -565,6 +595,20 @@ def run_browser_test(
                 "qa test failed",
                 "expected number",
                 "actual number",
+                # Blockchain / Web3 / transaction failure signals
+                "registration failed",
+                "transaction failed",
+                "blockchain transaction failed",
+                "blockchain error",
+                "error: blockchain",
+                "bigint",
+                "serialize",
+                # Generic app-level failure signals
+                "something went wrong",
+                "an error occurred",
+                "operation failed",
+                "request failed",
+                "error occurred",
             )
         )
 
@@ -580,6 +624,76 @@ def run_browser_test(
         else:
             # Original fallback
             is_successful = is_done and bool(final_result_text)
+
+        # ── Detect "agent stopped without calling done()" ────────────────────
+        # This happens when browser-use exits the run loop via:
+        #   a) consecutive_failures >= max_failures — the LLM returned errors
+        #      on every step (e.g. 401/403 API key issues, rate limits), OR
+        #   b) max_steps exhausted (while-loop ran to completion without break)
+        # In both cases: is_done=False, final_result=None, is_successful=None.
+        # We surface the last agent error from history so the user gets a
+        # clear, actionable message instead of silence.
+        agent_abort_reason: Optional[str] = None
+        if not is_done and not final_result_text:
+            # Pull all non-None errors from the agent's history
+            try:
+                all_errors = [e for e in (history.errors() or []) if e]
+                last_error = all_errors[-1] if all_errors else None
+            except Exception:
+                last_error = None
+
+            # ── Classify the error for a clean user-facing message ────────
+            _err_str = str(last_error or "").lower()
+
+            if "403" in _err_str or "key limit exceeded" in _err_str or "limit exceeded" in _err_str:
+                agent_abort_reason = (
+                    "LLM API error: API key credit limit exceeded (HTTP 403). "
+                    "Top up your OpenRouter / OpenAI / Anthropic credits, or "
+                    "switch to a different LLM provider in Settings."
+                )
+            elif "401" in _err_str or "unauthorized" in _err_str or "invalid api key" in _err_str or "authentication" in _err_str:
+                agent_abort_reason = (
+                    "LLM API error: Invalid or missing API key (HTTP 401). "
+                    "Check your API key in Settings → LLM Provider."
+                )
+            elif "429" in _err_str or "rate limit" in _err_str or "too many requests" in _err_str:
+                agent_abort_reason = (
+                    "LLM API error: Rate limit hit (HTTP 429). "
+                    "Too many requests in a short period. Wait a moment and retry, "
+                    "or upgrade your API plan."
+                )
+            elif "timeout" in _err_str or "timed out" in _err_str:
+                agent_abort_reason = (
+                    "Agent timed out waiting for a response. "
+                    "The LLM or the target page took too long to respond. "
+                    "Retry the test, or check if the target URL is reachable."
+                )
+            elif last_error:
+                agent_abort_reason = (
+                    f"Agent stopped after {total_steps_count} steps. "
+                    f"Last error: {str(last_error)[:400]}"
+                )
+            elif any_errors:
+                agent_abort_reason = (
+                    "Agent stopped due to consecutive failures. "
+                    "It could not complete the task — likely because page content "
+                    "is rendered dynamically (JavaScript/async) and the agent's "
+                    "text-search returned no matches. "
+                    "Check the Screenshots tab to see the actual page state."
+                )
+            else:
+                agent_abort_reason = (
+                    f"Agent stopped after {total_steps_count} steps without "
+                    "completing the task. It may have exceeded max_steps, or "
+                    "could not find the expected UI state."
+                )
+
+            logger.warning(
+                "Agent stopped without done() call: job_id=%s steps=%s "
+                "is_done=%s any_errors=%s last_error=%s",
+                job_id, total_steps_count, is_done, any_errors,
+                str(last_error or "")[:200],
+            )
 
         logger.info(
             "Success determination: job_id=%s agent_says_successful=%s "
@@ -653,6 +767,10 @@ def run_browser_test(
                 f"Steps: {total_steps_count} | Duration: {duration}s | "
                 f"Done: {is_done} | Intermediate errors: {any_errors}"
             ),
+            # Surface the abort reason as error_message when the agent stopped
+            # without calling done() — this fills the "Error" section in the UI
+            # and gives the integrations (Slack, Linear) actionable context.
+            "error_message": agent_abort_reason if agent_abort_reason else None,
             "has_visual_proof": len(screenshots_persisted) > 0,
             "is_successful": is_successful,
             "completed_at": datetime.utcnow(),
