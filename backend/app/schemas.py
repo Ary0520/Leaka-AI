@@ -89,7 +89,7 @@ class TestRunRequest(BaseModel):
     target_url: Optional[str] = None
     test_case_id: Optional[int] = None
     use_vision: Optional[bool] = True
-    max_steps: Optional[int] = 25
+    max_steps: Optional[int] = 50
 
 
 class TestRunEnqueueResponse(BaseModel):

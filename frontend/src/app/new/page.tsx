@@ -101,7 +101,7 @@ export default function NewTestPage() {
         success_criteria: finalSuccess,
         test_case_id,
         use_vision: true,
-        max_steps: 100,
+        max_steps: 50,
       });
     },
     onSuccess: (r) => {

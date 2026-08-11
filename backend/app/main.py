@@ -643,7 +643,7 @@ def delete_suite(id: int, db: Session = Depends(get_db), user: dict = Depends(ge
 def run_suite(
     id: int,
     use_vision: bool = True,
-    max_steps: int = 25,
+    max_steps: int = 50,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -737,7 +737,7 @@ def enqueue_test(body: TestRunRequest, db: Session = Depends(get_db), user: dict
         target_url=target_url or "",
         success_criteria=success_criteria,
         use_vision=bool(body.use_vision),
-        max_steps=body.max_steps or 25,
+        max_steps=body.max_steps if body.max_steps is not None else 50,
         test_case_id=test_case_id,
     )
     run.task_id = task_id
@@ -959,7 +959,7 @@ def ci_webhook(
             target_url=tc.target_url or "",
             success_criteria=tc.success_criteria,
             use_vision=True,
-            max_steps=100,
+            max_steps=50,
             test_case_id=tc.id,
         )
         run.task_id = task_id

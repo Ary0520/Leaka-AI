@@ -61,7 +61,7 @@ export default function TestCasesPage() {
       success_criteria: c.success_criteria,
       test_case_id: c.id,
       use_vision: true,
-      max_steps: 25,
+      max_steps: 50,
     }),
     onSuccess: (r, c) => {
       toast({ title: "Run started", description: c.name });

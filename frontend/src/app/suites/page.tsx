@@ -105,7 +105,7 @@ export default function SuitesPage() {
   });
 
   const runMut = useMutation({
-    mutationFn: (id: number) => api.runSuite(id, { use_vision: true, max_steps: 100 }),
+    mutationFn: (id: number) => api.runSuite(id, { use_vision: true, max_steps: 50 }),
     onSuccess: (res) => {
       toast({
         title: `Suite enqueued — ${res.count} run(s)`,
@@ -373,7 +373,7 @@ function SuiteCard({
                               success_criteria: tc.success_criteria,
                               test_case_id: tc.id,
                               use_vision: true,
-                              max_steps: 100,
+                              max_steps: 50,
                             });
                             router.push(`/runs/${r.job_id}`);
                           }}
