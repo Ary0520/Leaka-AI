@@ -24,7 +24,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex h-screen overflow-hidden">
       {/* Sidebar */}
       <aside className="hidden md:flex md:w-64 flex-col border-r bg-card/50">
         <div className="px-6 py-5 border-b flex items-center gap-2">
@@ -36,7 +36,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className="text-xs text-muted-foreground">RevGuard QA</div>
           </div>
         </div>
-        <nav className="p-3 space-y-1 flex-1">
+        <nav className="p-3 space-y-1 flex-1 overflow-y-auto">
           {NAV.map((item) => {
             const Icon = item.icon;
             const active =
@@ -85,7 +85,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* Main */}
-      <main className="flex-1 min-w-0">
+      <main className="flex-1 min-w-0 h-full overflow-y-auto">
         <div className="mx-auto max-w-[1400px] px-4 md:px-8 py-6">
           {children}
         </div>

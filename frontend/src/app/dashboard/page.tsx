@@ -8,11 +8,19 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Sparkles, ArrowRight, Image, ListChecks, Zap, CheckCircle2, XCircle, Activity } from "lucide-react";
+import { Sparkles, ArrowRight, Image, ListChecks, Zap, CheckCircle2, XCircle, Activity, Terminal, UserPlus, CreditCard, Code } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 import { formatDate, formatDuration, truncate, cn } from "@/lib/utils";
 
 // ── Health Grid ───────────────────────────────────────────────────────────────
+
+function getTestIcon(name: string) {
+  const lower = name.toLowerCase();
+  if (lower.includes('checkout') || lower.includes('pricing') || lower.includes('pay')) return <CreditCard className="w-4 h-4 text-muted-foreground/70" />;
+  if (lower.includes('user') || lower.includes('auth') || lower.includes('onboard')) return <UserPlus className="w-4 h-4 text-muted-foreground/70" />;
+  if (lower.includes('terminal') || lower.includes('cq')) return <Terminal className="w-4 h-4 text-muted-foreground/70" />;
+  return <Code className="w-4 h-4 text-muted-foreground/70" />;
+}
 
 type HealthRow = Awaited<ReturnType<typeof api.dashboardHealth>>[number];
 type RunCell = HealthRow["runs"][number];
@@ -256,11 +264,11 @@ export default function DashboardPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {runs.map((r) => (
+                {runs.slice(0, 3).map((r) => (
                   <TableRow key={r.job_id} className="border-border/50 hover:bg-muted/30 transition-colors group cursor-pointer" onClick={() => window.location.href = `/runs/${r.job_id}`}>
                     <TableCell>
                       <div className="flex items-center gap-2">
-                        <ListChecks className="w-4 h-4 text-muted-foreground/70" />
+                        {getTestIcon(r.name)}
                         <div className="font-medium text-sm text-foreground">{r.name}</div>
                       </div>
                     </TableCell>
