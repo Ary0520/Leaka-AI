@@ -5,7 +5,7 @@ import { ConditionalShell } from "@/components/conditional-shell";
 import { Toaster } from "@/components/ui/toaster";
 
 export const metadata: Metadata = {
-  title: "Leaka AI · RevGuard QA",
+  title: "Leaka AI",
   description:
     "Autonomous QA agent for e-commerce and SaaS revenue flows using natural language.",
 };
@@ -13,6 +13,8 @@ export const metadata: Metadata = {
 import { JetBrains_Mono } from "next/font/google";
 
 const font = JetBrains_Mono({ subsets: ["latin"] });
+
+import NextTopLoader from 'nextjs-toploader';
 
 export default function RootLayout({
   children,
@@ -22,6 +24,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`min-h-screen bg-background ${font.className}`}>
+        <NextTopLoader color="#5E6AD2" showSpinner={false} />
         <ReactQueryProvider>
           <ConditionalShell>{children}</ConditionalShell>
           <Toaster />

@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { ShieldCheck, Loader2, AlertCircle } from "lucide-react";
+import { Loader2, AlertCircle } from "lucide-react";
 
 function GoogleIcon() {
   return (
@@ -40,13 +40,13 @@ export default function LoginPage() {
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <div className="w-full max-w-sm space-y-6">
         {/* Logo */}
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-12 h-12 rounded-xl bg-primary text-primary-foreground grid place-items-center shadow-sm">
-            <ShieldCheck className="w-6 h-6" />
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-16 h-16 rounded-2xl bg-transparent overflow-hidden grid place-items-center shadow-md">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/leaka-logo.png" alt="Leaka AI" className="w-full h-full object-contain" />
           </div>
           <div className="text-center">
             <h1 className="text-xl font-semibold">Leaka AI</h1>
-            <p className="text-sm text-muted-foreground">RevGuard QA</p>
           </div>
         </div>
 
@@ -88,10 +88,6 @@ export default function LoginPage() {
             </p>
           </CardContent>
         </Card>
-
-        <p className="text-center text-xs text-muted-foreground">
-          Runs locally · No Browser Use Cloud API required
-        </p>
       </div>
     </div>
   );
