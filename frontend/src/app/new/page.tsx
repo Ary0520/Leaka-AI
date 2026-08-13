@@ -26,6 +26,10 @@ import {
   Loader2,
   Save,
   Sparkles,
+  Link as LinkIcon,
+  Lightbulb,
+  Play,
+  Check,
 } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 
@@ -139,30 +143,44 @@ export default function NewTestPage() {
   };
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="max-w-[1200px] mx-auto space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
           Run a new QA test
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Describe the workflow in natural language. The browser-use agent will
-          execute it headlessly.
+          Describe the workflow in plain English — the agent handles the rest.
         </p>
       </div>
 
-      <form onSubmit={onSubmit} className="space-y-6">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Test case</CardTitle>
-            <CardDescription>
-              Optionally reuse an existing saved case, or write one below.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <Label>Existing test case</Label>
+      {/* Decorative Banner */}
+      <div className="rounded-lg bg-[#161922] p-4 flex flex-col gap-3 relative overflow-hidden border border-indigo-500/10">
+        <div className="flex items-center gap-3">
+          <div className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-400 shadow-[0_0_8px_rgba(129,140,248,0.9)]"></span>
+          </div>
+          <span className="text-sm text-indigo-200 tracking-wide font-mono">
+            The Agent is running<span className="animate-pulse">...</span>
+          </span>
+        </div>
+        <div className="h-[1px] w-64 bg-indigo-900/30 relative overflow-hidden">
+          <div className="absolute inset-0 w-full bg-gradient-to-r from-transparent via-indigo-400 to-transparent animate-slide" />
+        </div>
+      </div>
+
+      <form onSubmit={onSubmit} className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        {/* Left Column */}
+        <div className="lg:col-span-2 space-y-6">
+          
+          <Card className="border-0 bg-[#161922]">
+            <CardContent className="p-6">
+              <Label className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground mb-4 block">
+                Reuse an existing test
+              </Label>
               <Select value={existingCaseId} onValueChange={pickExisting}>
-                <SelectTrigger className="mt-1">
+                <SelectTrigger className="bg-[#0B0E14] border-transparent font-mono text-sm h-11 text-muted-foreground">
                   <SelectValue placeholder="None — write a new one" />
                 </SelectTrigger>
                 <SelectContent>
@@ -179,175 +197,205 @@ export default function NewTestPage() {
                   )}
                 </SelectContent>
               </Select>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Test details</CardTitle>
-            <CardDescription>
-              Give the run a name, a target URL, and the natural-language
-              prompt to execute.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="name">Run name</Label>
-                <Input
-                  id="name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. Checkout flow — $50 item + WELCOME promo"
-                  className="mt-1"
-                />
-              </div>
-              <div>
-                <Label htmlFor="url">Target URL (optional)</Label>
-                <Input
-                  id="url"
-                  value={targetUrl}
-                  onChange={(e) => setTargetUrl(e.target.value)}
-                  placeholder="https://your-app.example.com"
-                  className="mt-1"
-                />
-              </div>
-            </div>
-
-            <div>
-              <Label htmlFor="prompt">
-                Prompt <span className="text-destructive">*</span>
-              </Label>
-              <Textarea
-                id="prompt"
-                required
-                rows={7}
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder={`Add a $50 item to cart, apply promo code WELCOME, and verify the total is $45.`}
-                className="mt-1 font-mono text-sm"
-              />
-              <p className="text-xs text-muted-foreground mt-1">
-                Tips: mention URLs explicitly, name elements by label, state
-                expected outcomes.
-              </p>
-            </div>
-
-            <div>
-              <Label htmlFor="success">Success criteria (optional)</Label>
-              <Textarea
-                id="success"
-                rows={3}
-                value={success}
-                onChange={(e) => setSuccess(e.target.value)}
-                placeholder="Order total equals $45. Promo discount applied. Order confirmation email listed."
-                className="mt-1 text-sm"
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Save this as a reusable case?</CardTitle>
-            <CardDescription>
-              Save prompts you plan to run again (CI, scheduled suites, etc.).
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <label className="flex items-start gap-3 text-sm cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={saveAsCase}
-                onChange={(e) => setSaveAsCase(e.target.checked)}
-                className="mt-1"
-              />
-              <div>
-                <div className="font-medium">Save as test case</div>
-                <div className="text-muted-foreground text-xs">
-                  Stored in Postgres so you can re-run it from the dashboard or
-                  via CI webhook.
-                </div>
-              </div>
-            </label>
-            {saveAsCase && (
-              <div className="space-y-3">
+          <Card className="border-0 bg-[#161922]">
+            <CardContent className="p-6 space-y-8">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
-                  <Label htmlFor="caseName">Case name</Label>
+                  <Label htmlFor="name" className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground mb-3 block">
+                    Run name
+                  </Label>
                   <Input
-                    id="caseName"
-                    value={caseName}
-                    onChange={(e) => setCaseName(e.target.value)}
-                    placeholder="e.g. Checkout: WELCOME promo applies 10% off"
-                    className="mt-1"
+                    id="name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="e.g. Checkout flow — $50 item +"
+                    className="bg-[#0B0E14] border-transparent font-mono text-sm h-11 text-muted-foreground"
                   />
                 </div>
                 <div>
-                  <Label htmlFor="suiteSelect">Add to suite (optional)</Label>
-                  <Select
-                    value={suiteId ? String(suiteId) : "none"}
-                    onValueChange={(v) =>
-                      setSuiteId(v === "none" ? undefined : Number(v))
-                    }
-                  >
-                    <SelectTrigger id="suiteSelect" className="mt-1">
-                      <SelectValue placeholder="No suite" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">No suite</SelectItem>
-                      {suites?.map((s) => (
-                        <SelectItem key={s.id} value={String(s.id)}>
-                          {s.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label htmlFor="url" className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground mb-3 block">
+                    Target URL
+                  </Label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-3.5 text-muted-foreground/50">
+                      <LinkIcon className="w-4 h-4" />
+                    </span>
+                    <Input
+                      id="url"
+                      value={targetUrl}
+                      onChange={(e) => setTargetUrl(e.target.value)}
+                      placeholder="https://your-app.example.com"
+                      className="bg-[#0B0E14] border-transparent font-mono text-sm h-11 pl-9 text-muted-foreground"
+                    />
+                  </div>
                 </div>
               </div>
-            )}
-          </CardContent>
-        </Card>
 
-        <div className="flex items-center justify-end gap-3">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => {
-              if (saveAsCase && caseName.trim()) {
-                api
-                  .createTestCase({
-                    name: caseName.trim(),
-                    prompt: prompt.trim(),
-                    success_criteria: success.trim() || undefined,
-                    target_url: targetUrl.trim() || undefined,
-                    suite_id: suiteId ?? null,
-                  })
-                  .then((c) => {
-                    toast({ title: "Case saved", description: c.name });
-                    setExistingCaseId(String(c.id));
-                    setSaveAsCase(false);
-                  });
-              }
-            }}
-            disabled={!(saveAsCase && caseName.trim())}
-          >
-            <Save className="w-4 h-4 mr-2" />
-            Save only
-          </Button>
-          <Button type="submit" disabled={enqueueMut.isPending}>
-            {enqueueMut.isPending ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Enqueuing…
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-4 h-4 mr-2" />
-                Run test
-              </>
-            )}
-          </Button>
+              <div>
+                <div className="flex justify-between items-center mb-3">
+                  <Label htmlFor="prompt" className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground block">
+                    Workflow description
+                  </Label>
+                  <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground flex items-center gap-1.5 cursor-pointer hover:text-white transition-colors">
+                    <Sparkles className="w-3.5 h-3.5" /> Use AI to draft
+                  </span>
+                </div>
+                <Textarea
+                  id="prompt"
+                  required
+                  rows={6}
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="Add a $50 item to cart, apply promo code WELCOME, and verify the total is $45."
+                  className="bg-[#0B0E14] border-transparent font-mono text-sm min-h-[140px] p-4 resize-none text-muted-foreground focus-visible:ring-1 focus-visible:ring-indigo-500/50"
+                />
+                <div className="flex items-start gap-2 mt-4">
+                  <Lightbulb className="w-3.5 h-3.5 text-orange-400 mt-0.5 shrink-0" />
+                  <p className="text-xs text-muted-foreground font-medium leading-relaxed">
+                    Tip: mention URLs explicitly, name elements by their label, and state the expected outcome clearly.
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <Label htmlFor="success" className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground mb-3 block">
+                  Success criteria (optional)
+                </Label>
+                <Textarea
+                  id="success"
+                  rows={3}
+                  value={success}
+                  onChange={(e) => setSuccess(e.target.value)}
+                  placeholder="Order total equals $45. Promo discount applied. Confirmation email sent."
+                  className="bg-[#0B0E14] border-transparent font-mono text-sm p-4 resize-none text-muted-foreground"
+                />
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Right Column */}
+        <div className="lg:col-span-1 space-y-6">
+          <Card className="border-0 bg-[#161922]">
+            <CardContent className="p-6">
+              <label className="flex items-start gap-3 cursor-pointer group select-none">
+                <div className="mt-0.5 relative">
+                  <input
+                    type="checkbox"
+                    checked={saveAsCase}
+                    onChange={(e) => setSaveAsCase(e.target.checked)}
+                    className="peer sr-only"
+                  />
+                  <div className="w-4 h-4 rounded-sm bg-[#0B0E14] border border-muted-foreground/30 peer-checked:bg-indigo-500 peer-checked:border-indigo-500 flex items-center justify-center transition-colors group-hover:border-muted-foreground/60">
+                    {saveAsCase && <Check className="w-3 h-3 text-white" />}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-sm font-medium text-foreground">Save as reusable case</div>
+                  <div className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
+                    Stored so you can re-run it from the dashboard, a suite, or your CI pipeline.
+                  </div>
+                </div>
+              </label>
+
+              {saveAsCase && (
+                <div className="space-y-5 mt-6 pt-6 border-t border-muted-foreground/10">
+                  <div>
+                    <Label htmlFor="caseName" className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground mb-3 block">
+                      Case name
+                    </Label>
+                    <Input
+                      id="caseName"
+                      value={caseName}
+                      onChange={(e) => setCaseName(e.target.value)}
+                      placeholder="e.g. Checkout: WELCOME promo applies 10% off"
+                      className="bg-[#0B0E14] border-transparent font-mono text-sm h-11 text-muted-foreground"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="suiteSelect" className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground mb-3 block">
+                      Add to suite (optional)
+                    </Label>
+                    <Select
+                      value={suiteId ? String(suiteId) : "none"}
+                      onValueChange={(v) =>
+                        setSuiteId(v === "none" ? undefined : Number(v))
+                      }
+                    >
+                      <SelectTrigger id="suiteSelect" className="bg-[#0B0E14] border-transparent font-mono text-sm h-11 text-muted-foreground">
+                        <SelectValue placeholder="No suite" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No suite</SelectItem>
+                        {suites?.map((s) => (
+                          <SelectItem key={s.id} value={String(s.id)}>
+                            {s.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <div className="flex items-center justify-end gap-6 mt-4">
+            <Button
+              type="button"
+              variant="ghost"
+              className="text-muted-foreground hover:text-white hover:bg-transparent font-medium px-0"
+              onClick={() => {
+                if (saveAsCase && caseName.trim()) {
+                  api
+                    .createTestCase({
+                      name: caseName.trim(),
+                      prompt: prompt.trim(),
+                      success_criteria: success.trim() || undefined,
+                      target_url: targetUrl.trim() || undefined,
+                      suite_id: suiteId ?? null,
+                    })
+                    .then((c) => {
+                      toast({ title: "Case saved", description: c.name });
+                      setExistingCaseId(String(c.id));
+                      setSaveAsCase(false);
+                    });
+                }
+              }}
+              disabled={!(saveAsCase && caseName.trim())}
+            >
+              Save only
+            </Button>
+            
+            <Button 
+              type="submit" 
+              disabled={enqueueMut.isPending}
+              className="bg-indigo-300 hover:bg-indigo-400 text-indigo-950 font-semibold rounded-md px-6 h-10 transition-colors"
+            >
+              {enqueueMut.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin text-indigo-950" />
+                  Running…
+                </>
+              ) : (
+                <>
+                  <Play className="w-4 h-4 mr-2 fill-current" />
+                  Run test
+                </>
+              )}
+            </Button>
+          </div>
+          
+          {/* Subtle decorative target/X at bottom right like in the screenshot */}
+          <div className="mt-12 flex justify-end pr-4 opacity-5 pointer-events-none">
+            <div className="w-32 h-32 rounded-full border-4 border-dashed border-white flex items-center justify-center">
+              <div className="w-20 h-20 rotate-45 border-4 border-white" />
+            </div>
+          </div>
+          
         </div>
       </form>
     </div>

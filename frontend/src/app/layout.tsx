@@ -10,6 +10,10 @@ export const metadata: Metadata = {
     "Autonomous QA agent for e-commerce and SaaS revenue flows using natural language.",
 };
 
+import { JetBrains_Mono } from "next/font/google";
+
+const font = JetBrains_Mono({ subsets: ["latin"] });
+
 export default function RootLayout({
   children,
 }: {
@@ -17,7 +21,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="min-h-screen bg-background">
+      <body className={`min-h-screen bg-background ${font.className}`}>
         <ReactQueryProvider>
           <ConditionalShell>{children}</ConditionalShell>
           <Toaster />
