@@ -19,44 +19,44 @@ type RunCell = HealthRow["runs"][number];
 
 function cellColor(run: RunCell): string {
   if (run.status === "running" || run.status === "pending")
-    return "bg-blue-400 animate-pulse";
+    return "bg-white/10 animate-pulse";
   if (run.is_successful === true) return "bg-emerald-500";
-  if (run.is_successful === false || run.status === "failed") return "bg-destructive";
-  return "bg-muted-foreground/20";
+  if (run.is_successful === false || run.status === "failed") return "bg-rose-500";
+  return "bg-white/5";
 }
 
 function HealthStatusDot({ row }: { row: HealthRow }) {
-  if (!row.total_runs) return <span className="w-2 h-2 rounded-full bg-muted-foreground/20 inline-block" />;
+  if (!row.total_runs) return <span className="w-2 h-2 rounded-full bg-white/5 inline-block" />;
   if (row.last_successful === true) return <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />;
-  if (row.last_successful === false) return <span className="w-2 h-2 rounded-full bg-destructive inline-block" />;
-  return <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse inline-block" />;
+  if (row.last_successful === false) return <span className="w-2 h-2 rounded-full bg-rose-500 inline-block" />;
+  return <span className="w-2 h-2 rounded-full bg-white/10 animate-pulse inline-block" />;
 }
 
 function PassRateBadge({ rate }: { rate: number | null }) {
   if (rate === null) return <span className="text-xs text-muted-foreground">—</span>;
-  const color = rate >= 90 ? "text-emerald-600 dark:text-emerald-400"
-    : rate >= 70 ? "text-yellow-600 dark:text-yellow-400"
-      : "text-destructive";
-  return <span className={cn("text-xs font-mono font-medium tabular-nums", color)}>{rate}%</span>;
+  const color = rate >= 90 ? "text-emerald-400"
+    : rate >= 70 ? "text-emerald-400"
+      : "text-rose-400";
+  return <span className={cn("text-xs font-mono font-semibold tabular-nums", color)}>{rate}%</span>;
 }
 
 function HealthGrid({ data }: { data: HealthRow[] }) {
   const CELLS = 14;
 
   return (
-    <Card>
+    <Card className="border-0 bg-card">
       <CardHeader>
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
             <CardTitle className="text-lg flex items-center gap-2">
-              <Activity className="w-5 h-5 text-primary" />
-              Revenue flow health
+              <Activity className="w-5 h-5 text-indigo-400" />
+              Revenue Flow Health
             </CardTitle>
             <CardDescription className="mt-1">
-              Last {CELLS} runs per test. Green = pass · Red = fail · Grey = no run. Click any cell to inspect.
+              Last {CELLS} runs per flow. Click any run to inspect.
             </CardDescription>
           </div>
-          <Button asChild size="sm" variant="outline">
+          <Button asChild size="sm" variant="outline" className="bg-transparent">
             <Link href="/tests">Manage test cases</Link>
           </Button>
         </div>
@@ -86,12 +86,12 @@ function HealthGrid({ data }: { data: HealthRow[] }) {
                   </div>
 
                   {/* Run cells */}
-                  <div className="flex items-center gap-1 flex-1">
+                  <div className="flex items-center gap-0.5 flex-1">
                     {/* Empty padding cells */}
                     {Array.from({ length: padCount }).map((_, i) => (
                       <div
                         key={`pad-${i}`}
-                        className="w-5 h-5 rounded-sm bg-muted/40 shrink-0"
+                        className="w-8 h-4 rounded-sm bg-white/5 shrink-0"
                       />
                     ))}
                     {/* Run cells */}
@@ -101,7 +101,7 @@ function HealthGrid({ data }: { data: HealthRow[] }) {
                         href={`/runs/${run.job_id}`}
                         title={`${run.status} · ${run.created_at ? new Date(run.created_at).toLocaleString() : ""} · ${run.duration_seconds ?? 0}s`}
                         className={cn(
-                          "w-5 h-5 rounded-sm shrink-0 transition-all hover:scale-125 hover:ring-2 hover:ring-offset-1 hover:ring-ring",
+                          "w-8 h-4 rounded-sm shrink-0 transition-all hover:scale-110",
                           cellColor(run),
                         )}
                       />
@@ -117,18 +117,18 @@ function HealthGrid({ data }: { data: HealthRow[] }) {
             })}
 
             {/* Legend */}
-            <div className="flex items-center gap-4 pt-2 border-t text-xs text-muted-foreground">
+            <div className="flex items-center gap-4 pt-2 border-t text-xs text-muted-foreground mt-4">
               <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-sm bg-emerald-500 inline-block" /> Pass
+                <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" /> Pass
               </span>
               <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-sm bg-destructive inline-block" /> Fail
+                <span className="w-2 h-2 rounded-full bg-rose-500 inline-block" /> Fail
               </span>
               <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-sm bg-blue-400 inline-block" /> Running
+                <span className="w-2 h-2 rounded-full bg-white/10 animate-pulse inline-block" /> Running
               </span>
               <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-sm bg-muted-foreground/20 inline-block" /> No run
+                <span className="w-2 h-2 rounded-full bg-white/5 inline-block" /> No run
               </span>
             </div>
           </div>
@@ -196,12 +196,12 @@ export default function DashboardPage() {
 
       {/* Stats bar — compact, not hero */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="Total runs" value={stats.total} tone="default" />
-        <StatCard label="Passed" value={stats.passed} tone="success" />
-        <StatCard label="Failed" value={stats.failed} tone="destructive" />
+        <StatCard label="Total runs" value={stats.total.toLocaleString()} tone="default" />
+        <StatCard label="Passed" value={stats.passed.toLocaleString()} tone="success" />
+        <StatCard label="Failed" value={stats.failed.toLocaleString()} tone="destructive" />
         <StatCard
           label="Pass rate"
-          value={stats.total > 0 ? `${Math.round((stats.passed / stats.total) * 100)}%` : "—"}
+          value={stats.total > 0 ? `${(stats.passed / stats.total * 100).toFixed(1)}%` : "—"}
           tone={stats.total === 0 ? "default" : stats.passed / stats.total >= 0.9 ? "success" : stats.passed / stats.total >= 0.7 ? "warn" : "destructive"}
         />
       </div>
@@ -224,14 +224,13 @@ export default function DashboardPage() {
       )}
 
       {/* Recent runs table */}
-      <Card>
+      <Card className="border-0 bg-card">
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="text-lg">Recent runs</CardTitle>
-              <CardDescription>Latest 30 runs across all test cases.</CardDescription>
             </div>
-            <Button asChild variant="ghost" size="sm">
+            <Button asChild variant="ghost" size="sm" className="text-muted-foreground text-xs">
               <Link href="/runs">View all <ArrowRight className="w-3 h-3 ml-1" /></Link>
             </Button>
           </div>
@@ -248,44 +247,44 @@ export default function DashboardPage() {
           ) : (
             <Table>
               <TableHeader>
-                <TableRow>
-                  <TableHead>Test</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Duration</TableHead>
-                  <TableHead>Visual proof</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead className="text-right">Action</TableHead>
+                <TableRow className="border-border/50 hover:bg-transparent">
+                  <TableHead className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">Test</TableHead>
+                  <TableHead className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">Status</TableHead>
+                  <TableHead className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">Duration</TableHead>
+                  <TableHead className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">Visual proof</TableHead>
+                  <TableHead className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground">Created</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {runs.map((r) => (
-                  <TableRow key={r.job_id}>
+                  <TableRow key={r.job_id} className="border-border/50 hover:bg-muted/30 transition-colors group cursor-pointer" onClick={() => window.location.href = `/runs/${r.job_id}`}>
                     <TableCell>
-                      <div className="font-medium text-sm">{r.name}</div>
-                      <div className="text-xs text-muted-foreground font-mono">{r.job_id.slice(0, 10)}…</div>
+                      <div className="flex items-center gap-2">
+                        <ListChecks className="w-4 h-4 text-muted-foreground/70" />
+                        <div className="font-medium text-sm text-foreground">{r.name}</div>
+                      </div>
                     </TableCell>
                     <TableCell><StatusBadge status={r.status} /></TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
+                    <TableCell className="text-sm text-muted-foreground font-mono">
                       {formatDuration(r.duration_seconds)}
                     </TableCell>
                     <TableCell>
                       {r.has_visual_proof ? (
-                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                          <Image className="w-3 h-3" /> Screenshot
-                        </span>
+                        r.status === "failed" ? (
+                          <span className="inline-flex items-center gap-1.5 text-xs text-rose-400 font-medium">
+                            <XCircle className="w-3.5 h-3.5" /> View frame
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 text-xs text-emerald-400 font-medium">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                          </span>
+                        )
                       ) : (
-                        <span className="text-xs text-muted-foreground/50">—</span>
+                        <span className="text-xs text-muted-foreground/30">—</span>
                       )}
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {formatDate(r.created_at)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button asChild size="sm" variant="outline">
-                        <Link href={`/runs/${r.job_id}`}>
-                          View <ArrowRight className="w-3 h-3 ml-1" />
-                        </Link>
-                      </Button>
+                    <TableCell className="text-sm text-muted-foreground font-mono">
+                      {r.created_at ? new Date(r.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "—"}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -310,16 +309,16 @@ function StatCard({
   tone?: "default" | "success" | "destructive" | "warn" | "info";
 }) {
   const toneCls =
-    tone === "success" ? "text-emerald-600 dark:text-emerald-400"
-      : tone === "destructive" ? "text-destructive"
-        : tone === "warn" ? "text-yellow-600 dark:text-yellow-400"
-          : tone === "info" ? "text-blue-600 dark:text-blue-400"
+    tone === "success" ? "text-emerald-400"
+      : tone === "destructive" ? "text-rose-400"
+        : tone === "warn" ? "text-emerald-400"
+          : tone === "info" ? "text-blue-400"
             : "text-foreground";
   return (
-    <Card>
-      <CardContent className="pt-5 pb-4">
-        <div className="text-xs text-muted-foreground uppercase tracking-wide mb-1">{label}</div>
-        <div className={cn("text-2xl font-semibold tabular-nums", toneCls)}>{value}</div>
+    <Card className="border-0 bg-card">
+      <CardContent className="pt-6 pb-6">
+        <div className="text-[10px] text-muted-foreground uppercase tracking-widest font-semibold mb-2">{label}</div>
+        <div className={cn("text-3xl font-semibold tabular-nums tracking-tight", toneCls)}>{value}</div>
       </CardContent>
     </Card>
   );
