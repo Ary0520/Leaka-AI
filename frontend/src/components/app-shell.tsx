@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ShieldCheck, LayoutDashboard, FileText, Sparkles, Layers, History, Webhook, Settings2, LogOut } from "lucide-react";
+import { LayoutDashboard, FileText, Sparkles, Layers, History, Webhook, Settings2, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePathname } from "next/navigation";
 import React from "react";
@@ -27,13 +27,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex h-screen overflow-hidden">
       {/* Sidebar */}
       <aside className="hidden md:flex md:w-64 flex-col border-r bg-card/50">
-        <div className="px-6 py-5 border-b flex items-center gap-2">
-          <div className="w-9 h-9 rounded-lg bg-primary text-primary-foreground grid place-items-center shadow-sm">
-            <ShieldCheck className="w-5 h-5" />
+        <div className="px-6 py-5 border-b flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg overflow-hidden bg-transparent grid place-items-center shadow-sm shrink-0">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/leaka-logo.png" alt="Leaka AI" className="w-full h-full object-contain" />
           </div>
           <div className="leading-tight">
             <div className="font-semibold text-sm">Leaka AI</div>
-            <div className="text-xs text-muted-foreground">RevGuard QA</div>
           </div>
         </div>
         <nav className="p-3 space-y-1 flex-1 overflow-y-auto">
@@ -78,9 +78,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <LogOut className="w-4 h-4" />
             Sign out
           </Button>
-          <div className="px-3 text-xs text-muted-foreground">
-            Runs locally. No BrowserUse Cloud API required.
-          </div>
         </div>
       </aside>
 
