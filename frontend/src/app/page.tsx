@@ -44,7 +44,7 @@ const CAPABILITY_CARDS = [
   {
     id: "LKA-PRF-03",
     title: "Proof, not just a red X.",
-    body: "When a flow fails, Leaka provides a full DOM snapshot, console logs, and a highlighted screenshot showing exactly what went wrong.",
+    body: "Receive a detailed report. If the test fails, Leaka provides a step-by-step trace, error-screenshot, and creates ticket detailing exactly what broke.",
     icon: Camera,
   },
 ];
@@ -322,7 +322,7 @@ export default function LandingPage() {
               <span
                 className="text-[#57f1db] text-[11px] tracking-[2.2px] uppercase font-mono"
               >
-                02 / CAPABILITIES
+                02 / HOW IT WORKS
               </span>
               <div className="flex-1 h-px bg-white/5"></div>
             </div>
