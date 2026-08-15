@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useAuth } from "@/app/providers";
@@ -62,6 +63,29 @@ const FEATURE_TAGS = [
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function LandingPage() {
   const { user, loading } = useAuth();
+  const [activeSection, setActiveSection] = useState("home");
+
+  useEffect(() => {
+    const handleScroll = () => {
+      const sections = ["home", "how-it-works", "see-it-live", "pricing"];
+      let currentSection = "home";
+
+      for (const section of sections) {
+        const el = document.getElementById(section);
+        if (el) {
+          const rect = el.getBoundingClientRect();
+          if (rect.top <= window.innerHeight / 2) {
+            currentSection = section;
+          }
+        }
+      }
+      setActiveSection(currentSection);
+    };
+
+    window.addEventListener("scroll", handleScroll);
+    handleScroll(); // Initial check
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
 
   return (
     <div
@@ -91,24 +115,30 @@ export default function LandingPage() {
             backdropFilter: "blur(6px)",
           }}
         >
-          <span className="text-[#57f1db] text-base font-medium cursor-default">Home</span>
           <a
-            href="#capabilities"
-            className="text-[#bacac5] text-[11px] tracking-[1.65px] uppercase hover:text-[#e1e2e4] transition-colors"
+            href="#home"
+            className={`${activeSection === 'home' ? 'text-[#57f1db] drop-shadow-[0_0_8px_rgba(87,241,219,0.8)] font-bold' : 'text-[#bacac5] hover:text-[#e1e2e4]'} text-[11px] tracking-[1.65px] uppercase transition-all duration-300`}
+            style={{ fontFamily: "serif" }}
+          >
+            Home
+          </a>
+          <a
+            href="#how-it-works"
+            className={`${activeSection === 'how-it-works' ? 'text-[#57f1db] drop-shadow-[0_0_8px_rgba(87,241,219,0.8)] font-bold' : 'text-[#bacac5] hover:text-[#e1e2e4]'} text-[11px] tracking-[1.65px] uppercase transition-all duration-300`}
             style={{ fontFamily: "serif" }}
           >
             Product
           </a>
           <a
-            href="#how-it-works"
-            className="text-[#bacac5] text-[11px] tracking-[1.65px] uppercase hover:text-[#e1e2e4] transition-colors"
+            href="#see-it-live"
+            className={`${activeSection === 'see-it-live' ? 'text-[#57f1db] drop-shadow-[0_0_8px_rgba(87,241,219,0.8)] font-bold' : 'text-[#bacac5] hover:text-[#e1e2e4]'} text-[11px] tracking-[1.65px] uppercase transition-all duration-300`}
             style={{ fontFamily: "serif" }}
           >
-            Solutions
+            Demo
           </a>
           <a
-            href="#integrations"
-            className="text-[#bacac5] text-[11px] tracking-[1.65px] uppercase hover:text-[#e1e2e4] transition-colors"
+            href="#pricing"
+            className={`${activeSection === 'pricing' ? 'text-[#57f1db] drop-shadow-[0_0_8px_rgba(87,241,219,0.8)] font-bold' : 'text-[#bacac5] hover:text-[#e1e2e4]'} text-[11px] tracking-[1.65px] uppercase transition-all duration-300`}
             style={{ fontFamily: "serif" }}
           >
             Pricing
@@ -148,7 +178,7 @@ export default function LandingPage() {
       <main>
 
         {/* ── HERO ─────────────────────────────────────────────────────────── */}
-        <section className="relative w-full min-h-[921px] flex items-center pt-20 pb-32 overflow-hidden" style={{ paddingTop: "160px" }}>
+        <section id="home" className="relative w-full min-h-[921px] flex items-center pt-20 pb-32 overflow-hidden" style={{ paddingTop: "160px" }}>
           {/* Ambient glow layer */}
           <div
             className="absolute inset-0 mix-blend-screen opacity-20 pointer-events-none"
@@ -313,7 +343,7 @@ export default function LandingPage() {
 
         {/* ── CAPABILITIES ─────────────────────────────────────────────────── */}
         <section
-          id="capabilities"
+          id="how-it-works"
           className="w-full py-32"
           style={{ background: "#111415" }}
         >
@@ -383,13 +413,16 @@ export default function LandingPage() {
         </section>
 
         {/* ── SEE IT LIVE ──────────────────────────────────────────────────── */}
-        <LivePreview />
+        <div id="see-it-live">
+          <LivePreview />
+        </div>
 
         {/* ── INTEGRATIONS CAROUSEL ─────────────────────────────────────────────────── */}
         <IntegrationsCarousel />
 
         {/* ── CTA ──────────────────────────────────────────────────────────── */}
         <section
+          id="pricing"
           className="relative w-full py-32 overflow-hidden border-t border-white/5"
           style={{ background: "#111415" }}
         >
