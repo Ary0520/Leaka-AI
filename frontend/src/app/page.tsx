@@ -224,7 +224,7 @@ export default function LandingPage() {
           </div>
 
           {/* Hero content */}
-          <div className="relative z-20 max-w-[1440px] mx-auto px-6 grid grid-cols-12 gap-6 w-full items-center">
+          <div className="relative z-20 max-w-[1440px] mx-auto px-6 flex flex-col md:grid md:grid-cols-12 gap-6 md:gap-12 w-full items-start md:items-center">
             <div className="col-span-12 md:col-span-6 flex flex-col items-start justify-end gap-0">
               {/* Heading */}
               <div className="mb-6">
@@ -282,7 +282,7 @@ export default function LandingPage() {
           className="w-full pt-8 pb-32 relative z-30"
           style={{ background: "#111415" }}
         >
-          <div className="max-w-[1440px] mx-auto px-6 grid grid-cols-12 gap-16 md:gap-24 items-center">
+          <div className="max-w-[1440px] mx-auto px-6 flex flex-col md:grid md:grid-cols-12 gap-12 md:gap-24 items-start md:items-center w-full overflow-hidden">
             {/* Left side */}
             <div className="col-span-12 md:col-span-6 flex flex-col items-start gap-8">
               <div className="flex items-center gap-6 w-full">
