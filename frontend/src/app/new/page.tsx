@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useState, useEffect } from "react";
+import { type FormEvent, useState, useEffect, Suspense } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api, type TestCaseOut } from "@/lib/api";
@@ -33,7 +33,7 @@ import {
 } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 
-export default function NewTestPage() {
+function NewTestContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const preselectedSuiteId = searchParams.get("suite_id")
@@ -399,5 +399,13 @@ export default function NewTestPage() {
         </div>
       </form>
     </div>
+  );
+}
+
+export default function NewTestPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-muted-foreground">Loading test configuration...</div>}>
+      <NewTestContent />
+    </Suspense>
   );
 }
