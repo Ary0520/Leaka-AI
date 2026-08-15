@@ -170,7 +170,7 @@ export default function LandingPage() {
               // src="/hero-section-video.mp4"
               // src="/liquidDropAnimation.mp4"
               // src="/leaka ai new vid hero.mp4"
-              src="/herosectionVideo.mp4"
+              src="/oildropVid.mp4"
               autoPlay
               muted
               loop
@@ -203,64 +203,25 @@ export default function LandingPage() {
               </p>
 
               {/* CTAs */}
-              <div className="flex items-center gap-6 mb-10 flex-wrap">
+              <div className="flex items-center gap-8 mb-10 flex-wrap">
                 <Link href="/login">
                   <button
-                    className="px-8 py-5 rounded-xl text-[11px] tracking-[1.1px] uppercase text-[#57f1db] cursor-pointer transition-all hover:shadow-[0_0_20px_rgba(87,241,219,0.2)]"
-                    style={{
-                      fontFamily: "Georgia, serif",
-                      background: "rgba(87,241,219,0.05)",
-                      border: "1px solid rgba(87,241,219,0.2)",
-                    }}
+                    className="px-8 py-4 rounded-md text-[15px] font-semibold text-[#0B0E14] cursor-pointer transition-all hover:opacity-90 shadow-[0_4px_24px_rgba(87,241,219,0.25)] font-mono"
+                    style={{ background: "#57f1db" }}
                   >
-                    START A TEST
+                    Test your first flow free
                   </button>
                 </Link>
                 <Link href="/dashboard">
                   <button
-                    className="px-8 py-5 rounded-xl text-[11px] tracking-[1.1px] uppercase text-[#e1e2e4] cursor-pointer transition-all hover:border-[rgba(225,226,228,0.3)]"
-                    style={{
-                      fontFamily: "Georgia, serif",
-                      border: "1px solid rgba(225,226,228,0.1)",
-                    }}
+                    className="group px-2 py-4 text-[12px] tracking-[2px] uppercase text-[#57f1db] cursor-pointer transition-all hover:opacity-80 flex items-center gap-2 font-mono"
                   >
-                    WATCH THE FLOW
+                    WATCH IT CATCH A BUG <span className="group-hover:translate-y-1 transition-transform">↓</span>
                   </button>
                 </Link>
               </div>
 
-              {/* Tagline */}
-              <div
-                className="pl-4 mb-10"
-                style={{ borderLeft: "1px solid rgba(60,74,70,0.3)" }}
-              >
-                <p
-                  className="text-[#3c4a46] text-[13px] tracking-[1.3px] uppercase leading-[1.5]"
-                  style={{ fontFamily: "Georgia, serif" }}
-                >
-                  BUILT FOR PMS, REVOPS, AND FOUNDERS.
-                  <br />
-                  NO CODE. NO BABYSITTING. NO FLAKE.
-                </p>
-              </div>
 
-              {/* Feature tags */}
-              <div className="flex flex-wrap gap-3">
-                {FEATURE_TAGS.map((tag) => (
-                  <span
-                    key={tag}
-                    className="text-[10px] tracking-[1px] uppercase text-[#bacac5] px-3 py-2 rounded-xl"
-                    style={{
-                      background: "rgba(29,32,33,0.5)",
-                      border: "1px solid rgba(186,202,197,0.1)",
-                      backdropFilter: "blur(2px)",
-                      fontFamily: "Georgia, serif",
-                    }}
-                  >
-                    {tag}
-                  </span>
-                ))}
-              </div>
             </div>
           </div>
         </section>
