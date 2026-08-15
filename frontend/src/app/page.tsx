@@ -229,37 +229,42 @@ export default function LandingPage() {
               {/* Heading */}
               <div className="mb-6">
                 <h1
-                  className="text-[64px] md:text-[72px] leading-[1.1] tracking-[-1.44px] text-[#e1e2e4]"
+                  className="text-[42px] sm:text-[56px] md:text-[64px] lg:text-[72px] leading-[1.1] tracking-[-1.44px] text-[#e1e2e4] break-words"
                   style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
                 >
                   Autonomous QA for
-                  <br />
-                  revenue-critical
-                  <br />
-                  flows.
+                  <br className="hidden sm:block" />
+                  <span className="sm:hidden"> </span>revenue-critical
+                  <br className="hidden sm:block" />
+                  <span className="sm:hidden"> </span>flows.
                 </h1>
               </div>
 
-              {/* Sub-copy */}
-              <p className="text-[#bacac5] text-[18px] leading-[1.6] tracking-[0.18px] max-w-[520px] font-light mb-10">
+              {/* Sub-copy (Desktop) */}
+              <p className="hidden md:block text-[#bacac5] text-[18px] leading-[1.6] tracking-[0.18px] max-w-[520px] font-light mb-10">
                 Leaka AI runs browser tests in plain English, self-heals when UI changes, and turns
                 failures into screenshots, replayable steps, and auto-drafted tickets before broken
                 flows cost you revenue.
               </p>
 
+              {/* Sub-copy (Mobile) */}
+              <p className="md:hidden text-[#bacac5] text-[16px] sm:text-[18px] leading-[1.6] tracking-[0.18px] font-light mb-8">
+                Run tests in plain English. Leaka self-heals as your UI changes, catching broken flows before they cost you revenue.
+              </p>
+
               {/* CTAs */}
-              <div className="flex items-center gap-8 mb-10 flex-wrap">
-                <Link href="/login">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-6 sm:gap-8 mb-10 w-full sm:w-auto">
+                <Link href="/login" className="w-full sm:w-auto">
                   <button
-                    className="px-8 py-4 rounded-md text-[15px] font-semibold text-[#0B0E14] cursor-pointer transition-all hover:opacity-90 shadow-[0_4px_24px_rgba(87,241,219,0.25)] font-mono"
+                    className="w-full sm:w-auto px-8 py-4 rounded-md text-[15px] font-semibold text-[#0B0E14] cursor-pointer transition-all hover:opacity-90 shadow-[0_4px_24px_rgba(87,241,219,0.25)] font-mono text-center justify-center"
                     style={{ background: "#57f1db" }}
                   >
                     Test your first flow free
                   </button>
                 </Link>
-                <Link href="/dashboard">
+                <Link href="#see-it-live" className="w-full sm:w-auto">
                   <button
-                    className="group px-2 py-4 text-[12px] tracking-[2px] uppercase text-[#57f1db] cursor-pointer transition-all hover:opacity-80 flex items-center gap-2 font-mono"
+                    className="w-full sm:w-auto group px-2 py-4 text-[12px] tracking-[2px] uppercase text-[#57f1db] cursor-pointer transition-all hover:opacity-80 flex items-center justify-start sm:justify-center gap-2 font-mono"
                   >
                     WATCH IT CATCH A BUG <span className="group-hover:translate-y-1 transition-transform">↓</span>
                   </button>
@@ -289,7 +294,7 @@ export default function LandingPage() {
                 <div className="flex-1 h-px bg-white/5"></div>
               </div>
               <h2
-                className="text-[40px] md:text-[48px] leading-[1.2] text-[#e1e2e4]"
+                className="text-[32px] sm:text-[40px] md:text-[48px] leading-[1.2] text-[#e1e2e4] break-words"
                 style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
               >
                 Stop writing browser instructions at 2 am.
@@ -310,7 +315,7 @@ export default function LandingPage() {
               ].map((item, i) => (
                 <div
                   key={i}
-                  className="relative overflow-hidden flex items-center justify-between p-6 rounded-xl border border-white/5 bg-[#141718] group"
+                  className="relative overflow-hidden flex flex-col md:flex-row items-start md:items-center justify-between p-6 rounded-xl border border-white/5 bg-[#141718] group gap-4 md:gap-0"
                 >
                   {/* Subtle animated background gradient on hover */}
                   <div 
