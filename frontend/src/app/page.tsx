@@ -166,8 +166,11 @@ export default function LandingPage() {
             {/* VIDEO — positioned so the top portion of the clip is visible */}
             <video
               className="absolute w-full h-full object-cover opacity-100"
-              style={{ top: "-27%", left: 0, objectPosition: "center top" }}
-              src="/hero-section-video.mp4"
+              style={{ top: "-17%", left: 15, objectPosition: "center top" }}
+              // src="/hero-section-video.mp4"
+              // src="/liquidDropAnimation.mp4"
+              // src="/leaka ai new vid hero.mp4"
+              src="/herosectionVideo.mp4"
               autoPlay
               muted
               loop
