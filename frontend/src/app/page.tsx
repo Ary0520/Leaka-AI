@@ -5,6 +5,7 @@ import Image from "next/image";
 import { useAuth } from "@/app/providers";
 import { Keyboard, Activity, Camera } from "lucide-react";
 import { LivePreview } from "@/components/live-preview";
+import { IntegrationsCarousel } from "@/components/integrations-carousel";
 
 // ─── Figma asset: nav arrow ───────────────────────────────────────────────────
 const NAV_ARROW = "/figma-assets/leaka-nav-arrow.svg";
@@ -384,111 +385,8 @@ export default function LandingPage() {
         {/* ── SEE IT LIVE ──────────────────────────────────────────────────── */}
         <LivePreview />
 
-        {/* ── HOW IT WORKS ─────────────────────────────────────────────────── */}
-        <section
-          id="how-it-works"
-          className="w-full py-32 px-6"
-          style={{ background: "#111415" }}
-        >
-          <div className="max-w-[1440px] mx-auto grid grid-cols-12 gap-20">
-            {/* Left copy */}
-            <div className="col-span-12 md:col-span-4 flex flex-col justify-center py-16">
-              <div className="mb-4">
-                <span
-                  className="text-[#e3c0a0] text-[11px] tracking-[2.2px] uppercase"
-                  style={{ fontFamily: "Georgia, serif" }}
-                >
-                  04 / EXECUTION
-                </span>
-              </div>
-              <h2
-                className="text-[40px] leading-[1.5] text-[#e1e2e4] mb-6"
-                style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
-              >
-                How it works
-              </h2>
-              <p className="text-[#bacac5] text-[16px] leading-[24px]">
-                A streamlined pipeline from human intent to robust verification, designed to run
-                autonomously in the background.
-              </p>
-            </div>
-
-            {/* Right steps */}
-            <div className="col-span-12 md:col-span-8 relative flex flex-col">
-              {/* Vertical timeline line */}
-              <div
-                className="absolute left-8 top-0 bottom-0 w-px"
-                style={{
-                  background:
-                    "linear-gradient(to bottom, rgba(87,241,219,0.0) 0%, rgba(87,241,219,0.3) 20%, rgba(87,241,219,0.3) 80%, rgba(87,241,219,0) 100%)",
-                }}
-              />
-
-              <div className="flex flex-col gap-16 pl-24">
-                {STEPS.map((step, i) => (
-                  <div key={i} className="relative flex flex-col gap-2">
-                    {/* Timeline dot */}
-                    <div
-                      className="absolute -left-16 top-1 size-2 rounded-sm"
-                      style={{
-                        background: "#111415",
-                        border: "1px solid #57f1db",
-                        boxShadow: "0px 0px 10px 0px rgba(45,212,191,0.5)",
-                      }}
-                    />
-                    <span
-                      className="text-[#57f1db] text-[12px] tracking-[1.2px]"
-                      style={{ fontFamily: "Georgia, serif" }}
-                    >
-                      {step.label}
-                    </span>
-                    <h4
-                      className="text-[#e1e2e4] text-[20px] leading-[28px]"
-                      style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
-                    >
-                      {step.title}
-                    </h4>
-                    <p className="text-[#bacac5] text-[16px] leading-[24px]">{step.body}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* ── INTEGRATIONS ─────────────────────────────────────────────────── */}
-        <section
-          id="integrations"
-          className="w-full py-24"
-          style={{ background: "#111415" }}
-        >
-          <div className="max-w-[1440px] mx-auto px-6 flex flex-col gap-8">
-            <div className="flex justify-center">
-              <span
-                className="text-[#3c4a46] text-[11px] tracking-[2.2px] uppercase text-center"
-                style={{ fontFamily: "Georgia, serif" }}
-              >
-                05 / INTEGRATIONS
-              </span>
-            </div>
-            <div className="flex flex-wrap items-center justify-center gap-4">
-              {INTEGRATIONS.map((name) => (
-                <div
-                  key={name}
-                  className="px-6 py-3 rounded-xl text-[14px] text-[#bacac5] text-center"
-                  style={{
-                    background: "rgba(40,42,44,0.3)",
-                    border: "1px solid rgba(186,202,197,0.1)",
-                    backdropFilter: "blur(6px)",
-                    fontFamily: "Georgia, serif",
-                  }}
-                >
-                  {name}
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
+        {/* ── INTEGRATIONS CAROUSEL ─────────────────────────────────────────────────── */}
+        <IntegrationsCarousel />
 
         {/* ── CTA ──────────────────────────────────────────────────────────── */}
         <section
