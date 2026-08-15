@@ -4,6 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useAuth } from "@/app/providers";
 import { Keyboard, Activity, Camera } from "lucide-react";
+import { LivePreview } from "@/components/live-preview";
 
 // ─── Figma asset: nav arrow ───────────────────────────────────────────────────
 const NAV_ARROW = "/figma-assets/leaka-nav-arrow.svg";
@@ -380,6 +381,9 @@ export default function LandingPage() {
           </div>
         </section>
 
+        {/* ── SEE IT LIVE ──────────────────────────────────────────────────── */}
+        <LivePreview />
+
         {/* ── HOW IT WORKS ─────────────────────────────────────────────────── */}
         <section
           id="how-it-works"
@@ -394,7 +398,7 @@ export default function LandingPage() {
                   className="text-[#e3c0a0] text-[11px] tracking-[2.2px] uppercase"
                   style={{ fontFamily: "Georgia, serif" }}
                 >
-                  03 / EXECUTION
+                  04 / EXECUTION
                 </span>
               </div>
               <h2
@@ -464,7 +468,7 @@ export default function LandingPage() {
                 className="text-[#3c4a46] text-[11px] tracking-[2.2px] uppercase text-center"
                 style={{ fontFamily: "Georgia, serif" }}
               >
-                04 / INTEGRATIONS
+                05 / INTEGRATIONS
               </span>
             </div>
             <div className="flex flex-wrap items-center justify-center gap-4">
