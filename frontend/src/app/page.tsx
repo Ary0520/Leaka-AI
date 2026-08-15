@@ -390,95 +390,114 @@ export default function LandingPage() {
 
         {/* ── CTA ──────────────────────────────────────────────────────────── */}
         <section
-          className="relative w-full py-48 overflow-hidden"
+          className="relative w-full py-32 overflow-hidden border-t border-white/5"
           style={{ background: "#111415" }}
         >
-          {/* Decorative concentric borders */}
-          <div className="absolute inset-0 pointer-events-none opacity-10">
-            <div
-              className="absolute rounded-xl"
-              style={{
-                width: 800,
-                height: 800,
-                left: "calc(50% - 400px)",
-                top: -75,
-                border: "1px solid rgba(87,241,219,0.2)",
-              }}
-            />
-            <div
-              className="absolute rounded-xl"
-              style={{
-                width: 600,
-                height: 600,
-                left: "calc(50% - 300px)",
-                top: 25,
-                border: "1px solid rgba(87,241,219,0.3)",
-              }}
-            />
-            <div
-              className="absolute rounded-xl"
-              style={{
-                width: 400,
-                height: 400,
-                left: "calc(50% - 200px)",
-                top: 125,
-                border: "1px solid rgba(87,241,219,0.4)",
-              }}
-            />
-          </div>
+          {/* Subtle noise/texture background & glow */}
+          <div className="absolute inset-0 pointer-events-none opacity-20" style={{ background: "url('data:image/svg+xml;utf8,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22/%3E%3C/svg%3E')" }} />
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[300px] bg-[#57f1db]/10 blur-[120px] pointer-events-none rounded-full" />
 
-          <div className="relative z-10 flex flex-col items-center gap-12 max-w-3xl mx-auto px-6 text-center">
+          <div className="relative z-10 flex flex-col items-center gap-10 max-w-3xl mx-auto px-6 text-center">
+            <div className="mb-2">
+              {/* <span
+                className="text-[#e3c0a0] text-[11px] tracking-[2.2px] uppercase bg-[#e3c0a0]/10 px-4 py-2 rounded-full font-mono border border-[#e3c0a0]/20"
+              >
+                06 / GET STARTED
+              </span> */}
+            </div>
+            
             <h2
-              className="text-[48px] md:text-[64px] leading-[1.25] text-[#e1e2e4]"
+              className="text-[48px] md:text-[64px] leading-[1.1] text-[#e1e2e4] tracking-tight"
               style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
             >
               Stop broken flows before
               <br />
               they cost you money.
             </h2>
-            <Link href="/login">
+            
+            <p className="text-[#bacac5] text-[18px] leading-[1.6] max-w-[500px]">
+              Join leading engineering teams automating their browser tests. Setup takes exactly 2 minutes.
+            </p>
+
+            <Link href="/login" className="mt-4">
               <button
-                className="px-12 py-5 rounded-xl text-[14px] tracking-[2.8px] uppercase font-bold text-[#57f1db] transition-all hover:shadow-[0_0_40px_rgba(45,212,191,0.2)] cursor-pointer"
+                className="group px-8 py-4 rounded-xl text-[14px] uppercase font-bold text-[#0B0E14] transition-all hover:opacity-90 flex items-center gap-3 cursor-pointer"
                 style={{
+                  background: "#57f1db",
+                  boxShadow: "0px 4px 30px rgba(87,241,219,0.3), inset 0px 1px 1px rgba(255,255,255,0.4)",
                   fontFamily: "Georgia, serif",
-                  background: "rgba(87,241,219,0.1)",
-                  border: "1px solid rgba(87,241,219,0.3)",
-                  boxShadow: "0px 0px 30px 0px rgba(45,212,191,0.1)",
                 }}
               >
                 BOOK A DEMO
+                <svg className="w-4 h-4 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                </svg>
               </button>
             </Link>
           </div>
         </section>
       </main>
 
-      {/* ── FOOTER ─────────────────────────────────────────────────────────── */}
+      {/* ── FAT FOOTER ─────────────────────────────────────────────────────────── */}
       <footer
-        className="border-t opacity-20"
-        style={{ borderColor: "rgba(186,202,197,0.05)" }}
+        className="w-full relative z-10 border-t"
+        style={{ background: "#0B0E14", borderColor: "rgba(186,202,197,0.05)" }}
       >
-        <div className="max-w-[1440px] mx-auto px-6 pt-12 pb-8 flex items-center justify-between">
-          <span
-            className="text-[#bacac5] text-[11px] tracking-[1.65px]"
-            style={{ fontFamily: "Georgia, serif" }}
-          >
-            © 2024 Leaka Research
-          </span>
-          <div className="flex items-center gap-12">
+        <div className="max-w-[1440px] mx-auto px-6 pt-24 pb-12 flex flex-col gap-16">
+          {/* Top Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-12 md:gap-8">
+            
+            {/* Left Col: Brand */}
+            <div className="col-span-1 md:col-span-4 flex flex-col gap-6 pr-8">
+              <div className="flex items-center gap-1">
+                <Image src="/leaka-logo.png" alt="Leaka" width={40} height={40} className="opacity-90" />
+                <span className="text-[#e1e2e4] font-bold text-[20px] tracking-tight" style={{ fontFamily: "Georgia, serif" }}>Leaka AI</span>
+              </div>
+              <p className="text-[#bacac5] text-[14px] leading-[1.8] opacity-70">
+                Self-healing browser tests that understand plain English. Built for modern engineering teams who value robust verification over fragile scripts.
+              </p>
+            </div>
+
+            {/* Link Columns */}
+            <div className="col-span-1 md:col-span-8 grid grid-cols-2 md:grid-cols-3 gap-12">
+              <div className="flex flex-col gap-5">
+                <span className="text-[#57f1db] text-[11px] tracking-[2px] uppercase font-mono">Product</span>
+                <Link href="#" className="text-[#bacac5] hover:text-white transition-colors text-[14px]">Features</Link>
+                <Link href="#" className="text-[#bacac5] hover:text-white transition-colors text-[14px]">Integrations</Link>
+                <Link href="#" className="text-[#bacac5] hover:text-white transition-colors text-[14px]">Pricing</Link>
+                <Link href="#" className="text-[#bacac5] hover:text-white transition-colors text-[14px]">Changelog</Link>
+              </div>
+              <div className="flex flex-col gap-5">
+                <span className="text-[#57f1db] text-[11px] tracking-[2px] uppercase font-mono">Resources</span>
+                <Link href="#" className="text-[#bacac5] hover:text-white transition-colors text-[14px]">Documentation</Link>
+                <Link href="#" className="text-[#bacac5] hover:text-white transition-colors text-[14px]">Blog</Link>
+                <Link href="#" className="text-[#bacac5] hover:text-white transition-colors text-[14px]">Support</Link>
+                <Link href="#" className="text-[#bacac5] hover:text-white transition-colors text-[14px] flex items-center gap-2">
+                  System Status
+                  <span className="size-1.5 bg-[#57f1db] rounded-full animate-pulse shadow-[0_0_8px_rgba(87,241,219,0.8)]" />
+                </Link>
+              </div>
+              <div className="flex flex-col gap-5">
+                <span className="text-[#57f1db] text-[11px] tracking-[2px] uppercase font-mono">Company</span>
+                <Link href="#" className="text-[#bacac5] hover:text-white transition-colors text-[14px]">About</Link>
+                <Link href="#" className="text-[#bacac5] hover:text-white transition-colors text-[14px]">Careers</Link>
+                <Link href="#" className="text-[#bacac5] hover:text-white transition-colors text-[14px]">Contact</Link>
+                <Link href="#" className="text-[#bacac5] hover:text-white transition-colors text-[14px]">Twitter / X</Link>
+              </div>
+            </div>
+          </div>
+
+          {/* Bottom Bar */}
+          <div className="border-t border-white/5 pt-8 flex flex-col md:flex-row items-center justify-between gap-4">
             <span
-              className="text-[#bacac5] text-[11px] tracking-[1.65px]"
-              style={{ fontFamily: "Georgia, serif" }}
+              className="text-[#bacac5] text-[12px] opacity-50"
             >
-              Orbital Status: Nominal
+              © 2026 Leaka Research Inc. All rights reserved.
             </span>
-            <Link
-              href="/dashboard"
-              className="text-[#bacac5] text-[11px] tracking-[1.65px] hover:text-[#e1e2e4] transition-colors"
-              style={{ fontFamily: "Georgia, serif" }}
-            >
-              Terminal Protocols
-            </Link>
+            <div className="flex items-center gap-6">
+              <Link href="#" className="text-[#bacac5] opacity-50 hover:opacity-100 transition-opacity text-[12px]">Terms of Service</Link>
+              <Link href="#" className="text-[#bacac5] opacity-50 hover:opacity-100 transition-opacity text-[12px]">Privacy Policy</Link>
+            </div>
           </div>
         </div>
       </footer>
