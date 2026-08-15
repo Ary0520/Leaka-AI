@@ -3,6 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { useAuth } from "@/app/providers";
+import { Keyboard, Activity, Camera } from "lucide-react";
 
 // ─── Figma asset: nav arrow ───────────────────────────────────────────────────
 const NAV_ARROW = "/figma-assets/leaka-nav-arrow.svg";
@@ -29,27 +30,21 @@ const STEPS = [
 const CAPABILITY_CARDS = [
   {
     id: "LKA-TXT-01",
-    accent: "rgba(87,241,219,0.05)",
-    glow: "rgba(87,241,219,0.05)",
-    title: "Write tests in plain English",
-    body: "Describe a flow, and Leaka turns it into a real browser test without code. No brittle selectors or complex syntax.",
-    offsetClass: "",
+    title: "Write tests in plain English.",
+    body: "No coding required. Just tell Leaka what to do: \"Go to pricing, click Pro, fill checkout, and verify success.\" It translates English into resilient automation.",
+    icon: Keyboard,
   },
   {
     id: "LKA-HLG-02",
-    accent: "rgba(227,192,160,0.05)",
-    glow: "rgba(227,192,160,0.05)",
-    title: "Self-heal as UI changes",
-    body: "Button moved, class changed, layout shifted — Leaka keeps going. Our agent understands intent, not just coordinates.",
-    offsetClass: "-mt-8",
+    title: "Self-heals when your UI changes.",
+    body: "Moved a button? Changed an ID? Leaka uses computer vision to understand the page like a human, so tests don't break just because your CSS updated.",
+    icon: Activity,
   },
   {
     id: "LKA-PRF-03",
-    accent: "rgba(87,241,219,0.05)",
-    glow: "rgba(87,241,219,0.05)",
-    title: "Capture proof instantly",
-    body: "On failure, get screenshots, steps taken, and a clean bug summary. Ready to be handed straight to engineering.",
-    offsetClass: "mt-8",
+    title: "Proof, not just a red X.",
+    body: "When a flow fails, Leaka provides a full DOM snapshot, console logs, and a highlighted screenshot showing exactly what went wrong.",
+    icon: Camera,
   },
 ];
 
@@ -320,58 +315,67 @@ export default function LandingPage() {
           className="w-full py-32"
           style={{ background: "#111415" }}
         >
-          <div className="max-w-[1440px] mx-auto px-6 flex flex-col gap-20">
+          <div className="max-w-[1440px] mx-auto px-6 flex flex-col gap-12">
             {/* Section header */}
-            <div
-              className="pb-6 flex flex-col gap-4"
-              style={{ borderBottom: "1px solid rgba(186,202,197,0.05)" }}
-            >
+            <div className="flex items-center gap-6 w-full">
               <span
-                className="text-[#57f1db] text-[11px] tracking-[2.2px] uppercase"
-                style={{ fontFamily: "Georgia, serif" }}
+                className="text-[#57f1db] text-[11px] tracking-[2.2px] uppercase font-mono"
               >
                 02 / CAPABILITIES
               </span>
-              <h2
-                className="text-[40px] leading-[1.5] text-[#e1e2e4]"
-                style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
-              >
-                What Leaka does
-              </h2>
+              <div className="flex-1 h-px bg-white/5"></div>
             </div>
 
             {/* Cards */}
-            <div className="flex flex-col md:flex-row items-start gap-12 justify-center">
-              {CAPABILITY_CARDS.map((card) => (
-                <div
-                  key={card.id}
-                  className={`relative flex flex-col gap-4 p-8 rounded-2xl overflow-hidden flex-1 ${card.offsetClass}`}
-                  style={{
-                    background: "rgba(29,32,33,0.2)",
-                    border: "1px solid rgba(225,226,228,0.05)",
-                    backdropFilter: "blur(10px)",
-                  }}
-                >
-                  {/* Corner glow */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {CAPABILITY_CARDS.map((card, i) => {
+                const Icon = card.icon;
+                return (
                   <div
-                    className="absolute rounded-xl size-48 -top-24 -left-24 blur-[32px] pointer-events-none"
-                    style={{ background: card.glow }}
-                  />
-                  <span
-                    className="text-[#bacac5] text-[10px] tracking-[1px] uppercase opacity-50"
-                    style={{ fontFamily: "Georgia, serif" }}
+                    key={card.id}
+                    className="group relative p-[1px] rounded-2xl overflow-hidden flex flex-col"
                   >
-                    {card.id}
-                  </span>
-                  <h3
-                    className="text-[#e1e2e4] text-[24px] leading-[32px] mt-8"
-                    style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
-                  >
-                    {card.title}
-                  </h3>
-                  <p className="text-[#bacac5] text-[16px] leading-[24px]">{card.body}</p>
-                </div>
-              ))}
+                    {/* The scanning border background */}
+                    <div className="absolute inset-0 bg-white/5 z-0" />
+                    <div 
+                      className="absolute inset-[-100%] animate-[spin_5s_linear_infinite] opacity-40 group-hover:opacity-100 transition-opacity duration-700 z-0"
+                      style={{ 
+                        background: 'conic-gradient(from 90deg at 50% 50%, transparent 0%, transparent 75%, rgba(87,241,219,0.6) 100%)', 
+                        animationDelay: `${i * 1.5}s` 
+                      }} 
+                    />
+                    
+                    {/* The inner card content */}
+                    <div className="relative z-10 flex flex-col h-full bg-[#141718] rounded-[15px] p-8">
+                      {/* Hover Animated Inner Glow */}
+                      <div 
+                        className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-700 pointer-events-none" 
+                        style={{ background: 'radial-gradient(circle at top right, rgba(87,241,219,0.03), transparent 70%)' }}
+                      />
+                      
+                      {/* Top Row: Icon + Badge */}
+                      <div className="flex justify-between items-start mb-12 relative z-10">
+                        <div className="flex items-center justify-center size-10 rounded-xl border border-white/5 bg-white/[0.02] group-hover:border-white/20 transition-colors">
+                          <Icon className="w-5 h-5 text-[#bacac5] group-hover:text-white transition-colors" />
+                        </div>
+                        <span className="text-[#bacac5] text-[10px] font-mono tracking-[1.5px] uppercase opacity-70">
+                          {card.id}
+                        </span>
+                      </div>
+
+                      <h3
+                        className="text-[#e1e2e4] text-[26px] leading-[1.3] mb-6 relative z-10"
+                        style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
+                      >
+                        {card.title}
+                      </h3>
+                      <p className="text-[#bacac5] text-[13px] leading-[1.8] font-mono opacity-80 relative z-10">
+                        {card.body}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </section>
