@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
+import { useAuth } from "@/app/providers";
 
 // ─── Figma asset: nav arrow ───────────────────────────────────────────────────
 const NAV_ARROW = "/figma-assets/leaka-nav-arrow.svg";
@@ -63,6 +64,8 @@ const FEATURE_TAGS = [
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function LandingPage() {
+  const { user, loading } = useAuth();
+
   return (
     <div
       className="min-h-screen w-full text-[#e1e2e4] overflow-x-hidden"
@@ -116,17 +119,32 @@ export default function LandingPage() {
         </nav>
 
         {/* CTA icon button */}
-        <Link href="/login">
-          <div
-            className="flex items-center justify-center rounded-xl size-8 shrink-0 cursor-pointer"
-            style={{
-              background: "#57f1db",
-              boxShadow: "0px 0px 7.5px rgba(87,241,219,0.3)",
-            }}
-          >
-            <Image src={NAV_ARROW} alt="Sign in" width={12} height={12} />
-          </div>
-        </Link>
+        <div className="flex items-center">
+          {!loading && (
+            user ? (
+              <Link href="/dashboard">
+                <div
+                  className="flex items-center justify-center rounded-xl size-8 shrink-0 cursor-pointer transition-all hover:shadow-[0_0_15px_rgba(87,241,219,0.5)]"
+                  style={{
+                    background: "#57f1db",
+                    boxShadow: "0px 0px 7.5px rgba(87,241,219,0.3)",
+                  }}
+                >
+                  <Image src={NAV_ARROW} alt="Dashboard" width={12} height={12} />
+                </div>
+              </Link>
+            ) : (
+              <Link href="/login">
+                <button
+                  className="px-4 py-2 rounded-md text-[14px] font-semibold text-[#0B0E14] cursor-pointer transition-all hover:opacity-90 shadow-sm font-mono"
+                  style={{ background: "#57f1db" }}
+                >
+                  Start free
+                </button>
+              </Link>
+            )
+          )}
+        </div>
       </header>
 
       {/* ── MAIN ───────────────────────────────────────────────────────────── */}
@@ -152,7 +170,7 @@ export default function LandingPage() {
               className="absolute inset-0 z-10"
               style={{
                 background:
-                  "linear-gradient(90deg, #111415 0%, rgba(17,20,21,0.8) 50%, rgba(17,20,21,0) 100%)",
+                  "linear-gradient(90deg, #111415 0%, rgba(17,20,21,0.6) 35%, rgba(17,20,21,0) 70%)",
               }}
             />
             {/* Bottom fade */}
@@ -160,7 +178,7 @@ export default function LandingPage() {
               className="absolute inset-0 z-10"
               style={{
                 background:
-                  "linear-gradient(to top, #111415 0%, rgba(17,20,21,0) 50%)",
+                  "linear-gradient(to top, #111415 0%, rgba(17,20,21,0) 30%)",
               }}
             />
             {/* VIDEO — positioned so the top portion of the clip is visible */}
@@ -179,7 +197,7 @@ export default function LandingPage() {
           </div>
 
           {/* Hero content */}
-          <div className="relative z-20 max-w-[1440px] mx-auto px-6 grid grid-cols-12 gap-6 w-full items-end" style={{ paddingTop: "100px" }}>
+          <div className="relative z-20 max-w-[1440px] mx-auto px-6 grid grid-cols-12 gap-6 w-full items-center">
             <div className="col-span-12 md:col-span-6 flex flex-col items-start justify-end gap-0">
               {/* Heading */}
               <div className="mb-6">
@@ -226,6 +244,76 @@ export default function LandingPage() {
           </div>
         </section>
 
+        {/* ── THE PROBLEM ──────────────────────────────────────────────────── */}
+        <section
+          id="the-problem"
+          className="w-full pt-8 pb-32 relative z-30"
+          style={{ background: "#111415" }}
+        >
+          <div className="max-w-[1440px] mx-auto px-6 grid grid-cols-12 gap-16 md:gap-24 items-center">
+            {/* Left side */}
+            <div className="col-span-12 md:col-span-6 flex flex-col items-start gap-8">
+              <div className="flex items-center gap-6 w-full">
+                <span
+                  className="text-[#57f1db] text-[11px] tracking-[2.2px] uppercase font-mono"
+                >
+                  01 / THE PROBLEM
+                </span>
+                <div className="flex-1 h-px bg-white/5"></div>
+              </div>
+              <h2
+                className="text-[40px] md:text-[48px] leading-[1.2] text-[#e1e2e4]"
+                style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
+              >
+                Stop writing browser instructions at 2 am.
+              </h2>
+              <p className="text-[#bacac5] text-[14px] md:text-[15px] leading-[1.8] font-mono opacity-80 max-w-[500px]">
+                Traditional test scripts force you to manage the DOM manually. Your tests break when the UI changes.
+                 <br />
+                Leaka adapts to the changes automatically, trigger alerts, and saves you revenue before a customer complains.
+              </p>
+            </div>
+
+            {/* Right side */}
+            <div className="col-span-12 md:col-span-6 flex flex-col gap-4">
+              {[
+                { flow: "E-COMMERCE_CHECKOUT", issue: "Promo code field silently rejecting valid input" },
+                { flow: "SAAS_ONBOARDING", issue: "Signup flow hangs after email verification" },
+                { flow: "PLAN_UPGRADE", issue: "Upgrade button firing the wrong plan" },
+              ].map((item, i) => (
+                <div
+                  key={i}
+                  className="relative overflow-hidden flex items-center justify-between p-6 rounded-xl border border-white/5 bg-[#141718] group"
+                >
+                  {/* Subtle animated background gradient on hover */}
+                  <div 
+                    className="absolute inset-0 opacity-0 group-hover:opacity-10 transition-opacity duration-700 pointer-events-none" 
+                    style={{ background: 'linear-gradient(90deg, transparent, rgba(87,241,219,0.3), transparent)' }}
+                  />
+                  
+                  <span 
+                    className="animate-text-shimmer text-[12px] font-mono uppercase tracking-[1.5px] font-bold relative z-10"
+                    style={{ animationDelay: `${i * 1}s` }}
+                  >
+                    {item.flow}
+                  </span>
+                  
+                  <div className="flex items-center gap-3 text-[#bacac5] opacity-80 relative z-10">
+                    <svg 
+                      className="w-4 h-4 text-[#e3c0a0] animate-pulse-amber" 
+                      style={{ animationDelay: `${i * 1}s` }}
+                      fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                    </svg>
+                    <span className="text-[11px] font-mono tracking-wide">{item.issue}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
         {/* ── CAPABILITIES ─────────────────────────────────────────────────── */}
         <section
           id="capabilities"
@@ -242,7 +330,7 @@ export default function LandingPage() {
                 className="text-[#57f1db] text-[11px] tracking-[2.2px] uppercase"
                 style={{ fontFamily: "Georgia, serif" }}
               >
-                01 / CAPABILITIES
+                02 / CAPABILITIES
               </span>
               <h2
                 className="text-[40px] leading-[1.5] text-[#e1e2e4]"
@@ -302,7 +390,7 @@ export default function LandingPage() {
                   className="text-[#e3c0a0] text-[11px] tracking-[2.2px] uppercase"
                   style={{ fontFamily: "Georgia, serif" }}
                 >
-                  02 / EXECUTION
+                  03 / EXECUTION
                 </span>
               </div>
               <h2
@@ -372,7 +460,7 @@ export default function LandingPage() {
                 className="text-[#3c4a46] text-[11px] tracking-[2.2px] uppercase text-center"
                 style={{ fontFamily: "Georgia, serif" }}
               >
-                03 / INTEGRATIONS
+                04 / INTEGRATIONS
               </span>
             </div>
             <div className="flex flex-wrap items-center justify-center gap-4">
