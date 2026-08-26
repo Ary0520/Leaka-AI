@@ -1,6 +1,9 @@
-const BASE =
-  (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_BACKEND_URL) ||
-  "http://localhost:8000";
+const BASE = 
+  (typeof window !== "undefined")
+    ? "" // On the client browser, use relative paths so Vercel's secure rewrites handle it
+    : ((typeof process !== "undefined" && process.env?.NEXT_PUBLIC_BACKEND_URL) ||
+       "http://localhost:8000");
+
 
 // ── Auth token storage (set by providers.tsx on session change) ───────────────
 let _authToken: string | null = null;
