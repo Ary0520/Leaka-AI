@@ -151,3 +151,103 @@ class UserSettings(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# ===========================================================================
+# APPLICATION INTELLIGENCE (Explore Mode)
+# ---------------------------------------------------------------------------
+# A parallel subsystem: connect an application, autonomously explore it, and
+# build a map of its pages/forms/flows. Completely independent of the test-run
+# tables above — nothing here touches TestRun / TestCase execution logic.
+# ===========================================================================
+
+
+class ExploreRunStatus(str, enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class Application(Base):
+    """
+    A user-connected application that Leaka can explore and map.
+    Owner-scoped like every other user resource.
+    """
+    __tablename__ = "applications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(String(64), nullable=True, index=True)  # Supabase user UUID
+    name = Column(String(255), nullable=False)
+    base_url = Column(String(2048), nullable=False)
+    description = Column(Text, nullable=True)
+    # Optional login hint for the explorer (natural-language, e.g.
+    # "Log in with standard_user / secret_sauce"). NOT a secrets store — v1
+    # keeps this simple; real credential vaulting is a later enterprise phase.
+    login_hint = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    explore_runs = relationship(
+        "ExploreRun", back_populates="application", cascade="all, delete-orphan"
+    )
+    map_nodes = relationship(
+        "AppMapNode", back_populates="application", cascade="all, delete-orphan"
+    )
+
+
+class ExploreRun(Base):
+    """
+    A single autonomous exploration run against an Application. Mirrors the
+    TestRun lifecycle (pending → running → completed/failed) but is separate.
+    """
+    __tablename__ = "explore_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(String(64), nullable=True, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=False)
+    job_id = Column(String(64), unique=True, index=True, nullable=False)
+    task_id = Column(String(128), unique=True, index=True, nullable=True)
+
+    status = Column(SAEnum(ExploreRunStatus), default=ExploreRunStatus.PENDING, index=True)
+    max_steps = Column(Integer, default=40)
+
+    nodes_found = Column(Integer, default=0)
+    result_summary = Column(Text, nullable=True)
+    error_message = Column(Text, nullable=True)
+    live_steps = Column(Text, nullable=True)   # incremental steps during run
+    visited_urls = Column(Text, nullable=True)  # JSON list
+
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    application = relationship("Application", back_populates="explore_runs")
+
+
+class AppMapNode(Base):
+    """
+    One discovered element of an application's map — a page, a form, or a flow.
+    Written by the explore worker from the agent's structured output.
+    """
+    __tablename__ = "app_map_nodes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(String(64), nullable=True, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=False, index=True)
+    explore_run_id = Column(Integer, ForeignKey("explore_runs.id"), nullable=True)
+
+    # node_type: "page" | "form" | "flow"
+    node_type = Column(String(32), nullable=False, default="page")
+    label = Column(String(500), nullable=False)         # human name, e.g. "Checkout"
+    url = Column(String(2048), nullable=True)            # where it lives, if known
+    description = Column(Text, nullable=True)            # what it does
+    # Suggested test prompt the explorer drafted for this node (used by the
+    # "generate test" one-click). NULL if none drafted.
+    suggested_prompt = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    application = relationship("Application", back_populates="map_nodes")
