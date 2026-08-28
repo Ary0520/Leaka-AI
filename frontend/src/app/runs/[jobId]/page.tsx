@@ -2,7 +2,8 @@
 
 import { useMutation, useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { api, BACKEND_URL, type RunStatus as RS } from "@/lib/api";
+import { api, type RunStatus as RS } from "@/lib/api";
+import { AuthedImage, openAuthedInNewTab } from "@/components/authed-image";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -551,14 +552,18 @@ function RunView({
                         </div>
                         {s.caption && <span className="truncate max-w-[280px]">{truncate(s.caption, 50)}</span>}
                       </div>
-                      <a href={`${BACKEND_URL}/api/screenshots/${s.id}`} target="_blank" rel="noreferrer" className="block bg-black/5">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={`${BACKEND_URL}/api/screenshots/${s.id}`}
+                      <button
+                        type="button"
+                        onClick={() => openAuthedInNewTab(`/api/screenshots/${s.id}`)}
+                        className="block w-full bg-black/5 cursor-zoom-in"
+                        title="Open full size"
+                      >
+                        <AuthedImage
+                          path={`/api/screenshots/${s.id}`}
                           alt={`step ${s.step_index ?? ""}`}
-                          className="w-full h-auto max-h-[480px] object-contain bg-muted cursor-zoom-in"
+                          className="w-full h-auto max-h-[480px] object-contain bg-muted"
                         />
-                      </a>
+                      </button>
                     </div>
                   ))}
                 </div>

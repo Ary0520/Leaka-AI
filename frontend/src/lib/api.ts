@@ -395,7 +395,10 @@ export const api = {
       method: "POST",
     }),
 
-  // CI webhook
+  // CI webhook — dashboard-triggered runs authenticate as the logged-in user
+  // via the Bearer JWT that request() attaches automatically. The CI secret
+  // token is ONLY used by external CI systems (GitHub Actions), never shipped
+  // to the browser.
   triggerCI: (body: {
     suite_id?: number | null;
     test_case_ids?: number[] | null;
@@ -406,11 +409,6 @@ export const api = {
     request<{ message: string; job_ids: string[] }>("/api/webhooks/ci", {
       method: "POST",
       body: JSON.stringify(body),
-      headers: {
-        "X-CI-Token":
-          (typeof process !== "undefined" && process.env?.CI_WEBHOOK_TOKEN) ||
-          "revguard-ci-token-change-me",
-      },
     }),
 };
 
