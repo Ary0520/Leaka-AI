@@ -3,7 +3,7 @@
 import { type FormEvent, useState, useEffect, Suspense } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
-import { api, type TestCaseOut } from "@/lib/api";
+import { api, type TestCaseOut, type Assertion, type AssertionType } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -30,8 +30,19 @@ import {
   Lightbulb,
   Play,
   Check,
+  ShieldCheck,
+  Plus,
+  Trash2,
 } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
+
+const ASSERTION_TYPES: { value: AssertionType; label: string; placeholder: string }[] = [
+  { value: "page_contains_text", label: "Page contains text", placeholder: "e.g. Thank you for your order" },
+  { value: "page_not_contains_text", label: "Page does NOT contain text", placeholder: "e.g. Error" },
+  { value: "url_contains", label: "Final URL contains", placeholder: "e.g. /success" },
+  { value: "url_equals", label: "Final URL equals", placeholder: "e.g. https://shop.com/thank-you" },
+  { value: "page_contains_regex", label: "Page matches regex", placeholder: "e.g. Order #\\d+" },
+];
 
 function NewTestContent() {
   const router = useRouter();
@@ -48,6 +59,14 @@ function NewTestContent() {
   const [caseName, setCaseName] = useState("");
   const [existingCaseId, setExistingCaseId] = useState<string>("");
   const [suiteId, setSuiteId] = useState<number | undefined>(preselectedSuiteId);
+  const [assertions, setAssertions] = useState<Assertion[]>([]);
+
+  const addAssertion = () =>
+    setAssertions((prev) => [...prev, { type: "page_contains_text", value: "", case_sensitive: false }]);
+  const updateAssertion = (i: number, patch: Partial<Assertion>) =>
+    setAssertions((prev) => prev.map((a, idx) => (idx === i ? { ...a, ...patch } : a)));
+  const removeAssertion = (i: number) =>
+    setAssertions((prev) => prev.filter((_, idx) => idx !== i));
 
   // If suite_id lands from URL, auto-enable save-as-case
   useEffect(() => {
@@ -83,6 +102,12 @@ function NewTestContent() {
       const finalSuccess =
         success.trim() || resolvedCase?.success_criteria || undefined;
 
+      // Only send assertions that actually have a value
+      const cleanAssertions = assertions
+        .map((a) => ({ ...a, value: a.value.trim() }))
+        .filter((a) => a.value.length > 0);
+      const assertionsPayload = cleanAssertions.length ? cleanAssertions : undefined;
+
       // First save as new case if requested
       let test_case_id: number | undefined = undefined;
       if (saveAsCase && caseName.trim()) {
@@ -92,6 +117,7 @@ function NewTestContent() {
           success_criteria: finalSuccess,
           target_url: finalUrl,
           suite_id: suiteId ?? null,
+          assertions: assertionsPayload,
         });
         test_case_id = saved.id;
       } else if (resolvedCase) {
@@ -106,6 +132,7 @@ function NewTestContent() {
         test_case_id,
         use_vision: true,
         max_steps: 50,
+        assertions: assertionsPayload,
       });
     },
     onSuccess: (r) => {
@@ -138,6 +165,9 @@ function NewTestContent() {
         setPrompt((p) => p || c.prompt);
         setTargetUrl((u) => u || c.target_url || "");
         setSuccess((s) => s || c.success_criteria || "");
+        if (c.assertions && c.assertions.length) {
+          setAssertions((prev) => (prev.length ? prev : c.assertions!));
+        }
       }
     }
   };
@@ -272,6 +302,82 @@ function NewTestContent() {
                   placeholder="Order total equals $45. Promo discount applied. Confirmation email sent."
                   className="bg-[#0B0E14] border-transparent font-mono text-sm p-4 resize-none text-muted-foreground"
                 />
+              </div>
+
+              {/* ── Deterministic assertions ── */}
+              <div className="pt-2 border-t border-white/5">
+                <div className="flex items-center justify-between mb-3">
+                  <Label className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground flex items-center gap-1.5">
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                    Assertions (optional)
+                  </Label>
+                  <Button type="button" size="sm" variant="outline" onClick={addAssertion}
+                    className="h-7 text-xs">
+                    <Plus className="w-3 h-3 mr-1" /> Add
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
+                  Machine-checked against the real final page — independent of what the
+                  AI reports. A test passes only if the AI succeeds <em>and</em> every
+                  assertion holds. Text checks match visible page text (ignoring HTML/scripts).
+                </p>
+
+                {assertions.length === 0 ? (
+                  <div className="text-xs text-muted-foreground/60 italic py-2">
+                    No assertions. The result will rely on the AI agent&apos;s judgement alone.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {assertions.map((a, i) => {
+                      const meta = ASSERTION_TYPES.find((t) => t.value === a.type);
+                      return (
+                        <div key={i} className="flex items-start gap-2 rounded-md bg-[#0B0E14] p-2">
+                          <div className="flex-1 space-y-2">
+                            <Select
+                              value={a.type}
+                              onValueChange={(v) => updateAssertion(i, { type: v as AssertionType })}
+                            >
+                              <SelectTrigger className="h-8 text-xs bg-[#161922] border-transparent">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {ASSERTION_TYPES.map((t) => (
+                                  <SelectItem key={t.value} value={t.value} className="text-xs">
+                                    {t.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <Input
+                              value={a.value}
+                              onChange={(e) => updateAssertion(i, { value: e.target.value })}
+                              placeholder={meta?.placeholder}
+                              className="h-8 text-xs bg-[#161922] border-transparent font-mono"
+                            />
+                            <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={a.case_sensitive ?? false}
+                                onChange={(e) => updateAssertion(i, { case_sensitive: e.target.checked })}
+                                className="w-3 h-3"
+                              />
+                              Case sensitive
+                            </label>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => removeAssertion(i)}
+                            className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive shrink-0"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>

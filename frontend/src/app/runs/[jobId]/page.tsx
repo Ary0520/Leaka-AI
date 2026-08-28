@@ -45,6 +45,31 @@ function parseStepsLog(raw: string | null | undefined): StepAction[] {
   }
 }
 
+interface AssertionResultRow {
+  type: string;
+  value: string;
+  passed: boolean;
+  detail?: string | null;
+}
+
+function parseAssertionResults(raw: string | null | undefined): AssertionResultRow[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+const ASSERTION_LABELS: Record<string, string> = {
+  page_contains_text: "Page contains",
+  page_not_contains_text: "Page must not contain",
+  url_contains: "URL contains",
+  url_equals: "URL equals",
+  page_contains_regex: "Page matches regex",
+};
+
 // Map action keys to human-readable labels + icons
 function actionMeta(action: Record<string, unknown> | undefined): {
   label: string;
@@ -453,6 +478,62 @@ function RunView({
               )}
             </CardContent>
           </Card>
+
+          {/* Deterministic assertion results — the trust signal */}
+          {(() => {
+            const results = parseAssertionResults(data.assertion_results);
+            if (!results.length) return null;
+            const passedCount = results.filter((r) => r.passed).length;
+            const allPassed = passedCount === results.length;
+            return (
+              <Card className={allPassed ? "border-emerald-500/30" : "border-destructive/40"}>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <CheckCircle2 className={"w-4 h-4 " + (allPassed ? "text-emerald-500" : "text-destructive")} />
+                    Deterministic assertions
+                    <Badge variant={allPassed ? "secondary" : "destructive"} className="ml-1 text-xs">
+                      {passedCount}/{results.length} passed
+                    </Badge>
+                  </CardTitle>
+                  <CardDescription>
+                    Verified against the real final page — independent of the AI&apos;s judgement.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {results.map((r, i) => (
+                    <div
+                      key={i}
+                      className={
+                        "flex items-start gap-3 rounded-md border px-3 py-2 text-sm " +
+                        (r.passed
+                          ? "border-emerald-500/20 bg-emerald-500/5"
+                          : "border-destructive/30 bg-destructive/5")
+                      }
+                    >
+                      {r.passed ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                      ) : (
+                        <XCircle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+                      )}
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-medium">
+                            {ASSERTION_LABELS[r.type] ?? r.type}
+                          </span>
+                          <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono truncate max-w-xs">
+                            {r.value}
+                          </code>
+                        </div>
+                        {r.detail && (
+                          <p className="text-xs text-muted-foreground mt-1">{r.detail}</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            );
+          })()}
 
           {/* Self-healing insights — shown when run is complete */}
           {data.status !== "running" && data.status !== "pending" && steps.length > 0 && (

@@ -97,6 +97,8 @@ export interface RunStatusResponse {
   visited_urls?: string | null;
   live_steps?: string | null;
   is_successful?: boolean | null;
+  assertions?: string | null;          // JSON string: Assertion[]
+  assertion_results?: string | null;   // JSON string: AssertionResult[]
   created_at?: string | null;
   started_at?: string | null;
   completed_at?: string | null;
@@ -114,6 +116,26 @@ export interface RunListEntry {
   completed_at?: string | null;
 }
 
+export type AssertionType =
+  | "page_contains_text"
+  | "page_not_contains_text"
+  | "url_contains"
+  | "url_equals"
+  | "page_contains_regex";
+
+export interface Assertion {
+  type: AssertionType;
+  value: string;
+  case_sensitive?: boolean;
+}
+
+export interface AssertionResult {
+  type: string;
+  value: string;
+  passed: boolean;
+  detail?: string | null;
+}
+
 export interface TestRunRequest {
   name?: string | null;
   prompt: string;
@@ -122,6 +144,7 @@ export interface TestRunRequest {
   test_case_id?: number | null;
   use_vision?: boolean;
   max_steps?: number;
+  assertions?: Assertion[] | null;
 }
 
 export interface EnqueueResponse {
@@ -137,6 +160,7 @@ export interface TestCaseOut {
   success_criteria?: string | null;
   target_url?: string | null;
   suite_id?: number | null;
+  assertions?: Assertion[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -147,6 +171,7 @@ export interface TestCaseCreate {
   success_criteria?: string | null;
   target_url?: string | null;
   suite_id?: number | null;
+  assertions?: Assertion[] | null;
 }
 
 export interface TestCaseUpdate {
@@ -155,6 +180,7 @@ export interface TestCaseUpdate {
   success_criteria?: string | null;
   target_url?: string | null;
   suite_id?: number | null;
+  assertions?: Assertion[] | null;
 }
 
 export interface TestSuiteOut {

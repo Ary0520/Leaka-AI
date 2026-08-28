@@ -39,6 +39,9 @@ class TestCase(Base):
     prompt = Column(Text, nullable=False)
     success_criteria = Column(Text, nullable=True)
     target_url = Column(String(2048), nullable=True)
+    # Deterministic assertions (JSON array of {type, value, options}).
+    # NULL = no assertions → run behaves exactly as before (LLM verdict only).
+    assertions = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -59,6 +62,12 @@ class TestRun(Base):
     prompt = Column(Text, nullable=False)
     target_url = Column(String(2048), nullable=True)
     success_criteria = Column(Text, nullable=True)
+    # Deterministic assertions copied from the test case (or set ad-hoc) at
+    # enqueue time. JSON array of {type, value, options}. NULL = none.
+    assertions = Column(Text, nullable=True)
+    # Per-assertion evaluation results written by the worker after the run.
+    # JSON array of {type, value, passed, actual, detail}. NULL = not evaluated.
+    assertion_results = Column(Text, nullable=True)
 
     status = Column(SAEnum(TestRunStatus), default=TestRunStatus.PENDING, index=True)
     result_summary = Column(Text, nullable=True)
