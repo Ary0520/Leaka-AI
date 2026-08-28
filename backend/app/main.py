@@ -477,46 +477,53 @@ async def test_llm_connection(user: dict = Depends(get_current_user)):
 # Demo seed — pre-populate example test cases for investor demos
 # ---------------------------------------------------------------------------
 @app.post("/api/demo/seed", status_code=201)
-def seed_demo_data(db: Session = Depends(get_db)):
+def seed_demo_data(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     """
-    Idempotent: creates 3 example test cases if none exist yet.
-    Safe to call multiple times.
+    Idempotent per-user: creates example test cases for the calling user if they
+    have none yet. Auth-required and owner-scoped so demo data belongs to the
+    user who seeded it (not shared globally). Safe to call multiple times.
     """
-    existing = db.query(TestCase).count()
+    owner = user["sub"]
+    existing = db.query(TestCase).filter(TestCase.owner_id == owner).count()
     if existing > 0:
         return {"message": f"Already seeded ({existing} cases exist)", "created": 0}
 
     demos = [
         TestCase(
-            name="Checkout flow — promo code",
+            owner_id=owner,
+            name="Checkout flow — add to cart",
             prompt=(
-                "Go to the target URL. Add the first product to the cart. "
-                "Apply promo code WELCOME10 at checkout. "
-                "Verify the discount is applied and the order total is reduced."
+                "Go to the target URL (saucedemo.com). Log in with username "
+                "'standard_user' and password 'secret_sauce'. Add the first product "
+                "to the cart. Open the cart and verify the product appears with the "
+                "correct name and price."
             ),
-            target_url="https://demo.vercel.store",
-            success_criteria="Discount applied. Order total shows reduced amount.",
+            target_url="https://www.saucedemo.com",
+            success_criteria="Product is in the cart with a visible name and price.",
         ),
         TestCase(
-            name="Pricing page — CTA visible",
+            owner_id=owner,
+            name="Checkout flow — complete order",
             prompt=(
-                "Navigate to the pricing page. "
-                "Verify that at least one pricing tier is visible with a price and a call-to-action button. "
-                "Report the names and prices of all tiers shown."
+                "Go to the target URL (saucedemo.com). Log in with username "
+                "'standard_user' and password 'secret_sauce'. Add any product to the "
+                "cart, proceed through checkout with first name 'Test', last name "
+                "'User', zip '12345', and complete the order. Verify the order "
+                "confirmation message appears."
             ),
-            target_url="https://vercel.com/pricing",
-            success_criteria="At least one pricing tier visible with a CTA button.",
+            target_url="https://www.saucedemo.com",
+            success_criteria="Order confirmation ('Thank you for your order') is shown.",
         ),
         TestCase(
-            name="User onboarding — signup form loads",
+            owner_id=owner,
+            name="Login — invalid credentials rejected",
             prompt=(
-                "Go to the target URL. "
-                "Find the sign-up or get-started form. "
-                "Verify the email input field and submit button are present and functional (do not submit). "
-                "Report what fields are present."
+                "Go to the target URL (saucedemo.com). Attempt to log in with "
+                "username 'locked_out_user' and password 'secret_sauce'. "
+                "Verify that an error message is shown and login is blocked."
             ),
-            target_url="https://app.supabase.com",
-            success_criteria="Sign-up form is visible with email field and submit button.",
+            target_url="https://www.saucedemo.com",
+            success_criteria="An error message is displayed and the user is not logged in.",
         ),
     ]
 
@@ -746,11 +753,49 @@ def enqueue_test(body: TestRunRequest, db: Session = Depends(get_db), user: dict
     return {"job_id": job_id, "task_id": task_id, "status": TestRunStatus.PENDING.value}
 
 
-@app.get("/api/tests/status/{job_id}", response_model=TestRunStatusResponse)
-def get_run_status(job_id: str, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+# ---------------------------------------------------------------------------
+# Ownership helper — enforce tenant isolation on TestRun lookups
+# ---------------------------------------------------------------------------
+def _get_owned_run(
+    db: Session,
+    job_id: str,
+    user: Optional[dict],
+) -> "TestRun":
+    """
+    Fetch a TestRun by job_id and enforce ownership.
+
+    Authorization rule:
+      - If the run has an owner_id set, it MUST match the authenticated user's
+        `sub` claim. Otherwise → 404 (we return 404, not 403, so we don't leak
+        the existence of other tenants' runs).
+      - Legacy runs with owner_id = NULL (created before auth was introduced)
+        are accessible to any authenticated user — grandfathered so the fix
+        doesn't break existing data. These should be migrated/backfilled later.
+      - `user` may be None only for trusted internal calls (never from a route
+        that lacks the auth dependency).
+
+    Raises 404 if the run doesn't exist or the caller doesn't own it.
+    """
     run = db.query(TestRun).filter(TestRun.job_id == job_id).first()
     if not run:
         raise HTTPException(404, "Job not found")
+
+    # Enforce ownership only when we have both an authenticated user and an
+    # owner on the record. NULL-owner legacy rows remain accessible.
+    if user is not None and run.owner_id and run.owner_id != user.get("sub"):
+        # Return 404 (not 403) to avoid leaking that the run exists.
+        raise HTTPException(404, "Job not found")
+
+    return run
+
+
+@app.get("/api/tests/status/{job_id}", response_model=TestRunStatusResponse)
+def get_run_status(
+    job_id: str,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    run = _get_owned_run(db, job_id, user)
 
     # Merge live Celery state if task_id exists and task is not terminal
     stage: Optional[str] = None
@@ -853,9 +898,7 @@ def cancel_run(job_id: str, db: Session = Depends(get_db), user: dict = Depends(
     For sync_demo mode this marks the DB record cancelled immediately.
     For celery mode it also revokes the task from the broker queue.
     """
-    run = db.query(TestRun).filter(TestRun.job_id == job_id).first()
-    if not run:
-        raise HTTPException(404, "Job not found")
+    run = _get_owned_run(db, job_id, user)
 
     if run.status not in (TestRunStatus.PENDING, TestRunStatus.RUNNING):
         raise HTTPException(
@@ -879,7 +922,7 @@ def cancel_run(job_id: str, db: Session = Depends(get_db), user: dict = Depends(
         run.error_message = "Cancelled by user."
     db.commit()
 
-    return get_run_status(job_id, db=db)
+    return get_run_status(job_id, db=db, user=user)
 
 
 # ---------------------------------------------------------------------------
@@ -889,9 +932,28 @@ SCREENSHOT_ROOT = os.path.abspath(settings.SCREENSHOT_DIR)
 
 
 @app.get("/api/screenshots/{screenshot_id}")
-def get_screenshot(screenshot_id: int, db: Session = Depends(get_db)):
+def get_screenshot(
+    screenshot_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Serve a screenshot image — auth-gated and tenant-scoped.
+
+    A screenshot belongs to a TestRun. We resolve the parent run and enforce
+    the same ownership rule as _get_owned_run: if the run has an owner_id, it
+    must match the caller. Legacy NULL-owner runs remain accessible.
+    Returns 404 (not 403) on ownership mismatch so we don't leak existence.
+    """
     shot = db.query(TestScreenshot).filter(TestScreenshot.id == screenshot_id).first()
     if not shot:
+        raise HTTPException(404, "Screenshot not found")
+
+    # Resolve parent run and enforce ownership
+    run = db.query(TestRun).filter(TestRun.id == shot.test_run_id).first()
+    if not run:
+        raise HTTPException(404, "Screenshot not found")
+    if run.owner_id and run.owner_id != user.get("sub"):
         raise HTTPException(404, "Screenshot not found")
 
     # file_path is stored relative to the parent of SCREENSHOT_ROOT, or absolute
@@ -899,6 +961,12 @@ def get_screenshot(screenshot_id: int, db: Session = Depends(get_db)):
         full_path = shot.file_path
     else:
         full_path = os.path.normpath(os.path.join(os.path.dirname(SCREENSHOT_ROOT), shot.file_path))
+
+    # Defense-in-depth: ensure the resolved path stays within SCREENSHOT_ROOT
+    # (prevents path traversal if a malformed file_path ever gets persisted).
+    _root = os.path.abspath(os.path.dirname(SCREENSHOT_ROOT))
+    if not os.path.abspath(full_path).startswith(_root):
+        raise HTTPException(404, "Screenshot not found")
 
     if not os.path.isfile(full_path):
         raise HTTPException(404, "Screenshot file missing on disk")
@@ -916,12 +984,38 @@ def ci_webhook(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    token = x_ci_token
-    if not token and authorization and authorization.lower().startswith("bearer "):
-        token = authorization.split(" ", 1)[1].strip()
+    # Two accepted auth modes:
+    #   1. External CI systems (GitHub Actions) send X-CI-Token = CI_WEBHOOK_TOKEN.
+    #   2. The dashboard "trigger now" button sends the logged-in user's Supabase
+    #      JWT as a Bearer token. We verify it and scope created runs to that user.
+    # This means the CI secret NEVER needs to ship to the browser.
+    caller_owner_id: Optional[str] = None
+    authorized = False
 
-    if token != settings.CI_WEBHOOK_TOKEN:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid CI webhook token")
+    bearer_token: Optional[str] = None
+    if authorization and authorization.lower().startswith("bearer "):
+        bearer_token = authorization.split(" ", 1)[1].strip()
+
+    # Mode 1: CI token (header or bearer) matches the configured secret
+    if x_ci_token and x_ci_token == settings.CI_WEBHOOK_TOKEN:
+        authorized = True
+    elif bearer_token and bearer_token == settings.CI_WEBHOOK_TOKEN:
+        authorized = True
+    # Mode 2: valid Supabase user JWT (dashboard-triggered)
+    elif bearer_token:
+        try:
+            from .auth import verify_token
+            claims = verify_token(bearer_token)
+            caller_owner_id = claims.get("sub")
+            authorized = bool(caller_owner_id)
+        except Exception:
+            authorized = False
+
+    if not authorized:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "Invalid CI webhook token or user session.",
+        )
 
     # Gather test case IDs
     ids = list(body.test_case_ids or [])
@@ -943,6 +1037,7 @@ def ci_webhook(
         job_id = uuid.uuid4().hex
         run = TestRun(
             job_id=job_id,
+            owner_id=caller_owner_id or tc.owner_id,
             test_case_id=tc.id,
             name=f"[CI] {tc.name}",
             prompt=tc.prompt,
@@ -977,9 +1072,7 @@ def ci_webhook(
 # ---------------------------------------------------------------------------
 @app.post("/api/integrations/linear/issue", response_model=LinearTicketResponse)
 def create_linear_ticket(body: CreateLinearTicketRequest, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    run = db.query(TestRun).filter(TestRun.job_id == body.job_id).first()
-    if not run:
-        raise HTTPException(404, "Test run not found")
+    run = _get_owned_run(db, body.job_id, user)
 
     screenshots = (
         db.query(TestScreenshot)
@@ -1046,9 +1139,7 @@ def email_failure_alert(
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    run = db.query(TestRun).filter(TestRun.job_id == job_id).first()
-    if not run:
-        raise HTTPException(404, "Job not found")
+    run = _get_owned_run(db, job_id, user)
 
     shots = (
         db.query(TestScreenshot)
@@ -1102,9 +1193,7 @@ def slack_failure_alert(
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    run = db.query(TestRun).filter(TestRun.job_id == job_id).first()
-    if not run:
-        raise HTTPException(404, "Job not found")
+    run = _get_owned_run(db, job_id, user)
 
     cfg = db.query(UserSettings).filter(UserSettings.owner_id == user["sub"]).first()
     webhook = (cfg.slack_webhook_url if cfg else None) or settings.SLACK_WEBHOOK_URL

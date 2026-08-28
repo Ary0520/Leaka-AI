@@ -29,11 +29,6 @@ import {
 import { toast } from "@/components/ui/use-toast";
 import { BACKEND_URL } from "@/lib/api";
 
-const CI_TOKEN =
-  typeof process !== "undefined"
-    ? process.env.CI_WEBHOOK_TOKEN || "revguard-ci-token-change-me"
-    : "revguard-ci-token-change-me";
-
 const WEBHOOK_URL = `${BACKEND_URL}/api/webhooks/ci`;
 
 function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
@@ -83,6 +78,13 @@ export default function CIPage() {
     queryKey: ["suites"],
     queryFn: () => api.listSuites({ limit: 100 }),
   });
+
+  // The real CI token comes from the backend (never hardcoded in the client).
+  const { data: integrationSettings } = useQuery({
+    queryKey: ["integration-settings"],
+    queryFn: () => api.getIntegrationSettings(),
+  });
+  const ciToken = integrationSettings?.ci.webhook_token || "";
 
   const triggerMut = useMutation({
     mutationFn: () => {
@@ -215,13 +217,13 @@ jobs:
           <CardContent>
             <div className="flex items-center gap-2">
               <code className="text-xs bg-muted px-2 py-1.5 rounded flex-1 truncate font-mono">
-                X-CI-Token: {CI_TOKEN}
+                X-CI-Token: {ciToken ? ciToken : "•••••••• (set in Settings)"}
               </code>
-              <CopyButton text={CI_TOKEN} />
+              <CopyButton text={ciToken} label="Copy" />
             </div>
             <p className="text-xs text-muted-foreground mt-2">
-              Set <code>CI_WEBHOOK_TOKEN</code> in backend <code>.env</code> to
-              rotate this secret.
+              Set your CI token under <code>Settings → CI / CD webhook token</code>,
+              then add it as the <code>LEAKA_CI_TOKEN</code> secret in GitHub Actions.
             </p>
           </CardContent>
         </Card>
