@@ -172,6 +172,10 @@ export interface TestCaseCreate {
   target_url?: string | null;
   suite_id?: number | null;
   assertions?: Assertion[] | null;
+  // Optional authoritative coverage linkage: when a test is generated from a
+  // graph node, pass both so the backend records a CoverageLink (R4.3).
+  application_id?: number | null;
+  node_id?: number | null;
 }
 
 export interface TestCaseUpdate {
@@ -345,6 +349,40 @@ export interface SnapshotDiffResponse {
   from_snapshot_id: number;
   to_snapshot_id: number;
   diff: Record<string, unknown>;
+}
+
+// ---------- Coverage Intelligence (Layer 2) ----------
+export interface CoverageRollupOut {
+  scope: string;
+  percent: number;
+  node_count: number;
+  covered_count: number;
+  partial_count: number;
+  uncovered_count: number;
+}
+
+export interface CoverageGapOut {
+  node_id: number;
+  canonical_key: string;
+  label: string;
+  state: string; // partially_covered | uncovered
+  confidence: number;
+  risk_score: number;
+  risk_level: string;
+  business_category?: string | null;
+  suggested_prompt?: string | null;
+  url?: string | null;
+}
+
+export interface CoverageResponse {
+  application_id: number;
+  is_empty: boolean;
+  application_rollup?: CoverageRollupOut | null;
+  category_rollups: CoverageRollupOut[];
+  gaps: CoverageGapOut[];
+  total_gaps: number;
+  skip: number;
+  limit: number;
 }
 
 // ---------- API ----------
@@ -628,6 +666,15 @@ export const api = {
   },
   diffSnapshots: (id: number, fromId: number, toId: number) =>
     request<SnapshotDiffResponse>(`/api/applications/${id}/snapshots/${fromId}/diff/${toId}`),
+
+  // Coverage Intelligence (Layer 2)
+  getApplicationCoverage: (id: number, params?: { skip?: number; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.skip != null) qs.set("skip", String(params.skip));
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    const q = qs.toString();
+    return request<CoverageResponse>(`/api/applications/${id}/coverage${q ? `?${q}` : ""}`);
+  },
 };
 
 export const BACKEND_URL = BASE;

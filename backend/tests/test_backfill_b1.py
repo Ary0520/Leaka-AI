@@ -87,6 +87,9 @@ def _cleanup():
             node_ids = [n.id for n in db.query(GraphNode).filter(GraphNode.application_id.in_(app_ids)).all()]
             if node_ids:
                 db.query(NodeFingerprint).filter(NodeFingerprint.node_id.in_(node_ids)).delete(synchronize_session=False)
+            from app.models import CoverageLink as _CL, CoverageVerdict as _CV
+            db.query(_CL).filter(_CL.application_id.in_(app_ids)).delete(synchronize_session=False)
+            db.query(_CV).filter(_CV.application_id.in_(app_ids)).delete(synchronize_session=False)
             db.query(GraphEdge).filter(GraphEdge.application_id.in_(app_ids)).delete(synchronize_session=False)
             db.query(GraphNode).filter(GraphNode.application_id.in_(app_ids)).delete(synchronize_session=False)
             db.query(AppMapNode).filter(AppMapNode.application_id.in_(app_ids)).delete(synchronize_session=False)

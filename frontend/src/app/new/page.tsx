@@ -55,6 +55,10 @@ function NewTestContent() {
   const [name, setName] = useState(searchParams.get("name") ?? "");
   const [prompt, setPrompt] = useState(searchParams.get("prompt") ?? "");
   const [targetUrl, setTargetUrl] = useState(searchParams.get("target_url") ?? "");
+  // Coverage linkage: when this page was opened from a graph node's "Generate
+  // test", these carry the node identity so the saved test links back to it.
+  const linkAppId = searchParams.get("app_id") ? Number(searchParams.get("app_id")) : undefined;
+  const linkNodeId = searchParams.get("node_id") ? Number(searchParams.get("node_id")) : undefined;
   const [success, setSuccess] = useState("");
   const [saveAsCase, setSaveAsCase] = useState(!!preselectedSuiteId);
   const [caseName, setCaseName] = useState("");
@@ -119,6 +123,8 @@ function NewTestContent() {
           target_url: finalUrl,
           suite_id: suiteId ?? null,
           assertions: assertionsPayload,
+          application_id: linkAppId ?? null,
+          node_id: linkNodeId ?? null,
         });
         test_case_id = saved.id;
       } else if (resolvedCase) {

@@ -40,6 +40,8 @@ from .models import (
     GraphEdge,
     GraphSnapshot,
     SnapshotMember,
+    CoverageVerdict,
+    CoverageLink,
     LinearIssue,
     TestCase,
     TestRun,
@@ -67,6 +69,9 @@ from .schemas import (
     SnapshotOut,
     SnapshotListResponse,
     SnapshotDiffResponse,
+    CoverageRollupOut,
+    CoverageGapOut,
+    CoverageResponse,
     LinearTicketResponse,
     ScreenshotOut,
     TestCaseCreate,
@@ -611,12 +616,53 @@ def create_test_case(body: TestCaseCreate, db: Session = Depends(get_db), user: 
     data = body.model_dump()
     # assertions is a list of Assertion models → serialize to JSON string column
     assertions = data.pop("assertions", None)
+    # Optional coverage linkage fields are NOT columns on TestCase — pop them.
+    link_app_id = data.pop("application_id", None)
+    link_node_id = data.pop("node_id", None)
+
     tc = TestCase(**data, owner_id=user["sub"])
     if assertions:
         tc.assertions = json.dumps(assertions)
     db.add(tc)
     db.commit()
     db.refresh(tc)
+
+    # Authoritative coverage link (R4.3, R11.5): record generated-from-node.
+    # Best-effort + owner-scoped; a link failure must NOT fail test creation.
+    if link_app_id and link_node_id:
+        try:
+            app_row = db.query(Application).filter(Application.id == link_app_id).first()
+            if app_row and (not app_row.owner_id or app_row.owner_id == user.get("sub")):
+                node = (
+                    db.query(GraphNode)
+                    .filter(GraphNode.id == link_node_id,
+                            GraphNode.application_id == link_app_id)
+                    .first()
+                )
+                if node is not None:
+                    exists = (
+                        db.query(CoverageLink)
+                        .filter(CoverageLink.application_id == link_app_id,
+                                CoverageLink.node_id == link_node_id,
+                                CoverageLink.test_case_id == tc.id)
+                        .first()
+                    )
+                    if exists is None:
+                        db.add(CoverageLink(
+                            owner_id=user.get("sub"),
+                            application_id=link_app_id,
+                            node_id=link_node_id,
+                            test_case_id=tc.id,
+                            source="generated",
+                        ))
+                        db.commit()
+                    # Coverage changed → refresh verdicts.
+                    from .graph_worker import _dispatch_recompute_coverage
+                    _dispatch_recompute_coverage(link_app_id, reason="coverage_link_created")
+        except Exception as exc:  # noqa: BLE001
+            db.rollback()
+            logger.warning("Coverage link creation skipped for test %s: %s", tc.id, exc)
+
     return tc
 
 
@@ -1585,14 +1631,35 @@ def explore_status(job_id: str, db: Session = Depends(get_db), user: dict = Depe
     )
 
 
+def _map_heuristic_is_covered(node: AppMapNode, cases: list) -> bool:
+    """
+    Legacy substring heuristic — retained ONLY as the fallback when the coverage
+    engine has not yet produced verdicts for an application (R11.4). Deliberately
+    simple and explainable.
+    """
+    node_url = (node.url or "").strip().lower()
+    node_label = (node.label or "").strip().lower()
+    for c in cases:
+        c_url = (c.target_url or "").strip().lower()
+        c_name = (c.name or "").strip().lower()
+        c_prompt = (c.prompt or "").strip().lower()
+        if node_url and c_url and (node_url in c_url or c_url in node_url):
+            return True
+        if node_label and (node_label in c_name or node_label in c_prompt):
+            return True
+    return False
+
+
 @app.get("/api/applications/{app_id}/map", response_model=ApplicationMapResponse)
 def get_application_map(app_id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     """
     Return the application's discovered map with coverage cross-reference.
 
-    Coverage (Stage C): a node is considered "covered" if the user has a
-    TestCase whose target_url or name plausibly matches the node's url/label.
-    This is a heuristic v1 — deliberately simple and explainable.
+    Coverage source (R11.4): stored CoverageVerdicts from the coverage engine,
+    correlated to AppMapNodes by canonical_key via the graph. If no verdicts
+    exist yet (pre-reconcile / pre-recompute app), we fall back to the legacy
+    substring heuristic and enqueue a background recompute so the next read is
+    upgraded. The response SHAPE is unchanged for existing consumers.
     """
     app_row = _get_owned_application(db, app_id, user)
 
@@ -1603,29 +1670,48 @@ def get_application_map(app_id: int, db: Session = Depends(get_db), user: dict =
         .all()
     )
 
-    # Load the user's test cases once for coverage matching
-    cases = db.query(TestCase).filter(TestCase.owner_id == user["sub"]).all()
+    # Try stored verdicts first. Map each AppMapNode → its GraphNode by
+    # canonical_key, then look up that graph node's verdict.
+    from .intelligence.fingerprint import Discovery, compute_canonical_key
 
-    def _is_covered(node: AppMapNode) -> bool:
-        node_url = (node.url or "").strip().lower()
-        node_label = (node.label or "").strip().lower()
-        for c in cases:
-            c_url = (c.target_url or "").strip().lower()
-            c_name = (c.name or "").strip().lower()
-            c_prompt = (c.prompt or "").strip().lower()
-            # URL path match (ignore domain differences by comparing path tails)
-            if node_url and c_url:
-                if node_url in c_url or c_url in node_url:
-                    return True
-            # Label mentioned in the case name or prompt
-            if node_label and (node_label in c_name or node_label in c_prompt):
-                return True
-        return False
+    verdict_by_graph_node = {
+        v.node_id: v
+        for v in db.query(CoverageVerdict)
+        .filter(CoverageVerdict.application_id == app_row.id)
+        .all()
+    }
+    graph_id_by_key = {
+        key: nid
+        for nid, key in db.query(GraphNode.id, GraphNode.canonical_key)
+        .filter(GraphNode.application_id == app_row.id)
+        .all()
+    }
+    have_verdicts = len(verdict_by_graph_node) > 0
+
+    cases = None
+    if not have_verdicts:
+        # Fallback path: heuristic + enqueue a recompute for next time.
+        cases = db.query(TestCase).filter(TestCase.owner_id == user["sub"]).all()
+        try:
+            from .graph_worker import _dispatch_recompute_coverage
+            _dispatch_recompute_coverage(app_row.id, reason="map_read_no_verdicts")
+        except Exception:  # noqa: BLE001 — never block the read
+            pass
+
+    def _covered_for(node: AppMapNode) -> bool:
+        if have_verdicts:
+            key = compute_canonical_key(Discovery.from_app_map_node(node))
+            gid = graph_id_by_key.get(key)
+            v = verdict_by_graph_node.get(gid) if gid is not None else None
+            if v is not None:
+                return v.state in ("covered", "partially_covered")
+            return False
+        return _map_heuristic_is_covered(node, cases or [])
 
     node_outs: list[AppMapNodeOut] = []
     covered_count = 0
     for n in nodes:
-        covered = _is_covered(n)
+        covered = _covered_for(n)
         if covered:
             covered_count += 1
         node_outs.append(AppMapNodeOut(
@@ -1992,4 +2078,134 @@ def diff_snapshots_endpoint(
         from_snapshot_id=from_id,
         to_snapshot_id=to_id,
         diff=diff,
+    )
+
+
+# ===========================================================================
+# COVERAGE INTELLIGENCE (Layer 2) — rollups + prioritized gaps, owner-scoped.
+# Reads stored CoverageVerdicts (produced by graph_worker.recompute_coverage)
+# and composes them through the pure coverage engine's rollup/gaps helpers.
+# ===========================================================================
+
+
+@app.get("/api/applications/{app_id}/coverage", response_model=CoverageResponse)
+def get_application_coverage(
+    app_id: int,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Risk-weighted coverage rollups (application + per business_category) and a
+    prioritized list of coverage gaps. If no graph exists yet, returns an
+    explicit empty state (never an error).
+    """
+    from .intelligence import coverage as COV
+    from .intelligence.fingerprint import Discovery, compute_canonical_key
+
+    app_row = _get_owned_application(db, app_id, user)
+    limit = max(1, min(limit, 500))
+
+    nodes = (
+        db.query(GraphNode)
+        .filter(GraphNode.application_id == app_row.id, GraphNode.status == "active")
+        .all()
+    )
+    if not nodes:
+        return CoverageResponse(application_id=app_row.id, is_empty=True, skip=skip, limit=limit)
+
+    # If verdicts have never been computed, enqueue a recompute so the next read
+    # is populated; meanwhile return everything as uncovered (honest).
+    verdict_rows = (
+        db.query(CoverageVerdict)
+        .filter(CoverageVerdict.application_id == app_row.id)
+        .all()
+    )
+    if not verdict_rows:
+        try:
+            from .graph_worker import _dispatch_recompute_coverage
+            _dispatch_recompute_coverage(app_row.id, reason="coverage_read_no_verdicts")
+        except Exception:  # noqa: BLE001
+            pass
+
+    verdict_by_node = {v.node_id: v for v in verdict_rows}
+
+    # Build pure CoverageNode inputs (with risk from stored GraphNode.risk).
+    cov_nodes: list = []
+    node_meta: dict = {}
+    for n in nodes:
+        risk = _parse_json_field(n.risk, default={}) or {}
+        cov_nodes.append(COV.CoverageNode(
+            node_id=n.id,
+            canonical_key=n.canonical_key,
+            url_pattern=n.url_pattern,
+            business_category=n.business_category,
+            status="active",
+            risk_score=int(risk.get("score", 0) or 0),
+            risk_level=str(risk.get("level", "Trivial")),
+        ))
+        node_meta[n.id] = n
+
+    # Convert stored verdicts → engine verdicts for rollup/gaps.
+    verdicts: dict = {}
+    for n in nodes:
+        vr = verdict_by_node.get(n.id)
+        if vr is None:
+            verdicts[n.id] = COV.CoverageVerdict(node_id=n.id, state=COV.UNCOVERED,
+                                                 confidence=0.0, evidence=())
+        else:
+            verdicts[n.id] = COV.CoverageVerdict(
+                node_id=n.id, state=vr.state,
+                confidence=(vr.confidence_milli or 0) / 1000.0, evidence=(),
+            )
+
+    rollups = COV.rollup(verdicts, cov_nodes)
+    app_rollup = rollups.pop("application", None)
+
+    def _rollup_out(r) -> CoverageRollupOut:
+        return CoverageRollupOut(
+            scope=r.scope, percent=r.percent, node_count=r.node_count,
+            covered_count=r.covered_count, partial_count=r.partial_count,
+            uncovered_count=r.uncovered_count,
+        )
+
+    gap_list = COV.gaps(verdicts, cov_nodes)
+    total_gaps = len(gap_list)
+    page = gap_list[skip: skip + limit]
+
+    # Join AppMapNode suggested_prompt/url onto each gap via canonical_key.
+    appmap = db.query(AppMapNode).filter(AppMapNode.application_id == app_row.id).all()
+    prompt_by_key: dict = {}
+    url_by_key: dict = {}
+    for amn in appmap:
+        key = compute_canonical_key(Discovery.from_app_map_node(amn))
+        prompt_by_key.setdefault(key, amn.suggested_prompt)
+        url_by_key.setdefault(key, amn.url)
+
+    gaps_out: list[CoverageGapOut] = []
+    for g in page:
+        n = node_meta.get(g.node_id)
+        gaps_out.append(CoverageGapOut(
+            node_id=g.node_id,
+            canonical_key=g.canonical_key,
+            label=(n.label if n else ""),
+            state=g.state,
+            confidence=g.confidence,
+            risk_score=g.risk_score,
+            risk_level=g.risk_level,
+            business_category=g.business_category,
+            suggested_prompt=prompt_by_key.get(g.canonical_key),
+            url=url_by_key.get(g.canonical_key) or (n.url_pattern if n else None),
+        ))
+
+    return CoverageResponse(
+        application_id=app_row.id,
+        is_empty=False,
+        application_rollup=_rollup_out(app_rollup) if app_rollup else None,
+        category_rollups=[_rollup_out(r) for r in sorted(rollups.values(), key=lambda x: x.scope)],
+        gaps=gaps_out,
+        total_gaps=total_gaps,
+        skip=skip,
+        limit=limit,
     )

@@ -96,7 +96,7 @@ Tasks are grouped by the design's layers (L0–L5). Each layer is independently 
   - Write idempotent migration `M3`
   - _Requirements: 4.1, 4.3, 4.9, 11.1_
 
-- [ ] 11. Implement the coverage engine (`intelligence/coverage.py`) — multi-signal
+- [x] 11. Implement the coverage engine (`intelligence/coverage.py`) — multi-signal
   - Implement `classify_node_coverage(node, tests, links, run_status, embedder) -> CoverageVerdict` using: explicit link (authoritative) → route correspondence → semantic similarity (pgvector), with confidence ∈ [0,1] incorporating recent pass/fail
   - Implement risk-weighted rollups (app + per business_category)
   - Implement prioritized gaps list (uncovered/partial ranked by risk, each with suggested_prompt)
@@ -104,12 +104,12 @@ Tasks are grouped by the design's layers (L0–L5). Each layer is independently 
   - Ensure semantic signal is skipped gracefully if embedder unavailable (verdict still computed, reduced confidence)
   - _Requirements: 4.1, 4.2, 4.4, 4.5, 4.7, 4.8, 4.9, 10.4_
 
-- [ ]* 11.1 Write property tests for coverage (Properties 6, 7)
+- [x]* 11.1 Write property tests for coverage (Properties 6, 7)
   - Property 6: adding an authoritative link never lowers coverage state; removing all tests never raises it
   - Property 7: every verdict confidence ∈ [0.0, 1.0]
   - _Requirements: 4.1, 4.3, 4.7_
 
-- [ ] 12. Add coverage recompute worker + triggers, supersede the `/map` heuristic
+- [x] 12. Add coverage recompute worker + triggers, supersede the `/map` heuristic
   - Add `graph_worker.recompute_coverage(application_id, reason)`: computes verdicts for all nodes, persists them, enqueued on graph change / test add-edit-delete / run completion
   - Modify `GET /api/applications/{id}/map` to read stored `CoverageVerdict`s; if none yet, fall back to the existing heuristic labeled low-confidence and enqueue a recompute
   - Add `GET /api/applications/{id}/coverage` (rollups + ranked gaps) + schemas + `api.ts`

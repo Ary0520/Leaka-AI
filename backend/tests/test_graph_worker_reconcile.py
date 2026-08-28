@@ -26,6 +26,8 @@ from app.models import (
     GraphSnapshot,
     SnapshotMember,
     NodeFingerprint,
+    CoverageVerdict,
+    CoverageLink,
 )
 from app import graph_worker as G
 
@@ -85,7 +87,26 @@ def _new_run_for(db, owner: str, application_id: int, nodes: list[dict]) -> int:
     return run.id
 
 
+def _settle() -> None:
+    """
+    reconcile_explore enqueues a coverage recompute on the graph_worker sync
+    executor (RUN_MODE=sync_demo). Wait for those background tasks to finish so
+    they don't write CoverageVerdict rows during/after cleanup.
+    """
+    import time
+    ex = getattr(G, "_SYNC_EXECUTOR", None)
+    # Give any just-submitted task a moment to be picked up, then drain.
+    time.sleep(0.2)
+    if ex is not None:
+        # Submit a barrier task and wait — ensures prior tasks completed.
+        try:
+            ex.submit(lambda: None).result(timeout=30)
+        except Exception:
+            pass
+
+
 def _cleanup(owner: str) -> None:
+    _settle()
     db = SessionLocal()
     try:
         app_ids = [a.id for a in db.query(Application).filter(Application.owner_id == owner).all()]
@@ -103,6 +124,10 @@ def _cleanup(owner: str) -> None:
             ]
             if node_ids:
                 db.query(NodeFingerprint).filter(NodeFingerprint.node_id.in_(node_ids)).delete(synchronize_session=False)
+            # Coverage rows FK to graph_nodes — delete them first (reconcile now
+            # enqueues a coverage recompute that may have written verdicts).
+            db.query(CoverageLink).filter(CoverageLink.application_id.in_(app_ids)).delete(synchronize_session=False)
+            db.query(CoverageVerdict).filter(CoverageVerdict.application_id.in_(app_ids)).delete(synchronize_session=False)
             db.query(GraphEdge).filter(GraphEdge.application_id.in_(app_ids)).delete(synchronize_session=False)
             db.query(GraphNode).filter(GraphNode.application_id.in_(app_ids)).delete(synchronize_session=False)
             db.query(AppMapNode).filter(AppMapNode.application_id.in_(app_ids)).delete(synchronize_session=False)
