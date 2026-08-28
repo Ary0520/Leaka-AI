@@ -118,7 +118,7 @@ Tasks are grouped by the design's layers (L0–L5). Each layer is independently 
 
 ### Layer 3 — Memory
 
-- [ ] 13. Add memory data model and migration `M4`
+- [x] 13. Add memory data model and migration `M4`
   - Add models `MemoryItem` (kind, payload json, embedding_id, content_hash, provenance, version) and `MemoryWriteQueue` (payload, attempts, next_retry_at), owner+application scoped
   - Write idempotent migration `M4`
   - _Requirements: 5.1, 5.5a, 11.1_
