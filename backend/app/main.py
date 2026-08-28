@@ -32,6 +32,10 @@ from .database import get_db, init_db
 from .auth import get_current_user
 from .integrations import linear_client, email_client, slack_client
 from .models import (
+    Application,
+    AppMapNode,
+    ExploreRun,
+    ExploreRunStatus,
     LinearIssue,
     TestCase,
     TestRun,
@@ -41,9 +45,16 @@ from .models import (
     UserSettings,
 )
 from .schemas import (
+    AppMapNodeOut,
+    ApplicationCreate,
+    ApplicationMapResponse,
+    ApplicationOut,
+    ApplicationUpdate,
     CIWebhookRequest,
     CIWebhookResponse,
     CreateLinearTicketRequest,
+    ExploreEnqueueResponse,
+    ExploreRunStatusResponse,
     LinearTicketResponse,
     ScreenshotOut,
     TestCaseCreate,
@@ -59,6 +70,7 @@ from .schemas import (
     TestSuiteUpdate,
 )
 from .worker import run_browser_test
+from .explore_worker import explore_application
 
 logger = logging.getLogger("revguard")
 
@@ -123,6 +135,45 @@ def _dispatch_run_task(
         return task_id
 
     task = run_browser_test.delay(**kwargs)
+    return task.id
+
+
+def _dispatch_explore_task(
+    job_id: str,
+    *,
+    application_id: int,
+    owner_id: Optional[str],
+    base_url: str,
+    login_hint: Optional[str],
+    max_steps: int,
+) -> str:
+    """Dispatch an application explore run — mirrors _dispatch_run_task.
+
+    - RUN_MODE=sync_demo → run explore_application in a background thread
+    - RUN_MODE=celery    → push to Redis via .delay()
+    """
+    kwargs = dict(
+        job_id=job_id,
+        application_id=application_id,
+        owner_id=owner_id,
+        base_url=base_url,
+        login_hint=login_hint,
+        max_steps=max_steps,
+    )
+
+    if settings.RUN_MODE == "sync_demo":
+        task_id = f"sync-explore-{job_id}"
+
+        def _run_local():
+            try:
+                explore_application.run(**kwargs)
+            except Exception as exc:  # noqa: BLE001 - worker already wrote FAILED to DB
+                logger.exception("sync_demo explore raised (job_id=%s): %s", job_id, exc)
+
+        _get_sync_executor().submit(_run_local)
+        return task_id
+
+    task = explore_application.delay(**kwargs)
     return task.id
 
 
@@ -1380,3 +1431,226 @@ def complete_onboarding(
     cfg.onboarding_completed = True
     db.commit()
     return {"onboarding_completed": True}
+
+
+# ---------------------------------------------------------------------------
+# Application Intelligence (Explore Mode)
+# ---------------------------------------------------------------------------
+def _get_owned_application(db: Session, app_id: int, user: dict) -> "Application":
+    """Fetch an Application enforcing ownership (404 on mismatch)."""
+    app_row = db.query(Application).filter(Application.id == app_id).first()
+    if not app_row:
+        raise HTTPException(404, "Application not found")
+    if app_row.owner_id and app_row.owner_id != user.get("sub"):
+        raise HTTPException(404, "Application not found")
+    return app_row
+
+
+@app.post("/api/applications", response_model=ApplicationOut)
+def create_application(
+    body: ApplicationCreate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    app_row = Application(
+        owner_id=user["sub"],
+        name=body.name,
+        base_url=body.base_url,
+        description=body.description,
+        login_hint=body.login_hint,
+    )
+    db.add(app_row)
+    db.commit()
+    db.refresh(app_row)
+    return app_row
+
+
+@app.get("/api/applications", response_model=list[ApplicationOut])
+def list_applications(
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    return (
+        db.query(Application)
+        .filter(Application.owner_id == user["sub"])
+        .order_by(Application.created_at.desc())
+        .offset(skip).limit(limit).all()
+    )
+
+
+@app.get("/api/applications/{app_id}", response_model=ApplicationOut)
+def get_application(app_id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    return _get_owned_application(db, app_id, user)
+
+
+@app.put("/api/applications/{app_id}", response_model=ApplicationOut)
+def update_application(
+    app_id: int,
+    body: ApplicationUpdate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    app_row = _get_owned_application(db, app_id, user)
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(app_row, field, value)
+    db.commit()
+    db.refresh(app_row)
+    return app_row
+
+
+@app.delete("/api/applications/{app_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_application(app_id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    app_row = _get_owned_application(db, app_id, user)
+    db.delete(app_row)
+    db.commit()
+    return None
+
+
+@app.post("/api/applications/{app_id}/explore", response_model=ExploreEnqueueResponse)
+def explore_application_endpoint(
+    app_id: int,
+    max_steps: int = 40,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Kick off an autonomous exploration run for an application."""
+    app_row = _get_owned_application(db, app_id, user)
+
+    job_id = uuid.uuid4().hex
+    run = ExploreRun(
+        owner_id=user["sub"],
+        application_id=app_row.id,
+        job_id=job_id,
+        status=ExploreRunStatus.PENDING,
+        max_steps=max_steps,
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    task_id = _dispatch_explore_task(
+        job_id=job_id,
+        application_id=app_row.id,
+        owner_id=user["sub"],
+        base_url=app_row.base_url,
+        login_hint=app_row.login_hint,
+        max_steps=max_steps,
+    )
+    run.task_id = task_id
+    db.commit()
+
+    return {"job_id": job_id, "task_id": task_id, "status": ExploreRunStatus.PENDING.value}
+
+
+@app.get("/api/explore/status/{job_id}", response_model=ExploreRunStatusResponse)
+def explore_status(job_id: str, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    run = db.query(ExploreRun).filter(ExploreRun.job_id == job_id).first()
+    if not run:
+        raise HTTPException(404, "Explore run not found")
+    if run.owner_id and run.owner_id != user.get("sub"):
+        raise HTTPException(404, "Explore run not found")
+    return ExploreRunStatusResponse(
+        job_id=run.job_id,
+        task_id=run.task_id,
+        application_id=run.application_id,
+        status=run.status,
+        max_steps=run.max_steps,
+        nodes_found=run.nodes_found,
+        result_summary=run.result_summary,
+        error_message=run.error_message,
+        live_steps=run.live_steps,
+        visited_urls=run.visited_urls,
+        created_at=run.created_at,
+        started_at=run.started_at,
+        completed_at=run.completed_at,
+    )
+
+
+@app.get("/api/applications/{app_id}/map", response_model=ApplicationMapResponse)
+def get_application_map(app_id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    """
+    Return the application's discovered map with coverage cross-reference.
+
+    Coverage (Stage C): a node is considered "covered" if the user has a
+    TestCase whose target_url or name plausibly matches the node's url/label.
+    This is a heuristic v1 — deliberately simple and explainable.
+    """
+    app_row = _get_owned_application(db, app_id, user)
+
+    nodes = (
+        db.query(AppMapNode)
+        .filter(AppMapNode.application_id == app_row.id)
+        .order_by(AppMapNode.created_at.asc())
+        .all()
+    )
+
+    # Load the user's test cases once for coverage matching
+    cases = db.query(TestCase).filter(TestCase.owner_id == user["sub"]).all()
+
+    def _is_covered(node: AppMapNode) -> bool:
+        node_url = (node.url or "").strip().lower()
+        node_label = (node.label or "").strip().lower()
+        for c in cases:
+            c_url = (c.target_url or "").strip().lower()
+            c_name = (c.name or "").strip().lower()
+            c_prompt = (c.prompt or "").strip().lower()
+            # URL path match (ignore domain differences by comparing path tails)
+            if node_url and c_url:
+                if node_url in c_url or c_url in node_url:
+                    return True
+            # Label mentioned in the case name or prompt
+            if node_label and (node_label in c_name or node_label in c_prompt):
+                return True
+        return False
+
+    node_outs: list[AppMapNodeOut] = []
+    covered_count = 0
+    for n in nodes:
+        covered = _is_covered(n)
+        if covered:
+            covered_count += 1
+        node_outs.append(AppMapNodeOut(
+            id=n.id,
+            node_type=n.node_type,
+            label=n.label,
+            url=n.url,
+            description=n.description,
+            suggested_prompt=n.suggested_prompt,
+            is_covered=covered,
+            created_at=n.created_at,
+        ))
+
+    # Latest explore run for status display
+    latest = (
+        db.query(ExploreRun)
+        .filter(ExploreRun.application_id == app_row.id)
+        .order_by(ExploreRun.created_at.desc())
+        .first()
+    )
+    latest_out = None
+    if latest:
+        latest_out = ExploreRunStatusResponse(
+            job_id=latest.job_id,
+            task_id=latest.task_id,
+            application_id=latest.application_id,
+            status=latest.status,
+            max_steps=latest.max_steps,
+            nodes_found=latest.nodes_found,
+            result_summary=latest.result_summary,
+            error_message=latest.error_message,
+            live_steps=latest.live_steps,
+            visited_urls=latest.visited_urls,
+            created_at=latest.created_at,
+            started_at=latest.started_at,
+            completed_at=latest.completed_at,
+        )
+
+    return ApplicationMapResponse(
+        application=ApplicationOut.model_validate(app_row),
+        latest_explore=latest_out,
+        nodes=node_outs,
+        total_nodes=len(node_outs),
+        covered_nodes=covered_count,
+    )
