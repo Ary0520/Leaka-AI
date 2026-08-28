@@ -1,0 +1,174 @@
+"""
+Idempotent, additive migrations for Application Intelligence.
+
+Design contract (R11.1):
+  - Every migration is idempotent: safe to run any number of times.
+  - Every migration is additive: it only CREATEs extensions/tables/columns
+    IF NOT EXISTS. It NEVER drops or destructively alters existing objects.
+  - Migrations run against the shared Supabase Postgres. Because local and
+    Azure share that database, a migration applies once for both.
+
+This module is intentionally simple (no Alembic): the project already uses
+`Base.metadata.create_all` + occasional raw ALTERs. We keep that spirit but
+centralize the raw DDL that create_all cannot express (extensions, pgvector
+columns, HNSW indexes) into explicitly-numbered, idempotent steps.
+
+Run all pending migrations via `run_migrations()`. Each step is guarded so a
+failure in one (e.g. lacking privileges to CREATE EXTENSION) is logged and
+does not abort the others or crash app startup.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from sqlalchemy import text
+
+from .database import engine
+from .config import settings
+
+logger = logging.getLogger("revguard.migrations")
+
+
+def _is_postgres() -> bool:
+    return settings.DATABASE_URL.startswith("postgres")
+
+
+# ---------------------------------------------------------------------------
+# M1 — pgvector extension + embeddings table
+# ---------------------------------------------------------------------------
+def _m1_pgvector_and_embeddings() -> None:
+    """
+    Enable the pgvector extension and create the `embeddings` table.
+
+    The `embeddings` table is the shared vector store for Application
+    Intelligence (memory + coverage semantic signals). It is keyed by
+    (content_hash, model_id) so identical content is never re-embedded
+    (cost governance, R5.11). `dim` is stored per row so mixed-provider
+    vectors never collide, and similarity queries always filter by model_id.
+    """
+    if not _is_postgres():
+        # SQLite fallback (local dev without Postgres): skip vector features.
+        logger.info("M1 skipped: DATABASE_URL is not Postgres; vector features disabled.")
+        return
+
+    with engine.begin() as conn:
+        # 1. Extension (requires the DB role to have privilege; Supabase allows it).
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+
+        # 2. embeddings table. We create the vector column with a fixed max the
+        #    providers we support fit within. pgvector `vector` without a fixed
+        #    dimension is allowed, but we store dim explicitly for clarity and
+        #    to filter by (model_id, dim) at query time. Use vector(1536) as the
+        #    widest supported (OpenAI text-embedding-3-small); the local
+        #    sentence-transformers model (384) fits by storing shorter vectors
+        #    — pgvector requires matching dim per column, so we DO NOT fix the
+        #    column dimension and instead use an unbounded `vector` column.
+        conn.execute(text(
+            """
+            CREATE TABLE IF NOT EXISTS embeddings (
+                id            BIGSERIAL PRIMARY KEY,
+                owner_id      VARCHAR(64),
+                application_id INTEGER,
+                content_hash  VARCHAR(64) NOT NULL,
+                model_id      VARCHAR(128) NOT NULL,
+                dim           INTEGER NOT NULL,
+                embedding     vector NOT NULL,
+                token_cost    INTEGER DEFAULT 0,
+                created_at    TIMESTAMP DEFAULT (now() AT TIME ZONE 'utc')
+            )
+            """
+        ))
+
+        # 3. Uniqueness for cost-governance dedup: one row per (content_hash, model_id).
+        conn.execute(text(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_embeddings_content_model
+            ON embeddings (content_hash, model_id)
+            """
+        ))
+
+        # 4. Owner/application scoping index for fast tenant-scoped reads.
+        conn.execute(text(
+            """
+            CREATE INDEX IF NOT EXISTS ix_embeddings_owner_app
+            ON embeddings (owner_id, application_id)
+            """
+        ))
+
+    logger.info("M1 applied: pgvector extension + embeddings table ready.")
+
+
+# ---------------------------------------------------------------------------
+# M2 — Application Graph tables (Layer 1)
+# ---------------------------------------------------------------------------
+def _m2_graph_tables() -> None:
+    """
+    Create the Application Graph tables (graph_nodes, graph_edges,
+    node_fingerprints, graph_snapshots, snapshot_members).
+
+    These are ORM models, so we let SQLAlchemy emit `CREATE TABLE IF NOT EXISTS`
+    for exactly these tables (checkfirst=True). This is idempotent and additive
+    — it never touches existing tables.
+    """
+    from .database import Base
+    from . import models  # ensure models are imported/registered on Base
+
+    graph_tables = [
+        models.GraphNode.__table__,
+        models.GraphEdge.__table__,
+        models.NodeFingerprint.__table__,
+        models.GraphSnapshot.__table__,
+        models.SnapshotMember.__table__,
+    ]
+    Base.metadata.create_all(bind=engine, tables=graph_tables, checkfirst=True)
+    logger.info("M2 applied: application graph tables ready.")
+
+
+def ensure_embeddings_hnsw_index(dim: int, threshold: int = 1000) -> None:
+    """
+    Lazily create an HNSW cosine index on `embeddings.embedding` once the table
+    is large enough to benefit (design: avoid indexing overhead on tiny sets).
+
+    HNSW requires a fixed dimension, so the index is created over a dimension-
+    cast expression and filtered by that dim at query time. This is a helper
+    called by the vector-search path when it detects scale, NOT part of the
+    boot migrations. No-op on non-Postgres.
+    """
+    if not _is_postgres():
+        return
+    try:
+        with engine.begin() as conn:
+            count = conn.execute(text("SELECT count(*) FROM embeddings WHERE dim = :d"), {"d": dim}).scalar()
+            if (count or 0) < threshold:
+                return
+            index_name = f"ix_embeddings_hnsw_cosine_{dim}"
+            # Expression index over vectors cast to the fixed dim, cosine ops.
+            conn.execute(text(
+                f"""
+                CREATE INDEX IF NOT EXISTS {index_name}
+                ON embeddings USING hnsw ((embedding::vector({dim})) vector_cosine_ops)
+                WHERE dim = {dim}
+                """
+            ))
+        logger.info("HNSW index ensured for embeddings dim=%s", dim)
+    except Exception as exc:  # index is an optimization; never fail the caller
+        logger.warning("HNSW index creation skipped (dim=%s): %s", dim, exc)
+
+
+# ---------------------------------------------------------------------------
+# Public runner
+# ---------------------------------------------------------------------------
+_MIGRATIONS = [
+    ("M1_pgvector_and_embeddings", _m1_pgvector_and_embeddings),
+    ("M2_graph_tables", _m2_graph_tables),
+]
+
+
+def run_migrations() -> None:
+    """Run all migrations, each guarded so one failure never blocks the rest."""
+    for name, fn in _MIGRATIONS:
+        try:
+            fn()
+        except Exception as exc:  # noqa: BLE001 — never crash boot on a migration
+            logger.error("Migration %s failed (continuing): %s", name, exc)
