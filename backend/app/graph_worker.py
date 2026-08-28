@@ -39,6 +39,8 @@ from .config import settings
 from .database import SessionLocal, engine
 from .intelligence.fingerprint import Discovery, NodeSignatures
 from .intelligence import reconciliation as R
+from .intelligence import risk as RISK
+from .intelligence import coverage as COV
 from .models import (
     Application,
     AppMapNode,
@@ -48,6 +50,11 @@ from .models import (
     NodeFingerprint,
     GraphSnapshot,
     SnapshotMember,
+    CoverageVerdict,
+    CoverageLink,
+    TestCase,
+    TestRun,
+    TestRunStatus,
 )
 
 logger = logging.getLogger("revguard.graph")
@@ -256,6 +263,8 @@ def reconcile_explore(explore_run_id: int) -> dict:
                  owner_id=owner_id, explore_run_id=explore_run_id)
 
         db.commit()
+        # Graph changed → refresh coverage verdicts (R4.6). Best-effort enqueue.
+        _dispatch_recompute_coverage(application_id, reason="graph_reconciled")
         logger.info(
             "reconcile_explore done: run=%s app=%s nodes=%s edges=%s (+%s ~%s -%s)",
             explore_run_id, application_id, result.node_count, result.edge_count,
@@ -612,3 +621,243 @@ def _record_failure(explore_run_id: int, reason: str) -> None:
         db.rollback()
     finally:
         db.close()
+
+
+# ===========================================================================
+# COVERAGE RECOMPUTE (Task 12) — the I/O worker over the pure coverage engine.
+# Computes risk (for weighting) + coverage verdicts for every active node and
+# upserts them. Enqueued on graph change / test add-edit-delete / run complete.
+# ===========================================================================
+
+
+def _dispatch_recompute_coverage(application_id: int, reason: str) -> Optional[str]:
+    """
+    Enqueue a coverage recompute. Mirrors _dispatch_reconcile's RUN_MODE pattern.
+    Never raises — coverage is a downstream, best-effort refresh.
+    """
+    try:
+        if settings.RUN_MODE == "sync_demo":
+            def _run_local():
+                try:
+                    recompute_coverage.run(application_id, reason)
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception(
+                        "sync_demo recompute_coverage raised (app=%s): %s", application_id, exc
+                    )
+            _get_sync_executor().submit(_run_local)
+            return f"sync-coverage-{application_id}"
+        task = recompute_coverage.delay(application_id, reason)
+        return task.id
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to dispatch recompute_coverage for app %s: %s", application_id, exc)
+        return None
+
+
+def _recent_pass_by_test(db, owner_id: Optional[str], test_ids: list[int]) -> dict[int, Optional[bool]]:
+    """Most-recent run outcome per test_case_id (True/False/None). Owner-scoped."""
+    out: dict[int, Optional[bool]] = {}
+    if not test_ids:
+        return out
+    for tid in test_ids:
+        run = (
+            db.query(TestRun)
+            .filter(TestRun.test_case_id == tid)
+            .order_by(TestRun.id.desc())
+            .first()
+        )
+        if run is None:
+            out[tid] = None
+        elif run.status == TestRunStatus.COMPLETED:
+            out[tid] = bool(run.is_successful) if run.is_successful is not None else None
+        else:
+            out[tid] = None
+    return out
+
+
+def _semantic_similarities(
+    db, owner_id: Optional[str], application_id: int,
+    nodes: list, tests: list,
+) -> dict:
+    """
+    Best-effort semantic similarity per (node_id, test_case_id) using the
+    embeddings service. Degrades to an EMPTY map (no semantic signal) if the
+    embedder is unavailable (R10.4) — the pure engine then relies on link+route.
+
+    Returns {(node_id, test_case_id): cosine_in_0_1}. Small sets → in-memory
+    cosine; we never load all vectors for scanning at scale (that path uses
+    pgvector, added when volume warrants).
+    """
+    sims: dict = {}
+    # Guard: only attempt if there is anything to compare.
+    if not nodes or not tests:
+        return sims
+    try:
+        from .intelligence import embeddings as EMB
+        embedder = EMB.get_embedder()
+
+        def _node_text(n) -> str:
+            return " ".join(filter(None, [n.label or "", n.business_category or "", n.url_pattern or ""]))
+
+        def _test_text(t) -> str:
+            return " ".join(filter(None, [t.name or "", t.prompt or ""]))
+
+        node_texts = [_node_text(n) for n in nodes]
+        test_texts = [_test_text(t) for t in tests]
+        node_vecs = embedder.embed(node_texts)
+        test_vecs = embedder.embed(test_texts)
+
+        def _cos(a: list[float], b: list[float]) -> float:
+            import math
+            dot = sum(x * y for x, y in zip(a, b))
+            na = math.sqrt(sum(x * x for x in a))
+            nb = math.sqrt(sum(y * y for y in b))
+            if na == 0 or nb == 0:
+                return 0.0
+            return max(0.0, min(1.0, dot / (na * nb)))
+
+        for i, n in enumerate(nodes):
+            for j, t in enumerate(tests):
+                sims[(n.id, t.id)] = _cos(node_vecs[i], test_vecs[j])
+    except Exception as exc:  # EmbeddingUnavailable or anything → degrade
+        logger.info("Coverage semantic signal skipped (app=%s): %s", application_id, exc)
+        return {}
+    return sims
+
+
+@celery_app.task(
+    max_retries=1,
+    autoretry_for=(),
+    name="app.graph_worker.recompute_coverage",
+)
+def recompute_coverage(application_id: int, reason: str = "manual") -> dict:
+    """
+    Recompute + persist coverage verdicts for every ACTIVE node of an app.
+    Owner-scoped, advisory-locked, single transaction, non-corrupting on failure.
+    """
+    db = SessionLocal()
+    try:
+        app_row = db.query(Application).filter(Application.id == application_id).first()
+        if app_row is None:
+            return {"status": "skipped", "reason": "application_not_found"}
+        owner_id = app_row.owner_id
+
+        _acquire_app_lock(db, application_id)
+
+        nodes = (
+            db.query(GraphNode)
+            .filter(GraphNode.application_id == application_id, GraphNode.status == "active")
+            .all()
+        )
+        if not nodes:
+            db.commit()
+            return {"status": "completed", "application_id": application_id, "verdicts": 0}
+
+        # Risk per node (for rollup weighting + gap ranking), from the risk engine.
+        edges = _existing_edges(db, application_id)
+        risk_graph = RISK.RiskGraph.from_edges(
+            [(e.source_key, e.target_key, e.edge_type) for e in edges]
+        )
+        key_risk: dict[str, RISK.RiskResult] = {}
+        for n in nodes:
+            rn = RISK.RiskNode(
+                canonical_key=n.canonical_key,
+                node_type=n.node_type,
+                business_category=n.business_category,
+                role_association=n.role_association or "unknown",
+                manual_overrides=_load_json(n.manual_overrides),
+            )
+            key_risk[n.canonical_key] = RISK.score_node(rn, risk_graph, RISK.RiskSignals())
+
+        # Candidate tests: this owner's test cases (coverage is owner-scoped).
+        tests = db.query(TestCase).filter(TestCase.owner_id == owner_id).all() if owner_id else \
+            db.query(TestCase).all()
+
+        # Authoritative links for this application → {(node_id, test_id): source}
+        links = db.query(CoverageLink).filter(CoverageLink.application_id == application_id).all()
+        link_map: dict = {(l.node_id, l.test_case_id): l.source for l in links}
+
+        recent_pass = _recent_pass_by_test(db, owner_id, [t.id for t in tests])
+        sims = _semantic_similarities(db, owner_id, application_id, nodes, tests)
+
+        verdict_count = 0
+        for n in nodes:
+            risk_res = key_risk.get(n.canonical_key)
+            cov_node = COV.CoverageNode(
+                node_id=n.id,
+                canonical_key=n.canonical_key,
+                url_pattern=n.url_pattern,
+                business_category=n.business_category,
+                status="active",
+                risk_score=risk_res.score if risk_res else 0,
+                risk_level=risk_res.level if risk_res else "Trivial",
+            )
+            cov_tests = []
+            for t in tests:
+                linked = (n.id, t.id) in link_map
+                cov_tests.append(COV.CoverageTest(
+                    test_case_id=t.id,
+                    target_url=t.target_url,
+                    name=t.name,
+                    prompt=t.prompt,
+                    linked=linked,
+                    link_source=link_map.get((n.id, t.id)),
+                    semantic_similarity=sims.get((n.id, t.id)),
+                    last_run_passed=recent_pass.get(t.id),
+                ))
+            verdict = COV.classify_node_coverage(cov_node, cov_tests)
+            _upsert_verdict(db, owner_id, application_id, verdict)
+            verdict_count += 1
+
+            # Persist recomputed risk on the node too (transparency; overrides
+            # already applied by the engine).
+            if risk_res is not None:
+                n.risk = _dump_json(RISK.result_to_dict(risk_res))
+
+        # Orphan flagging: links whose node is stale.
+        _flag_orphan_links(db, application_id)
+
+        db.commit()
+        logger.info("recompute_coverage done: app=%s verdicts=%s reason=%s",
+                    application_id, verdict_count, reason)
+        return {"status": "completed", "application_id": application_id, "verdicts": verdict_count}
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        logger.exception("recompute_coverage failed (app=%s): %s", application_id, exc)
+        return {"status": "failed", "reason": _classify_reconcile_error(exc)}
+    finally:
+        db.close()
+
+
+def _upsert_verdict(db, owner_id, application_id: int, verdict: COV.CoverageVerdict) -> None:
+    row = (
+        db.query(CoverageVerdict)
+        .filter(CoverageVerdict.application_id == application_id,
+                CoverageVerdict.node_id == verdict.node_id)
+        .first()
+    )
+    evidence_json = _dump_json(COV.verdict_to_evidence_list(verdict))
+    milli = COV.confidence_to_milli(verdict.confidence)
+    if row is None:
+        db.add(CoverageVerdict(
+            owner_id=owner_id, application_id=application_id, node_id=verdict.node_id,
+            state=verdict.state, confidence_milli=milli, evidence=evidence_json,
+        ))
+    else:
+        row.state = verdict.state
+        row.confidence_milli = milli
+        row.evidence = evidence_json
+        row.updated_at = datetime.utcnow()
+
+
+def _flag_orphan_links(db, application_id: int) -> None:
+    """Flag (not drop) coverage links whose node is stale (R4.9)."""
+    stale_ids = {
+        nid for (nid,) in db.query(GraphNode.id)
+        .filter(GraphNode.application_id == application_id, GraphNode.status == "stale")
+        .all()
+    }
+    links = db.query(CoverageLink).filter(CoverageLink.application_id == application_id).all()
+    for l in links:
+        should_orphan = l.node_id in stale_ids
+        if bool(l.orphaned) != should_orphan:
+            l.orphaned = should_orphan

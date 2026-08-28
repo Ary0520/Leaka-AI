@@ -20,6 +20,7 @@ from app.database import SessionLocal, engine, Base
 from app.models import (
     Application, ExploreRun, ExploreRunStatus, AppMapNode,
     GraphNode, GraphEdge, GraphSnapshot, SnapshotMember, NodeFingerprint,
+    CoverageVerdict, CoverageLink,
 )
 from app import graph_worker as G
 
@@ -75,7 +76,20 @@ def _seed_reconciled_app(owner: str, nodes: list[dict]) -> int:
     return app_id
 
 
+def _settle():
+    """Wait for background coverage-recompute tasks enqueued by reconcile."""
+    import time
+    time.sleep(0.2)
+    ex = getattr(G, "_SYNC_EXECUTOR", None)
+    if ex is not None:
+        try:
+            ex.submit(lambda: None).result(timeout=30)
+        except Exception:
+            pass
+
+
 def _cleanup(owner: str):
+    _settle()
     db = SessionLocal()
     try:
         app_ids = [a.id for a in db.query(Application).filter(Application.owner_id == owner).all()]
@@ -87,6 +101,8 @@ def _cleanup(owner: str):
             node_ids = [n.id for n in db.query(GraphNode).filter(GraphNode.application_id.in_(app_ids)).all()]
             if node_ids:
                 db.query(NodeFingerprint).filter(NodeFingerprint.node_id.in_(node_ids)).delete(synchronize_session=False)
+            db.query(CoverageLink).filter(CoverageLink.application_id.in_(app_ids)).delete(synchronize_session=False)
+            db.query(CoverageVerdict).filter(CoverageVerdict.application_id.in_(app_ids)).delete(synchronize_session=False)
             db.query(GraphEdge).filter(GraphEdge.application_id.in_(app_ids)).delete(synchronize_session=False)
             db.query(GraphNode).filter(GraphNode.application_id.in_(app_ids)).delete(synchronize_session=False)
             db.query(AppMapNode).filter(AppMapNode.application_id.in_(app_ids)).delete(synchronize_session=False)

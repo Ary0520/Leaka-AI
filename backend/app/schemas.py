@@ -41,7 +41,12 @@ class TestCaseBase(BaseModel):
 
 
 class TestCaseCreate(TestCaseBase):
-    pass
+    # Optional authoritative coverage linkage (R4.3, R11.5): when a test is
+    # generated from a graph node, the client passes these so the backend
+    # records a CoverageLink. Both must be present to create a link; they are
+    # NOT persisted on the TestCase itself.
+    application_id: Optional[int] = None
+    node_id: Optional[int] = None
 
 
 class TestCaseUpdate(BaseModel):
@@ -385,3 +390,37 @@ class SnapshotDiffResponse(BaseModel):
     from_snapshot_id: int
     to_snapshot_id: int
     diff: dict
+
+
+# -------------- Coverage Intelligence (Layer 2) --------------
+class CoverageRollupOut(BaseModel):
+    scope: str                       # "application" | category name
+    percent: float                   # risk-weighted coverage %
+    node_count: int
+    covered_count: int
+    partial_count: int
+    uncovered_count: int
+
+
+class CoverageGapOut(BaseModel):
+    node_id: int
+    canonical_key: str
+    label: str
+    state: str                       # partially_covered | uncovered
+    confidence: float
+    risk_score: int
+    risk_level: str
+    business_category: Optional[str] = None
+    suggested_prompt: Optional[str] = None
+    url: Optional[str] = None
+
+
+class CoverageResponse(BaseModel):
+    application_id: int
+    is_empty: bool = False
+    application_rollup: Optional[CoverageRollupOut] = None
+    category_rollups: List[CoverageRollupOut] = []
+    gaps: List[CoverageGapOut] = []
+    total_gaps: int = 0
+    skip: int = 0
+    limit: int = 0

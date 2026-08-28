@@ -14,7 +14,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from hypothesis import given, settings, strategies as st
+from hypothesis import given, settings, strategies as st, HealthCheck
 from sqlalchemy import text as sql_text
 
 from app.database import SessionLocal, engine
@@ -54,7 +54,14 @@ def _cleanup(owner_id: str) -> None:
         db.close()
 
 
-@settings(max_examples=25, deadline=None)
+@settings(
+    max_examples=25,
+    deadline=None,
+    # Each example does real Postgres round-trips, which Hypothesis's data-gen
+    # timer can misattribute as "slow input generation" under load. The test
+    # itself is fast + deterministic (fake counting provider).
+    suppress_health_check=[HealthCheck.too_slow],
+)
 @given(
     contents=st.lists(
         st.text(min_size=1, max_size=40),
