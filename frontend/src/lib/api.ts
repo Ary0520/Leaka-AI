@@ -209,6 +209,66 @@ export interface TestSuiteRunResponse {
   job_ids: string[];
 }
 
+// ---------- Application Intelligence (Explore Mode) ----------
+export type ExploreStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface ApplicationOut {
+  id: number;
+  name: string;
+  base_url: string;
+  description?: string | null;
+  login_hint?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApplicationCreate {
+  name: string;
+  base_url: string;
+  description?: string | null;
+  login_hint?: string | null;
+}
+
+export interface AppMapNodeOut {
+  id: number;
+  node_type: string; // "page" | "form" | "flow"
+  label: string;
+  url?: string | null;
+  description?: string | null;
+  suggested_prompt?: string | null;
+  is_covered?: boolean | null;
+  created_at: string;
+}
+
+export interface ExploreRunStatusResponse {
+  job_id: string;
+  task_id?: string | null;
+  application_id: number;
+  status: ExploreStatus;
+  max_steps?: number | null;
+  nodes_found?: number | null;
+  result_summary?: string | null;
+  error_message?: string | null;
+  live_steps?: string | null;
+  visited_urls?: string | null;
+  created_at?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+}
+
+export interface ApplicationMapResponse {
+  application: ApplicationOut;
+  latest_explore?: ExploreRunStatusResponse | null;
+  nodes: AppMapNodeOut[];
+  total_nodes: number;
+  covered_nodes: number;
+}
+
 // ---------- API ----------
 export const api = {
   health: () => request<{ status: string; llm_provider: string; llm_model: string }>("/api/health"),
@@ -436,6 +496,31 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  // Application Intelligence (Explore Mode)
+  listApplications: () => request<ApplicationOut[]>("/api/applications"),
+  getApplication: (id: number) => request<ApplicationOut>(`/api/applications/${id}`),
+  createApplication: (body: ApplicationCreate) =>
+    request<ApplicationOut>("/api/applications", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateApplication: (id: number, body: Partial<ApplicationCreate>) =>
+    request<ApplicationOut>(`/api/applications/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  deleteApplication: (id: number) =>
+    request<void>(`/api/applications/${id}`, { method: "DELETE" }),
+  exploreApplication: (id: number, maxSteps = 40) =>
+    request<{ job_id: string; task_id: string; status: string }>(
+      `/api/applications/${id}/explore?max_steps=${maxSteps}`,
+      { method: "POST" },
+    ),
+  getExploreStatus: (jobId: string) =>
+    request<ExploreRunStatusResponse>(`/api/explore/status/${jobId}`),
+  getApplicationMap: (id: number) =>
+    request<ApplicationMapResponse>(`/api/applications/${id}/map`),
 };
 
 export const BACKEND_URL = BASE;

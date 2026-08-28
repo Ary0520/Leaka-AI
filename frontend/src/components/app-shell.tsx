@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { LayoutDashboard, FileText, Sparkles, Layers, History, Webhook, Settings2, LogOut } from "lucide-react";
+import { LayoutDashboard, FileText, Sparkles, Layers, History, Webhook, Settings2, LogOut, Compass } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePathname } from "next/navigation";
 import React from "react";
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 
 const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/applications", label: "Applications", icon: Compass },
   { href: "/runs", label: "All Runs", icon: History },
   { href: "/tests", label: "Test Cases", icon: FileText },
   { href: "/suites", label: "Test Suites", icon: Layers },

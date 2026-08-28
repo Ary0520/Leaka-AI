@@ -51,9 +51,10 @@ function NewTestContent() {
     ? Number(searchParams.get("suite_id"))
     : undefined;
 
-  const [name, setName] = useState("");
-  const [prompt, setPrompt] = useState("");
-  const [targetUrl, setTargetUrl] = useState("");
+  // Prefill from query params (e.g. "Generate test" from an application map node)
+  const [name, setName] = useState(searchParams.get("name") ?? "");
+  const [prompt, setPrompt] = useState(searchParams.get("prompt") ?? "");
+  const [targetUrl, setTargetUrl] = useState(searchParams.get("target_url") ?? "");
   const [success, setSuccess] = useState("");
   const [saveAsCase, setSaveAsCase] = useState(!!preselectedSuiteId);
   const [caseName, setCaseName] = useState("");
