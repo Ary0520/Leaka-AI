@@ -47,11 +47,35 @@ function MaskedCredentialField({
   label: string; value: string; onChange: (val: string) => void; placeholder: string; onSave: () => void; isSaving: boolean; isSet: boolean; isMaskedFallback?: string;
 }) {
   const [isEditing, setIsEditing] = useState(false);
+  const [pendingSave, setPendingSave] = useState(false);
+
+  // Close the editor only AFTER a save actually completes, so the user sees
+  // the result rather than the field snapping shut mid-request.
+  useEffect(() => {
+    if (pendingSave && !isSaving) {
+      setPendingSave(false);
+      setIsEditing(false);
+      onChange(""); // clear the typed value; the refetch will show the new mask
+    }
+  }, [pendingSave, isSaving, onChange]);
+
+  const startEditing = () => {
+    onChange("");          // start from empty so it's obvious a new key is expected
+    setIsEditing(true);
+  };
+
+  const handleSave = () => {
+    if (!value.trim()) return;   // don't save an empty value
+    setPendingSave(true);
+    onSave();
+  };
+
+  const showEditor = isEditing || !isSet;
 
   return (
     <div className="space-y-2">
       <Label className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground">{label}</Label>
-      {isEditing || !isSet ? (
+      {showEditor ? (
         <div className="flex items-center gap-2">
            <Input 
              type="text" 
@@ -59,24 +83,33 @@ function MaskedCredentialField({
              value={value} 
              onChange={e => onChange(e.target.value)} 
              placeholder={placeholder} 
-             autoFocus={isEditing} 
+             autoFocus={isEditing}
+             onKeyDown={(e) => { if (e.key === "Enter") handleSave(); }}
            />
-           <Button size="sm" onClick={() => { onSave(); setIsEditing(false); }} disabled={isSaving} className="bg-indigo-300 text-indigo-950 hover:bg-indigo-400 font-semibold px-4 h-10">
+           <Button size="sm" onClick={handleSave} disabled={isSaving || !value.trim()} className="bg-indigo-300 text-indigo-950 hover:bg-indigo-400 font-semibold px-4 h-10">
              {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save"}
            </Button>
            {isEditing && isSet && (
-             <Button size="sm" variant="ghost" className="h-10 text-muted-foreground" onClick={() => setIsEditing(false)}>Cancel</Button>
+             <Button size="sm" variant="ghost" className="h-10 text-muted-foreground" onClick={() => { setIsEditing(false); onChange(""); }}>Cancel</Button>
            )}
         </div>
       ) : (
-        <div className="flex items-center gap-2">
-           <div className="h-10 flex items-center px-4 rounded-md bg-[#0B0E14] border border-transparent font-mono text-sm text-muted-foreground/70 w-full truncate">
+        <button
+          type="button"
+          onClick={startEditing}
+          className="w-full flex items-center gap-2 group text-left"
+          title="Click to change"
+        >
+           <div className="h-10 flex items-center px-4 rounded-md bg-[#0B0E14] border border-transparent group-hover:border-indigo-500/40 font-mono text-sm text-muted-foreground/70 w-full truncate transition-colors">
              {isMaskedFallback}
            </div>
-           <Button size="icon" variant="ghost" className="h-10 w-10 shrink-0 text-muted-foreground hover:text-white bg-[#161922] border-transparent" onClick={() => setIsEditing(true)}>
+           <span className="h-10 w-10 shrink-0 grid place-items-center rounded-md text-muted-foreground group-hover:text-white bg-[#161922] transition-colors">
              <Pencil className="w-4 h-4" />
-           </Button>
-        </div>
+           </span>
+        </button>
+      )}
+      {!showEditor && (
+        <p className="text-[11px] text-muted-foreground/60">Click the field or pencil to replace this key.</p>
       )}
     </div>
   )
