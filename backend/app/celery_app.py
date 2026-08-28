@@ -28,5 +28,5 @@ celery_app.conf.update(
     task_default_queue="revguard_default",
 )
 
-# Ensure our tasks module is discovered
-celery_app.autodiscover_tasks(["app.worker"])
+# Ensure our tasks modules are discovered
+celery_app.autodiscover_tasks(["app.worker", "app.explore_worker"])
