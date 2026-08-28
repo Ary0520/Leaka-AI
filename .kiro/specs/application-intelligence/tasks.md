@@ -123,14 +123,14 @@ Tasks are grouped by the design's layers (L0–L5). Each layer is independently 
   - Write idempotent migration `M4`
   - _Requirements: 5.1, 5.5a, 11.1_
 
-- [ ] 14. Implement the memory service (`memory.py`)
+- [x] 14. Implement the memory service (`memory.py`)
   - Implement `retrieve(application_id, node, query=None, k=)`: identity lookup (node_id/kind) ∪ semantic search over `embeddings` via pgvector cosine (owner+app scoped in WHERE)
   - Implement `write(item)`: immediate persist; on DB/embedder failure enqueue to `MemoryWriteQueue`; never fail the in-flight run
   - Implement `graph_worker.drain_memory_queue()` (retry with backoff) and `compact_memory()` (retention: keep latest N fingerprint versions, summarize old timing/outcome)
   - Implement identity-only fallback when the vector backend is unavailable
   - _Requirements: 5.1, 5.2, 5.4, 5.5, 5.5a, 5.6, 5.7, 5.8, 5.9, 5.11_
 
-- [ ]* 14.1 Write property test for tenant isolation over memory + graph (Property 8)
+- [x]* 14.1 Write property test for tenant isolation over memory + graph (Property 8)
   - Assert queries by a non-owner return empty/404 across graph, coverage, and memory reads (randomized owner ids)
   - _Requirements: 9.1, 9.2_
 

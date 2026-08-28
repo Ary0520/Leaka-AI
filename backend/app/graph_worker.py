@@ -861,3 +861,43 @@ def _flag_orphan_links(db, application_id: int) -> None:
         should_orphan = l.node_id in stale_ids
         if bool(l.orphaned) != should_orphan:
             l.orphaned = should_orphan
+
+
+# ===========================================================================
+# MEMORY MAINTENANCE (Task 14) — periodic Celery tasks over the memory service.
+# drain_memory_queue: retry durably-queued writes (R5.5a).
+# compact_memory: enforce retention/compaction (R5.8).
+# Both are safe to run repeatedly and never corrupt state.
+# ===========================================================================
+
+
+@celery_app.task(name="app.graph_worker.drain_memory_queue")
+def drain_memory_queue(batch: int = 50) -> dict:
+    """Drain due memory write-queue rows with retry+backoff."""
+    from . import memory as MEM
+    db = SessionLocal()
+    try:
+        out = MEM.drain_queue_once(db, batch=batch)
+        logger.info("drain_memory_queue: %s", out)
+        return {"status": "completed", **out}
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("drain_memory_queue failed: %s", exc)
+        return {"status": "failed", "reason": str(exc)[:300]}
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.graph_worker.compact_memory")
+def compact_memory(application_id: Optional[int] = None) -> dict:
+    """Enforce memory retention/compaction (bounded growth per node)."""
+    from . import memory as MEM
+    db = SessionLocal()
+    try:
+        out = MEM.compact_once(db, application_id=application_id)
+        logger.info("compact_memory: %s", out)
+        return {"status": "completed", **out}
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("compact_memory failed: %s", exc)
+        return {"status": "failed", "reason": str(exc)[:300]}
+    finally:
+        db.close()
