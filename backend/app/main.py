@@ -1,4 +1,5 @@
 import atexit
+import json
 import logging
 import os
 import threading
@@ -539,7 +540,12 @@ def seed_demo_data(db: Session = Depends(get_db), user: dict = Depends(get_curre
 # ---------------------------------------------------------------------------
 @app.post("/api/test-cases", response_model=TestCaseOut)
 def create_test_case(body: TestCaseCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    tc = TestCase(**body.model_dump(), owner_id=user["sub"])
+    data = body.model_dump()
+    # assertions is a list of Assertion models → serialize to JSON string column
+    assertions = data.pop("assertions", None)
+    tc = TestCase(**data, owner_id=user["sub"])
+    if assertions:
+        tc.assertions = json.dumps(assertions)
     db.add(tc)
     db.commit()
     db.refresh(tc)
@@ -579,7 +585,11 @@ def update_test_case(
     if not tc:
         raise HTTPException(404, "Test case not found")
     for field, value in body.model_dump(exclude_unset=True).items():
-        setattr(tc, field, value)
+        if field == "assertions":
+            # Serialize list → JSON string; empty list / None clears it
+            tc.assertions = json.dumps(value) if value else None
+        else:
+            setattr(tc, field, value)
     db.commit()
     db.refresh(tc)
     return tc
@@ -674,6 +684,7 @@ def run_suite(
             prompt=tc.prompt,
             target_url=tc.target_url,
             success_criteria=tc.success_criteria,
+            assertions=tc.assertions,  # inherit deterministic assertions
             status=TestRunStatus.PENDING,
         )
         db.add(run)
@@ -713,12 +724,21 @@ def enqueue_test(body: TestRunRequest, db: Session = Depends(get_db), user: dict
     target_url = body.target_url
     success_criteria = body.success_criteria
     test_case_id = body.test_case_id
+
+    # Resolve assertions: explicit request assertions take precedence, else
+    # inherit from the test case. Serialized to a JSON string for storage.
+    assertions_json: Optional[str] = None
+    if body.assertions:
+        assertions_json = json.dumps([a.model_dump() for a in body.assertions])
+
     if test_case_id:
         tc = db.query(TestCase).filter(TestCase.id == test_case_id, TestCase.owner_id == owner_id).first()
         if tc:
             prompt = prompt or tc.prompt
             target_url = target_url or tc.target_url
             success_criteria = success_criteria or tc.success_criteria
+            if assertions_json is None and tc.assertions:
+                assertions_json = tc.assertions  # already a JSON string
             if not body.name:
                 run_name = tc.name
 
@@ -731,6 +751,7 @@ def enqueue_test(body: TestRunRequest, db: Session = Depends(get_db), user: dict
         prompt=prompt,
         target_url=target_url,
         success_criteria=success_criteria,
+        assertions=assertions_json,
         status=TestRunStatus.PENDING,
     )
     db.add(run)
@@ -853,6 +874,8 @@ def get_run_status(
         visited_urls=run.visited_urls,
         live_steps=run.live_steps,
         is_successful=run.is_successful,
+        assertions=run.assertions,
+        assertion_results=run.assertion_results,
         created_at=run.created_at,
         started_at=run.started_at,
         completed_at=run.completed_at,
@@ -1043,6 +1066,7 @@ def ci_webhook(
             prompt=tc.prompt,
             target_url=tc.target_url,
             success_criteria=tc.success_criteria,
+            assertions=tc.assertions,  # inherit deterministic assertions
             status=TestRunStatus.PENDING,
         )
         db.add(run)

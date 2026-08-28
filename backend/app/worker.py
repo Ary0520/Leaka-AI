@@ -696,13 +696,71 @@ def run_browser_test(
             )
 
         logger.info(
-            "Success determination: job_id=%s agent_says_successful=%s "
+            "Success determination (LLM verdict): job_id=%s agent_says_successful=%s "
             "result_signals_failure=%s is_done=%s → is_successful=%s | "
             "final_result_preview=%s",
             job_id, agent_says_successful, _result_signals_failure,
             is_done, is_successful,
             (final_result_text or "")[:120],
         )
+
+        # ── Deterministic assertion layer (Test Oracle) ──────────────────────
+        # If the test defines assertions, verify them against the ACTUAL
+        # captured page state (final DOM + final URL) — independent of the LLM.
+        # Rules:
+        #   - No assertions  → is_successful is UNCHANGED (LLM verdict stands).
+        #   - Has assertions → is_successful = (LLM verdict) AND (all assertions pass).
+        #     Assertions can only make a run FAIL, never make a failing run pass.
+        assertion_results_json: Optional[str] = None
+        try:
+            db_a = SessionLocal()
+            try:
+                _run_row = db_a.query(TestRun).filter(TestRun.job_id == job_id).first()
+                raw_assertions = _run_row.assertions if _run_row else None
+            finally:
+                db_a.close()
+
+            parsed_assertions = []
+            if raw_assertions:
+                try:
+                    loaded = json.loads(raw_assertions)
+                    if isinstance(loaded, list):
+                        parsed_assertions = loaded
+                except Exception:
+                    parsed_assertions = []
+
+            if parsed_assertions:
+                from .assertions import evaluate_assertions
+
+                final_url = None
+                for _u in reversed(urls_visited):
+                    if _u:
+                        final_url = _u
+                        break
+
+                all_passed, results = evaluate_assertions(
+                    parsed_assertions,
+                    dom_html=dom_html,
+                    final_url=final_url,
+                )
+                assertion_results_json = json.dumps(results, default=str, ensure_ascii=False)
+
+                llm_verdict = is_successful
+                # Fold assertions in: only tighten, never loosen.
+                is_successful = bool(llm_verdict) and all_passed
+
+                logger.info(
+                    "Assertion layer: job_id=%s count=%s all_passed=%s "
+                    "llm_verdict=%s → final is_successful=%s",
+                    job_id, len(parsed_assertions), all_passed,
+                    llm_verdict, is_successful,
+                )
+        except Exception as _assert_exc:
+            # Assertion evaluation must NEVER crash a run. On error, leave the
+            # LLM verdict untouched and record nothing.
+            logger.warning(
+                "Assertion evaluation failed (job_id=%s): %s", job_id, _assert_exc,
+            )
 
         # Copy agent-saved screenshot files into our managed dir
         for idx, src in enumerate(shot_paths):
@@ -773,6 +831,7 @@ def run_browser_test(
             "error_message": agent_abort_reason if agent_abort_reason else None,
             "has_visual_proof": len(screenshots_persisted) > 0,
             "is_successful": is_successful,
+            "assertion_results": assertion_results_json,
             "completed_at": datetime.utcnow(),
         }
 

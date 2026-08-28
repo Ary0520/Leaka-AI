@@ -1,8 +1,33 @@
 from datetime import datetime
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Literal
 from pydantic import BaseModel, Field
 
 from .models import TestRunStatus
+
+
+# -------------- Assertions (deterministic test oracle) --------------
+# Each assertion is checked in Python against the captured final DOM / URL
+# after the agent finishes — independent of what the LLM claims.
+AssertionType = Literal[
+    "page_contains_text",
+    "page_not_contains_text",
+    "url_contains",
+    "url_equals",
+    "page_contains_regex",
+]
+
+
+class Assertion(BaseModel):
+    type: AssertionType
+    value: str = Field(..., min_length=1, description="Text / URL / regex to check")
+    case_sensitive: bool = False
+
+
+class AssertionResult(BaseModel):
+    type: str
+    value: str
+    passed: bool
+    detail: Optional[str] = None
 
 
 # -------------- Test Cases --------------
@@ -12,6 +37,7 @@ class TestCaseBase(BaseModel):
     success_criteria: Optional[str] = None
     target_url: Optional[str] = None
     suite_id: Optional[int] = None
+    assertions: Optional[List[Assertion]] = None
 
 
 class TestCaseCreate(TestCaseBase):
@@ -24,15 +50,48 @@ class TestCaseUpdate(BaseModel):
     success_criteria: Optional[str] = None
     target_url: Optional[str] = None
     suite_id: Optional[int] = None
+    assertions: Optional[List[Assertion]] = None
 
 
-class TestCaseOut(TestCaseBase):
+class TestCaseOut(BaseModel):
     id: int
+    name: str
+    prompt: str
+    success_criteria: Optional[str] = None
+    target_url: Optional[str] = None
+    suite_id: Optional[int] = None
+    # Stored as a JSON string in the DB column; exposed as a parsed list.
+    assertions: Optional[List[Assertion]] = None
     created_at: datetime
     updated_at: datetime
 
     class Config:
         from_attributes = True
+
+    @classmethod
+    def model_validate(cls, obj, *args, **kwargs):
+        # When reading from the ORM object, `assertions` is a JSON string
+        # (or None). Parse it into a list so the response is structured.
+        if hasattr(obj, "assertions") and isinstance(getattr(obj, "assertions"), str):
+            import json as _json
+            try:
+                parsed = _json.loads(obj.assertions)
+            except Exception:
+                parsed = None
+            # Build a shallow copy dict for validation
+            data = {
+                "id": obj.id,
+                "name": obj.name,
+                "prompt": obj.prompt,
+                "success_criteria": obj.success_criteria,
+                "target_url": obj.target_url,
+                "suite_id": obj.suite_id,
+                "assertions": parsed,
+                "created_at": obj.created_at,
+                "updated_at": obj.updated_at,
+            }
+            return super().model_validate(data, *args, **kwargs)
+        return super().model_validate(obj, *args, **kwargs)
 
 
 # -------------- Test Suites --------------
@@ -90,6 +149,7 @@ class TestRunRequest(BaseModel):
     test_case_id: Optional[int] = None
     use_vision: Optional[bool] = True
     max_steps: Optional[int] = 50
+    assertions: Optional[List[Assertion]] = None
 
 
 class TestRunEnqueueResponse(BaseModel):
@@ -116,6 +176,8 @@ class TestRunStatusResponse(BaseModel):
     visited_urls: Optional[str] = None     # JSON string: list[str]
     live_steps: Optional[str] = None       # JSON string: steps written live during run
     is_successful: Optional[bool] = None
+    assertions: Optional[str] = None            # JSON string: the assertions requested
+    assertion_results: Optional[str] = None     # JSON string: per-assertion pass/fail
     created_at: Optional[datetime] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
