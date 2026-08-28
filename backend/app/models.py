@@ -396,3 +396,73 @@ class SnapshotMember(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     snapshot = relationship("GraphSnapshot", back_populates="members")
+
+
+# ===========================================================================
+# COVERAGE INTELLIGENCE (Layer 2) — per-node coverage verdicts and the
+# authoritative test↔node links that drive them. Additive; owner+application
+# scoped like every other resource. JSON-shaped fields are Text (JSON strings)
+# to match the existing convention.
+# ===========================================================================
+
+
+class CoverageVerdict(Base):
+    """
+    The computed coverage classification for a single graph node.
+
+    One row per (application_id, node_id): the coverage engine recomputes and
+    upserts it. `state` is covered|partially_covered|uncovered; `confidence` is
+    a float in [0.0, 1.0]; `evidence` records the contributing signals so the
+    verdict is explainable (R4.1, R4.8).
+    """
+    __tablename__ = "coverage_verdicts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(String(64), nullable=True, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=False, index=True)
+    node_id = Column(Integer, ForeignKey("graph_nodes.id"), nullable=False, index=True)
+
+    # covered | partially_covered | uncovered
+    state = Column(String(24), nullable=False, default="uncovered", index=True)
+    # Stored as an integer 0..1000 (= confidence * 1000) to avoid float noise in
+    # the DB while keeping the API-facing value in [0.0, 1.0]. See the coverage
+    # engine / endpoint for the conversion.
+    confidence_milli = Column(Integer, nullable=False, default=0)
+    evidence = Column(Text, nullable=True)           # JSON-as-text: signals list
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("application_id", "node_id", name="uq_coverage_verdict_app_node"),
+    )
+
+
+class CoverageLink(Base):
+    """
+    An authoritative link between a TestCase and a graph node (R4.3).
+
+    Created when a test is generated from a node ("generate test" flow) or when
+    a user manually links them. `source` is generated|manual. If the linked node
+    later becomes stale, the link is flagged `orphaned` (not dropped) for review
+    (R4.9).
+    """
+    __tablename__ = "coverage_links"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(String(64), nullable=True, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=False, index=True)
+    node_id = Column(Integer, ForeignKey("graph_nodes.id"), nullable=False, index=True)
+    test_case_id = Column(Integer, ForeignKey("test_cases.id"), nullable=False, index=True)
+
+    source = Column(String(16), nullable=False, default="generated")  # generated|manual
+    orphaned = Column(Boolean, default=False, nullable=False, index=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "application_id", "node_id", "test_case_id", name="uq_coverage_link_dedup",
+        ),
+    )

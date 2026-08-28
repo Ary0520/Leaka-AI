@@ -36,6 +36,10 @@ from .models import (
     AppMapNode,
     ExploreRun,
     ExploreRunStatus,
+    GraphNode,
+    GraphEdge,
+    GraphSnapshot,
+    SnapshotMember,
     LinearIssue,
     TestCase,
     TestRun,
@@ -55,6 +59,14 @@ from .schemas import (
     CreateLinearTicketRequest,
     ExploreEnqueueResponse,
     ExploreRunStatusResponse,
+    GraphNodeOut,
+    GraphEdgeOut,
+    GraphResponse,
+    GraphNodeDetail,
+    GraphNodeOverride,
+    SnapshotOut,
+    SnapshotListResponse,
+    SnapshotDiffResponse,
     LinearTicketResponse,
     ScreenshotOut,
     TestCaseCreate,
@@ -1658,4 +1670,326 @@ def get_application_map(app_id: int, db: Session = Depends(get_db), user: dict =
         nodes=node_outs,
         total_nodes=len(node_outs),
         covered_nodes=covered_count,
+    )
+
+
+# ===========================================================================
+# APPLICATION GRAPH (Layer 1) — owner-scoped read/override API.
+# Every query is scoped by application_id AFTER _get_owned_application has
+# verified tenant ownership, so cross-tenant access always 404s (never 403,
+# never reveals existence). All list endpoints paginate (R10.6).
+# ===========================================================================
+
+
+def _parse_json_field(val, default=None):
+    """Parse a JSON-as-text ORM column defensively; return default on any error."""
+    if not val:
+        return default
+    if isinstance(val, (dict, list)):
+        return val
+    try:
+        return json.loads(val)
+    except Exception:
+        return default
+
+
+def _graph_node_out(n: GraphNode) -> GraphNodeOut:
+    return GraphNodeOut(
+        id=n.id,
+        canonical_key=n.canonical_key,
+        node_type=n.node_type,
+        business_category=n.business_category,
+        label=n.label,
+        url_pattern=n.url_pattern,
+        role_association=n.role_association,
+        dependencies_incomplete=bool(n.dependencies_incomplete),
+        status=n.status or "active",
+        semantics=_parse_json_field(n.semantics),
+        risk=_parse_json_field(n.risk),
+        manual_overrides=_parse_json_field(n.manual_overrides),
+        first_seen_run=n.first_seen_run,
+        last_seen_run=n.last_seen_run,
+        created_at=n.created_at,
+        updated_at=n.updated_at,
+    )
+
+
+@app.get("/api/applications/{app_id}/graph", response_model=GraphResponse)
+def get_application_graph(
+    app_id: int,
+    skip: int = 0,
+    limit: int = 100,
+    include_stale: bool = False,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Return the application's persistent graph (active nodes + edges), paginated.
+
+    An application that has never been reconciled returns an explicit empty
+    graph (is_empty=true), not an error (R1.9).
+    """
+    app_row = _get_owned_application(db, app_id, user)
+    limit = max(1, min(limit, 500))  # bound response size (R10.6)
+
+    node_q = db.query(GraphNode).filter(GraphNode.application_id == app_row.id)
+    if not include_stale:
+        node_q = node_q.filter(GraphNode.status == "active")
+
+    total_nodes = node_q.count()
+    nodes = (
+        node_q.order_by(GraphNode.id.asc()).offset(skip).limit(limit).all()
+    )
+
+    # Edges are returned for the active graph (bounded by the node cap above via
+    # the same status filter); they are lightweight rows.
+    edge_q = db.query(GraphEdge).filter(GraphEdge.application_id == app_row.id)
+    if not include_stale:
+        edge_q = edge_q.filter(GraphEdge.status == "active")
+    total_edges = edge_q.count()
+    edges = edge_q.order_by(GraphEdge.id.asc()).limit(limit).all()
+
+    # is_empty reflects whether ANY graph exists (not whether this page is empty).
+    any_node = db.query(GraphNode.id).filter(GraphNode.application_id == app_row.id).first()
+
+    return GraphResponse(
+        application_id=app_row.id,
+        nodes=[_graph_node_out(n) for n in nodes],
+        edges=[
+            GraphEdgeOut(
+                id=e.id,
+                source_node_id=e.source_node_id,
+                target_node_id=e.target_node_id,
+                edge_type=e.edge_type,
+                confidence=int(e.confidence or 100),
+                status=e.status or "active",
+            )
+            for e in edges
+        ],
+        total_nodes=total_nodes,
+        total_edges=total_edges,
+        is_empty=(any_node is None),
+        skip=skip,
+        limit=limit,
+    )
+
+
+def _get_owned_graph_node(db: Session, app_row: "Application", node_id: int) -> GraphNode:
+    """Fetch a graph node scoped to an already-owner-verified application (404)."""
+    node = (
+        db.query(GraphNode)
+        .filter(GraphNode.id == node_id, GraphNode.application_id == app_row.id)
+        .first()
+    )
+    if not node:
+        raise HTTPException(404, "Graph node not found")
+    return node
+
+
+@app.get(
+    "/api/applications/{app_id}/graph/nodes/{node_id}",
+    response_model=GraphNodeDetail,
+)
+def get_graph_node(
+    app_id: int,
+    node_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Node detail: semantics + provenance + manual overrides now; risk, coverage,
+    and memory are returned as null placeholders until their engines (Tasks
+    9–15) exist — we never fabricate intelligence we haven't computed.
+    """
+    app_row = _get_owned_application(db, app_id, user)
+    node = _get_owned_graph_node(db, app_row, node_id)
+
+    base = _graph_node_out(node)
+    provenance = {
+        "first_seen_run": node.first_seen_run,
+        "last_seen_run": node.last_seen_run,
+        "created_at": node.created_at.isoformat() if node.created_at else None,
+        "updated_at": node.updated_at.isoformat() if node.updated_at else None,
+    }
+    return GraphNodeDetail(
+        **base.model_dump(),
+        provenance=provenance,
+        coverage=None,   # Task 11/12
+        memory=None,     # Task 14/15
+    )
+
+
+@app.patch(
+    "/api/applications/{app_id}/graph/nodes/{node_id}",
+    response_model=GraphNodeDetail,
+)
+def override_graph_node(
+    app_id: int,
+    node_id: int,
+    body: GraphNodeOverride,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Apply an authoritative manual override to a node (Req 2.7, 3.5).
+
+    Overrides are persisted into `manual_overrides` (so future reconciliations
+    re-apply them and never revert a human correction — Property 5) AND applied
+    to the live columns immediately so reads reflect them at once. Each override
+    records provenance (who/when) for audit (R9.6).
+    """
+    app_row = _get_owned_application(db, app_id, user)
+    node = _get_owned_graph_node(db, app_row, node_id)
+
+    incoming = body.model_dump(exclude_unset=True)
+    if not incoming:
+        raise HTTPException(400, "No override fields provided")
+
+    overrides = _parse_json_field(node.manual_overrides, default={}) or {}
+
+    # Apply each provided field to overrides + live column.
+    if "node_type" in incoming and incoming["node_type"]:
+        nt = str(incoming["node_type"]).strip().lower()
+        overrides["node_type"] = nt
+        node.node_type = nt
+    if "business_category" in incoming:
+        overrides["business_category"] = incoming["business_category"]
+        node.business_category = incoming["business_category"]
+    if "role_association" in incoming and incoming["role_association"]:
+        role = str(incoming["role_association"]).strip()
+        overrides["role_association"] = role
+        node.role_association = role
+    if "risk" in incoming and incoming["risk"] is not None:
+        overrides["risk"] = incoming["risk"]
+        # Live risk column mirrors the override until the risk engine recomputes.
+        node.risk = json.dumps(incoming["risk"], default=str)
+
+    # Provenance for audit (who/when), appended non-destructively.
+    prov = overrides.get("_provenance", [])
+    if not isinstance(prov, list):
+        prov = []
+    prov.append({
+        "by": user.get("sub"),
+        "at": datetime.utcnow().isoformat(),
+        "fields": [k for k in incoming.keys()],
+    })
+    overrides["_provenance"] = prov[-20:]  # bound audit trail growth
+
+    node.manual_overrides = json.dumps(overrides, default=str)
+    node.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(node)
+
+    base = _graph_node_out(node)
+    return GraphNodeDetail(
+        **base.model_dump(),
+        provenance={
+            "first_seen_run": node.first_seen_run,
+            "last_seen_run": node.last_seen_run,
+            "overrides": overrides.get("_provenance"),
+        },
+        coverage=None,
+        memory=None,
+    )
+
+
+def _snapshot_out(s: GraphSnapshot) -> SnapshotOut:
+    return SnapshotOut(
+        id=s.id,
+        application_id=s.application_id,
+        explore_run_id=s.explore_run_id,
+        node_count=s.node_count or 0,
+        edge_count=s.edge_count or 0,
+        diff_summary=_parse_json_field(s.diff_summary),
+        created_at=s.created_at,
+    )
+
+
+@app.get("/api/applications/{app_id}/snapshots", response_model=SnapshotListResponse)
+def list_snapshots(
+    app_id: int,
+    skip: int = 0,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Append-only snapshot history for an application, newest first (paginated)."""
+    app_row = _get_owned_application(db, app_id, user)
+    limit = max(1, min(limit, 200))
+
+    q = db.query(GraphSnapshot).filter(GraphSnapshot.application_id == app_row.id)
+    total = q.count()
+    rows = q.order_by(GraphSnapshot.id.desc()).offset(skip).limit(limit).all()
+    return SnapshotListResponse(
+        application_id=app_row.id,
+        snapshots=[_snapshot_out(s) for s in rows],
+        total=total,
+        skip=skip,
+        limit=limit,
+    )
+
+
+def _snapshot_members(db: Session, snapshot_id: int):
+    from .intelligence.reconciliation import SnapshotMemberState
+    members = (
+        db.query(SnapshotMember)
+        .filter(SnapshotMember.snapshot_id == snapshot_id)
+        .all()
+    )
+    out = []
+    for m in members:
+        st = _parse_json_field(m.node_state, default={}) or {}
+        out.append(SnapshotMemberState(
+            canonical_key=st.get("canonical_key", m.canonical_key or ""),
+            node_type=st.get("node_type", "page"),
+            label=st.get("label", ""),
+            url_pattern=st.get("url_pattern"),
+            business_category=st.get("business_category"),
+            role_association=st.get("role_association", "unknown"),
+            status=st.get("status", "active"),
+            text_signature=st.get("text_signature", ""),
+            url_signature=st.get("url_signature", ""),
+        ))
+    return out
+
+
+@app.get(
+    "/api/applications/{app_id}/snapshots/{from_id}/diff/{to_id}",
+    response_model=SnapshotDiffResponse,
+)
+def diff_snapshots_endpoint(
+    app_id: int,
+    from_id: int,
+    to_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Diff two of this application's snapshots (added/removed/changed nodes)."""
+    app_row = _get_owned_application(db, app_id, user)
+
+    # Both snapshots must belong to THIS application (else 404 — no leakage).
+    def _owned_snapshot(sid: int) -> GraphSnapshot:
+        s = (
+            db.query(GraphSnapshot)
+            .filter(GraphSnapshot.id == sid, GraphSnapshot.application_id == app_row.id)
+            .first()
+        )
+        if not s:
+            raise HTTPException(404, "Snapshot not found")
+        return s
+
+    _owned_snapshot(from_id)
+    _owned_snapshot(to_id)
+
+    from .intelligence.reconciliation import diff_snapshots as _diff
+
+    a_members = _snapshot_members(db, from_id)
+    b_members = _snapshot_members(db, to_id)
+    diff = _diff(a_members, b_members)
+
+    return SnapshotDiffResponse(
+        application_id=app_row.id,
+        from_snapshot_id=from_id,
+        to_snapshot_id=to_id,
+        diff=diff,
     )

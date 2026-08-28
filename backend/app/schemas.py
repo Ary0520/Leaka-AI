@@ -297,3 +297,91 @@ class ApplicationMapResponse(BaseModel):
     nodes: List[AppMapNodeOut] = []
     total_nodes: int = 0
     covered_nodes: int = 0
+
+
+# -------------- Application Graph (Layer 1) --------------
+# JSON-shaped columns (semantics/risk/manual_overrides/provenance/diff_summary)
+# are stored as Text (JSON strings) in the ORM; these schemas expose them as
+# parsed objects for the client. Parsing is done in the endpoint layer.
+
+
+class GraphNodeOut(BaseModel):
+    id: int
+    canonical_key: str
+    node_type: str
+    business_category: Optional[str] = None
+    label: str
+    url_pattern: Optional[str] = None
+    role_association: Optional[str] = None
+    dependencies_incomplete: bool = False
+    status: str = "active"
+    semantics: Optional[dict] = None
+    risk: Optional[dict] = None
+    manual_overrides: Optional[dict] = None
+    first_seen_run: Optional[int] = None
+    last_seen_run: Optional[int] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+
+class GraphEdgeOut(BaseModel):
+    id: int
+    source_node_id: int
+    target_node_id: int
+    edge_type: str
+    confidence: int = 100
+    status: str = "active"
+
+
+class GraphResponse(BaseModel):
+    application_id: int
+    nodes: List[GraphNodeOut] = []
+    edges: List[GraphEdgeOut] = []
+    total_nodes: int = 0
+    total_edges: int = 0
+    # Explicit empty-graph state (R1.9): true when no explore/reconcile has run.
+    is_empty: bool = False
+    skip: int = 0
+    limit: int = 0
+
+
+class GraphNodeDetail(GraphNodeOut):
+    # Provenance + downstream intelligence. risk/coverage/memory are placeholders
+    # until their engines (Tasks 9–15) are built — returned as null, never faked.
+    provenance: Optional[dict] = None
+    coverage: Optional[dict] = None
+    memory: Optional[dict] = None
+
+
+class GraphNodeOverride(BaseModel):
+    """Authoritative manual correction of a node (Req 2.7, 3.5)."""
+    node_type: Optional[str] = None
+    business_category: Optional[str] = None
+    role_association: Optional[str] = None
+    # risk override: {"level": "...", "score": 0..100} — accepted as-is.
+    risk: Optional[dict] = None
+
+
+class SnapshotOut(BaseModel):
+    id: int
+    application_id: int
+    explore_run_id: Optional[int] = None
+    node_count: int = 0
+    edge_count: int = 0
+    diff_summary: Optional[dict] = None
+    created_at: datetime
+
+
+class SnapshotListResponse(BaseModel):
+    application_id: int
+    snapshots: List[SnapshotOut] = []
+    total: int = 0
+    skip: int = 0
+    limit: int = 0
+
+
+class SnapshotDiffResponse(BaseModel):
+    application_id: int
+    from_snapshot_id: int
+    to_snapshot_id: int
+    diff: dict
