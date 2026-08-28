@@ -251,3 +251,148 @@ class AppMapNode(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     application = relationship("Application", back_populates="map_nodes")
+
+
+# ===========================================================================
+# APPLICATION GRAPH (Layer 1) — persistent, versioned graph built by
+# reconciling explore discoveries. Additive; independent of the execution path.
+# JSON-shaped fields are stored as Text (JSON strings) to match the existing
+# codebase convention (assertions, steps_log, etc.) and stay portable.
+# ===========================================================================
+
+
+class GraphNode(Base):
+    """
+    A persistent node in an application's graph — a page, flow, form, action,
+    or role — with a stable canonical identity that survives re-explores.
+    """
+    __tablename__ = "graph_nodes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(String(64), nullable=True, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=False, index=True)
+
+    # Stable identity (hash of the most stable fingerprint signals). Unique per
+    # application so the same entity keeps one node across explore runs.
+    canonical_key = Column(String(64), nullable=False, index=True)
+
+    node_type = Column(String(32), nullable=False, default="page")       # page|flow|form|action|role
+    business_category = Column(String(64), nullable=True)                 # e.g. checkout|auth|content|unknown
+    label = Column(String(500), nullable=False)
+    url_pattern = Column(String(2048), nullable=True)                     # normalized url signature
+    role_association = Column(String(64), nullable=True, default="unknown")
+    dependencies_incomplete = Column(Boolean, default=False, nullable=False)
+
+    # JSON-as-text
+    semantics = Column(Text, nullable=True)          # evidence/signals used to classify
+    risk = Column(Text, nullable=True)               # {level, score, factors}
+    manual_overrides = Column(Text, nullable=True)   # authoritative human edits (win over computed)
+
+    status = Column(String(16), nullable=False, default="active", index=True)  # active|stale
+
+    first_seen_run = Column(Integer, ForeignKey("explore_runs.id"), nullable=True)
+    last_seen_run = Column(Integer, ForeignKey("explore_runs.id"), nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("application_id", "canonical_key", name="uq_graph_node_app_key"),
+    )
+
+    application = relationship("Application")
+    fingerprints = relationship(
+        "NodeFingerprint", back_populates="node", cascade="all, delete-orphan"
+    )
+
+
+class GraphEdge(Base):
+    """A typed, directed relationship between two graph nodes."""
+    __tablename__ = "graph_edges"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(String(64), nullable=True, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=False, index=True)
+
+    source_node_id = Column(Integer, ForeignKey("graph_nodes.id"), nullable=False, index=True)
+    target_node_id = Column(Integer, ForeignKey("graph_nodes.id"), nullable=False, index=True)
+    # navigates_to | contains | requires_role | depends_on | part_of_flow
+    edge_type = Column(String(32), nullable=False)
+    confidence = Column(Integer, default=100)        # 0..100 (int to avoid float noise)
+    provenance = Column(Text, nullable=True)         # JSON-as-text
+    status = Column(String(16), nullable=False, default="active", index=True)  # active|stale
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "application_id", "source_node_id", "target_node_id", "edge_type",
+            name="uq_graph_edge_dedup",
+        ),
+    )
+
+
+class NodeFingerprint(Base):
+    """
+    A versioned identity signal set for a graph node. A new version is appended
+    when a node's fingerprint drifts (UI change), retaining prior versions for
+    future intent-preserving re-identification (self-healing seed).
+    """
+    __tablename__ = "node_fingerprints"
+
+    id = Column(Integer, primary_key=True, index=True)
+    node_id = Column(Integer, ForeignKey("graph_nodes.id"), nullable=False, index=True)
+
+    url_signature = Column(String(2048), nullable=True)
+    dom_signature = Column(String(64), nullable=True)
+    aria_signature = Column(String(64), nullable=True)
+    text_signature = Column(String(64), nullable=True)
+    # References embeddings.id (raw-migration table); plain int, no ORM FK to
+    # avoid coupling the ORM to a non-ORM table.
+    embedding_id = Column(Integer, nullable=True)
+    observed_run = Column(Integer, ForeignKey("explore_runs.id"), nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    node = relationship("GraphNode", back_populates="fingerprints")
+
+
+class GraphSnapshot(Base):
+    """
+    An immutable, point-in-time capture of an application's full graph produced
+    by a reconciliation. Append-only; enables diffing and audit.
+    """
+    __tablename__ = "graph_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(String(64), nullable=True, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=False, index=True)
+    explore_run_id = Column(Integer, ForeignKey("explore_runs.id"), nullable=True)
+
+    node_count = Column(Integer, default=0)
+    edge_count = Column(Integer, default=0)
+    diff_summary = Column(Text, nullable=True)       # JSON-as-text: vs previous snapshot
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    members = relationship(
+        "SnapshotMember", back_populates="snapshot", cascade="all, delete-orphan"
+    )
+
+
+class SnapshotMember(Base):
+    """A frozen copy of a node's state as it existed within a given snapshot."""
+    __tablename__ = "snapshot_members"
+
+    id = Column(Integer, primary_key=True, index=True)
+    snapshot_id = Column(Integer, ForeignKey("graph_snapshots.id"), nullable=False, index=True)
+    node_id = Column(Integer, ForeignKey("graph_nodes.id"), nullable=True, index=True)
+    # Frozen node metadata at snapshot time (JSON-as-text). We keep node_id for
+    # linkage but the frozen state is the source of truth for diffing so history
+    # survives even if the live node later changes.
+    node_state = Column(Text, nullable=False)
+    canonical_key = Column(String(64), nullable=True, index=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    snapshot = relationship("GraphSnapshot", back_populates="members")

@@ -39,9 +39,21 @@ aiofiles>=24.1.0
 # Optional: PostgreSQL (Supabase Postgres — active)
 psycopg2-binary>=2.9.9
 
+# Vector similarity search (Application Intelligence: embeddings, memory, coverage)
+# pgvector adds the `vector` column type + similarity ops on the existing Postgres.
+pgvector>=0.3.0
+
 # Auth — Supabase JWT verification via JWKS (ES256)
 python-jose[cryptography]>=3.3.0
 
 # ---------- Enterprise Integrations (unpinned — resolve around SDK) ----------
 resend
 langchain-ollama
+
+# ---------- Embeddings (Application Intelligence, free local default) ----------
+# sentence-transformers powers the zero-cost local embedding provider.
+sentence-transformers>=2.2.0
+
+# ---------- Dev / test (property-based correctness tests) ----------
+pytest>=8.0.0
+hypothesis>=6.100.0

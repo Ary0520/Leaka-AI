@@ -196,6 +196,11 @@ app.add_middleware(
 @app.on_event("startup")
 def _startup():
     init_db()
+    # Run idempotent, additive migrations (pgvector extension, embeddings table,
+    # and later Application Intelligence schema). Guarded internally so a
+    # migration failure never blocks API startup.
+    from .migrations import run_migrations
+    run_migrations()
     pb = settings.PLAYWRIGHT_BROWSERS_PATH
     logger.info(
         "Leaka AI RevGuard API starting — RUN_MODE=%s LLM=%s DB=%s PB=%s",
