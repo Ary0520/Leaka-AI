@@ -221,3 +221,79 @@ class LinearTicketResponse(BaseModel):
     issue_id: Optional[str] = None
     identifier: Optional[str] = None
     title: Optional[str] = None
+
+
+# -------------- Application Intelligence (Explore Mode) --------------
+from .models import ExploreRunStatus
+
+
+class ApplicationCreate(BaseModel):
+    name: str = Field(..., min_length=1)
+    base_url: str = Field(..., min_length=3)
+    description: Optional[str] = None
+    login_hint: Optional[str] = None
+
+
+class ApplicationUpdate(BaseModel):
+    name: Optional[str] = None
+    base_url: Optional[str] = None
+    description: Optional[str] = None
+    login_hint: Optional[str] = None
+
+
+class ApplicationOut(BaseModel):
+    id: int
+    name: str
+    base_url: str
+    description: Optional[str] = None
+    login_hint: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AppMapNodeOut(BaseModel):
+    id: int
+    node_type: str
+    label: str
+    url: Optional[str] = None
+    description: Optional[str] = None
+    suggested_prompt: Optional[str] = None
+    # Coverage cross-reference (filled in Stage C). None = not computed.
+    is_covered: Optional[bool] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ExploreEnqueueResponse(BaseModel):
+    job_id: str
+    task_id: str
+    status: str
+
+
+class ExploreRunStatusResponse(BaseModel):
+    job_id: str
+    task_id: Optional[str] = None
+    application_id: int
+    status: ExploreRunStatus
+    max_steps: Optional[int] = None
+    nodes_found: Optional[int] = None
+    result_summary: Optional[str] = None
+    error_message: Optional[str] = None
+    live_steps: Optional[str] = None
+    visited_urls: Optional[str] = None
+    created_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+
+class ApplicationMapResponse(BaseModel):
+    application: ApplicationOut
+    latest_explore: Optional[ExploreRunStatusResponse] = None
+    nodes: List[AppMapNodeOut] = []
+    total_nodes: int = 0
+    covered_nodes: int = 0
