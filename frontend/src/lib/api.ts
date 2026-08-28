@@ -269,6 +269,84 @@ export interface ApplicationMapResponse {
   covered_nodes: number;
 }
 
+// ---------- Application Graph (Layer 1) ----------
+export interface GraphNodeOut {
+  id: number;
+  canonical_key: string;
+  node_type: string; // page|flow|form|action|role
+  business_category?: string | null;
+  label: string;
+  url_pattern?: string | null;
+  role_association?: string | null;
+  dependencies_incomplete: boolean;
+  status: string; // active|stale
+  semantics?: Record<string, unknown> | null;
+  risk?: Record<string, unknown> | null;
+  manual_overrides?: Record<string, unknown> | null;
+  first_seen_run?: number | null;
+  last_seen_run?: number | null;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface GraphEdgeOut {
+  id: number;
+  source_node_id: number;
+  target_node_id: number;
+  edge_type: string; // navigates_to|contains|requires_role|depends_on|part_of_flow
+  confidence: number;
+  status: string;
+}
+
+export interface GraphResponse {
+  application_id: number;
+  nodes: GraphNodeOut[];
+  edges: GraphEdgeOut[];
+  total_nodes: number;
+  total_edges: number;
+  is_empty: boolean;
+  skip: number;
+  limit: number;
+}
+
+export interface GraphNodeDetail extends GraphNodeOut {
+  provenance?: Record<string, unknown> | null;
+  coverage?: Record<string, unknown> | null; // placeholder until coverage engine
+  memory?: Record<string, unknown> | null;   // placeholder until memory engine
+}
+
+export interface GraphNodeOverride {
+  node_type?: string | null;
+  business_category?: string | null;
+  role_association?: string | null;
+  risk?: Record<string, unknown> | null;
+}
+
+export interface SnapshotOut {
+  id: number;
+  application_id: number;
+  explore_run_id?: number | null;
+  node_count: number;
+  edge_count: number;
+  diff_summary?: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface SnapshotListResponse {
+  application_id: number;
+  snapshots: SnapshotOut[];
+  total: number;
+  skip: number;
+  limit: number;
+}
+
+export interface SnapshotDiffResponse {
+  application_id: number;
+  from_snapshot_id: number;
+  to_snapshot_id: number;
+  diff: Record<string, unknown>;
+}
+
 // ---------- API ----------
 export const api = {
   health: () => request<{ status: string; llm_provider: string; llm_model: string }>("/api/health"),
@@ -521,6 +599,35 @@ export const api = {
     request<ExploreRunStatusResponse>(`/api/explore/status/${jobId}`),
   getApplicationMap: (id: number) =>
     request<ApplicationMapResponse>(`/api/applications/${id}/map`),
+
+  // Application Graph (Layer 1)
+  getApplicationGraph: (
+    id: number,
+    params?: { skip?: number; limit?: number; include_stale?: boolean },
+  ) => {
+    const qs = new URLSearchParams();
+    if (params?.skip != null) qs.set("skip", String(params.skip));
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    if (params?.include_stale != null) qs.set("include_stale", String(params.include_stale));
+    const q = qs.toString();
+    return request<GraphResponse>(`/api/applications/${id}/graph${q ? `?${q}` : ""}`);
+  },
+  getGraphNode: (id: number, nodeId: number) =>
+    request<GraphNodeDetail>(`/api/applications/${id}/graph/nodes/${nodeId}`),
+  overrideGraphNode: (id: number, nodeId: number, body: GraphNodeOverride) =>
+    request<GraphNodeDetail>(`/api/applications/${id}/graph/nodes/${nodeId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  listSnapshots: (id: number, params?: { skip?: number; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.skip != null) qs.set("skip", String(params.skip));
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    const q = qs.toString();
+    return request<SnapshotListResponse>(`/api/applications/${id}/snapshots${q ? `?${q}` : ""}`);
+  },
+  diffSnapshots: (id: number, fromId: number, toId: number) =>
+    request<SnapshotDiffResponse>(`/api/applications/${id}/snapshots/${fromId}/diff/${toId}`),
 };
 
 export const BACKEND_URL = BASE;

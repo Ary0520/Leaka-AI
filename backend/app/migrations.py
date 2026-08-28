@@ -125,6 +125,28 @@ def _m2_graph_tables() -> None:
     logger.info("M2 applied: application graph tables ready.")
 
 
+# ---------------------------------------------------------------------------
+# M3 — Coverage Intelligence tables (Layer 2)
+# ---------------------------------------------------------------------------
+def _m3_coverage_tables() -> None:
+    """
+    Create the Coverage Intelligence tables (coverage_verdicts, coverage_links).
+
+    ORM models → SQLAlchemy emits `CREATE TABLE IF NOT EXISTS` for exactly these
+    tables (checkfirst=True). Idempotent and additive; never touches existing
+    tables. Runs after M2 because these tables FK to graph_nodes.
+    """
+    from .database import Base
+    from . import models  # ensure models are imported/registered on Base
+
+    coverage_tables = [
+        models.CoverageVerdict.__table__,
+        models.CoverageLink.__table__,
+    ]
+    Base.metadata.create_all(bind=engine, tables=coverage_tables, checkfirst=True)
+    logger.info("M3 applied: coverage intelligence tables ready.")
+
+
 def ensure_embeddings_hnsw_index(dim: int, threshold: int = 1000) -> None:
     """
     Lazily create an HNSW cosine index on `embeddings.embedding` once the table
@@ -157,11 +179,41 @@ def ensure_embeddings_hnsw_index(dim: int, threshold: int = 1000) -> None:
 
 
 # ---------------------------------------------------------------------------
+# B1 — Backfill existing AppMapNodes into the Application Graph
+# ---------------------------------------------------------------------------
+def _b1_backfill_graph() -> None:
+    """
+    Upgrade already-explored applications into the persistent graph (R11.2).
+
+    Idempotent + additive: only applications that have AppMapNodes but NO graph
+    nodes are processed; each uses the same pure reconcile() engine + persist
+    path as a live explore, so a re-run is a no-op. It never drops or mutates
+    existing AppMapNode / ExploreRun rows, so the existing `/map` endpoint keeps
+    working throughout. Guarded by run_migrations() so a failure never blocks
+    boot and leaves prior state intact.
+
+    Runs only after M2 (graph tables) has created the tables. On a non-Postgres
+    local DB the graph tables still exist (create_all), so backfill also works
+    there for dev parity.
+    """
+    from .graph_worker import backfill_all_pending
+    summary = backfill_all_pending()
+    logger.info(
+        "B1 applied: backfilled=%s skipped=%s failed=%s",
+        len(summary.get("backfilled", [])),
+        len(summary.get("skipped", [])),
+        len(summary.get("failed", [])),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Public runner
 # ---------------------------------------------------------------------------
 _MIGRATIONS = [
     ("M1_pgvector_and_embeddings", _m1_pgvector_and_embeddings),
     ("M2_graph_tables", _m2_graph_tables),
+    ("M3_coverage_tables", _m3_coverage_tables),
+    ("B1_backfill_graph", _b1_backfill_graph),
 ]
 
 

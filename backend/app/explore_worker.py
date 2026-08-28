@@ -295,6 +295,17 @@ def explore_application(
         },
     )
 
+    # ── Downstream (additive): reconcile discoveries into the Application Graph.
+    # This is a NEW, best-effort step. It never alters the explore result above;
+    # if dispatch or reconciliation fails, the user still has their map. The
+    # graph_worker owns its own transaction, advisory lock, and failure record.
+    try:
+        if run_pk is not None:
+            from .graph_worker import _dispatch_reconcile
+            _dispatch_reconcile(run_pk)
+    except Exception as exc:  # noqa: BLE001 — reconciliation must not affect explore
+        logger.warning("Could not enqueue graph reconciliation (job_id=%s): %s", job_id, exc)
+
     return {
         "job_id": job_id,
         "status": ExploreRunStatus.COMPLETED.value,

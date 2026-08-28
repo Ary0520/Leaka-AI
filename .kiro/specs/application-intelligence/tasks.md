@@ -36,37 +36,37 @@ Tasks are grouped by the design's layers (L0–L5). Each layer is independently 
   - Run migration; verify tables exist
   - _Requirements: 1.1, 1.2, 1.7, 1.10, 11.1_
 
-- [ ] 4. Implement fingerprint computation (`intelligence/fingerprint.py`)
+- [x] 4. Implement fingerprint computation (`intelligence/fingerprint.py`)
   - Implement `url_signature` (strip query/fragment, collapse numeric/UUID path segments to `:id`)
   - Implement `dom_signature`, `aria_signature`, `text_signature` (deterministic hashes of salient structure/roles/text)
   - Implement `compute_canonical_key(discovery)` (primarily url_signature + node_type; fallback to text/aria for URL-less nodes)
   - Implement `identity_match_score(discovery, node)` (weighted combination) returning 0..1
   - _Requirements: 1.2, 2.5_
 
-- [ ]* 4.1 Write property test for fingerprint stability (Property 2)
+- [x]* 4.1 Write property test for fingerprint stability (Property 2)
   - Assert `canonical_key` is invariant across repeated computation and cosmetic text changes that don't alter url/structure
   - _Requirements: 1.2_
 
-- [ ] 5. Implement the reconciliation engine (`intelligence/reconciliation.py`) — pure function
+- [x] 5. Implement the reconciliation engine (`intelligence/reconciliation.py`) — pure function
   - Implement `reconcile(existing_graph, discoveries, run_id) -> ReconcileResult` per the design algorithm (match/new/stale, edge derivation, manual-override re-apply, snapshot build, diff_summary)
   - Implement deterministic edge dedup key `(source, target, edge_type)`
   - Implement `diff_snapshots(a, b)` (added/removed/changed nodes, edge deltas)
   - _Requirements: 1.3, 1.4, 1.5, 1.6, 2.2, 2.3, 2.3a, 2.4, 10.3_
 
-- [ ]* 5.1 Write property tests for reconciliation (Properties 1, 3, 5)
+- [x]* 5.1 Write property tests for reconciliation (Properties 1, 3, 5)
   - Property 1: `reconcile(reconcile(G,D),D)` adds no nodes and empty snapshot diff
   - Property 3: snapshots append-only — no op reduces snapshot count or mutates a frozen member
   - Property 5: after reconcile, any `manual_overrides` field equals the override value
   - _Requirements: 1.6, 1.10, 2.7, 3.5, 10.3_
 
-- [ ] 6. Add `graph_worker.reconcile_explore` and wire `explore_worker` to it
+- [x] 6. Add `graph_worker.reconcile_explore` and wire `explore_worker` to it
   - Create `backend/app/graph_worker.py` with a Celery task `reconcile_explore(explore_run_id)` that: loads discoveries (`AppMapNode`s of the run), loads current graph, calls `reconcile(...)`, persists nodes/edges/fingerprints/snapshot inside one transaction under a Postgres advisory lock on `application_id`
   - Extend `explore_worker.explore_application`: on successful completion, enqueue `reconcile_explore` via the existing `_dispatch_*` mechanism (do not change its current AppMapNode/live-step/status behavior)
   - Register `graph_worker` in `celery_app.autodiscover_tasks`
   - Persist a classified failure reason on reconciliation failure; leave prior graph intact
   - _Requirements: 1.3, 1.4, 10.1, 10.2, 10.7, 11.3_
 
-- [ ] 7. Add owner-scoped graph API endpoints (`main.py`)
+- [x] 7. Add owner-scoped graph API endpoints (`main.py`)
   - `GET /api/applications/{id}/graph` (paginated nodes+edges, active graph), owner-scoped, 404 on mismatch
   - `GET /api/applications/{id}/graph/nodes/{node_id}` (semantics, provenance, risk placeholder, coverage placeholder, memory placeholder)
   - `PATCH /api/applications/{id}/graph/nodes/{node_id}` (manual override of type/category/role/risk, recorded with provenance)
@@ -74,24 +74,24 @@ Tasks are grouped by the design's layers (L0–L5). Each layer is independently 
   - Add matching schemas and frontend `api.ts` methods/types
   - _Requirements: 1.5, 1.8, 2.7, 8.1, 8.3, 9.1, 9.2, 10.6_
 
-- [ ] 8. Backfill `B1` — upgrade existing AppMapNodes into the graph
+- [x] 8. Backfill `B1` — upgrade existing AppMapNodes into the graph
   - Write an idempotent backfill: for each Application with `AppMapNode`s and no graph, synthesize `GraphNode`s (canonical_key from url/label, preserve label/url/description/suggested_prompt) + an initial `GraphSnapshot`
   - Run it; verify the existing SauceDemo application now has a graph and its `/map` still works
   - _Requirements: 11.2, 11.3_
 
 ### Layer 2 — Risk + Coverage
 
-- [ ] 9. Implement the risk engine (`intelligence/risk.py`) — pure, deterministic
+- [x] 9. Implement the risk engine (`intelligence/risk.py`) — pure, deterministic
   - Implement `score_node(node, graph, signals) -> RiskResult` with factors: business_category weight, graph centrality (depends_on/part_of_flow in-degree), role sensitivity, historical failure rate (from signals), owner importance hint
   - Return `{level, score 0..100, factors:[{name, contribution, evidence}]}`; ties broken by canonical_key
   - Ensure `manual_overrides.risk` wins over computed
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.7_
 
-- [ ]* 9.1 Write property test for risk determinism (Property 4)
+- [x]* 9.1 Write property test for risk determinism (Property 4)
   - Assert identical inputs → identical scores; permuting equal-risk node order never changes any score
   - _Requirements: 3.7_
 
-- [ ] 10. Add coverage data model and migration `M3`
+- [x] 10. Add coverage data model and migration `M3`
   - Add models `CoverageVerdict` (node_id, state, confidence, evidence json) and `CoverageLink` (test_case_id, node_id, source generated|manual, orphaned bool), owner+application scoped
   - Write idempotent migration `M3`
   - _Requirements: 4.1, 4.3, 4.9, 11.1_
