@@ -466,3 +466,74 @@ class CoverageLink(Base):
             "application_id", "node_id", "test_case_id", name="uq_coverage_link_dedup",
         ),
     )
+
+
+# ===========================================================================
+# MEMORY (Layer 3) — durable, per-application learned knowledge store.
+# MemoryItem holds the knowledge itself; MemoryWriteQueue is the durable
+# write-back queue for items that couldn't be persisted immediately (R5.5a).
+# Both owner+application scoped like every other resource.
+# ===========================================================================
+
+
+class MemoryItem(Base):
+    """
+    One piece of durable learned knowledge about an application — element
+    fingerprints, preferred locator hierarchies, timing/flakiness observations,
+    auth patterns, historical outcomes (R5.1).
+
+    Kinds: locator | timing | auth_pattern | outcome | fingerprint
+    Each kind's payload is a free-form JSON dict specific to the kind.
+    """
+    __tablename__ = "memory_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(String(64), nullable=True, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=False, index=True)
+    # The graph node this item is about (nullable — some memory is app-global).
+    node_id = Column(Integer, ForeignKey("graph_nodes.id"), nullable=True, index=True)
+
+    # locator | timing | auth_pattern | outcome | fingerprint
+    kind = Column(String(32), nullable=False, index=True)
+    payload = Column(Text, nullable=False)           # JSON-as-text (the learned knowledge)
+    # FK to embeddings table (optional — only kinds that benefit from semantic
+    # retrieval have an embedding). Plain int, no ORM FK to the non-ORM table.
+    embedding_id = Column(Integer, nullable=True)
+    content_hash = Column(String(64), nullable=True, index=True)
+    provenance = Column(Text, nullable=True)         # JSON-as-text: run, model, when
+    version = Column(Integer, nullable=False, default=1)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        # Per-node, one item per (kind, content_hash) to avoid duplicate memories
+        # for unchanged knowledge. content_hash may be NULL for legacy items, so
+        # this index only deduplicates when both are present.
+        UniqueConstraint(
+            "application_id", "node_id", "kind", "content_hash",
+            name="uq_memory_item_dedup",
+        ),
+    )
+
+
+class MemoryWriteQueue(Base):
+    """
+    Durable write-back queue for memory items that could not be persisted
+    immediately (DB/embedder failure, R5.5a). A periodic graph_worker task drains
+    this with retry + backoff so knowledge is never lost, even if the in-flight
+    run that produced it has already completed.
+    """
+    __tablename__ = "memory_write_queue"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(String(64), nullable=True, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=False, index=True)
+
+    # The full MemoryItem payload (JSON-as-text), ready to be re-attempted.
+    payload = Column(Text, nullable=False)
+    attempts = Column(Integer, nullable=False, default=0)
+    # When to next retry (UTC). NULL = retry now.
+    next_retry_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)

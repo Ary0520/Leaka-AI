@@ -147,6 +147,28 @@ def _m3_coverage_tables() -> None:
     logger.info("M3 applied: coverage intelligence tables ready.")
 
 
+# ---------------------------------------------------------------------------
+# M4 — Memory tables (Layer 3)
+# ---------------------------------------------------------------------------
+def _m4_memory_tables() -> None:
+    """
+    Create the Memory tables (memory_items, memory_write_queue).
+
+    ORM models → SQLAlchemy emits `CREATE TABLE IF NOT EXISTS` for exactly these
+    tables (checkfirst=True). Idempotent and additive; never touches existing
+    tables. Runs after M2 because memory_items FKs to graph_nodes.
+    """
+    from .database import Base
+    from . import models  # ensure models are imported/registered on Base
+
+    memory_tables = [
+        models.MemoryItem.__table__,
+        models.MemoryWriteQueue.__table__,
+    ]
+    Base.metadata.create_all(bind=engine, tables=memory_tables, checkfirst=True)
+    logger.info("M4 applied: memory tables ready.")
+
+
 def ensure_embeddings_hnsw_index(dim: int, threshold: int = 1000) -> None:
     """
     Lazily create an HNSW cosine index on `embeddings.embedding` once the table
@@ -213,6 +235,7 @@ _MIGRATIONS = [
     ("M1_pgvector_and_embeddings", _m1_pgvector_and_embeddings),
     ("M2_graph_tables", _m2_graph_tables),
     ("M3_coverage_tables", _m3_coverage_tables),
+    ("M4_memory_tables", _m4_memory_tables),
     ("B1_backfill_graph", _b1_backfill_graph),
 ]
 
