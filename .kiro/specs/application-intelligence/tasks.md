@@ -134,7 +134,7 @@ Tasks are grouped by the design's layers (L0–L5). Each layer is independently 
   - Assert queries by a non-owner return empty/404 across graph, coverage, and memory reads (randomized owner ids)
   - _Requirements: 9.1, 9.2_
 
-- [ ] 15. Wire memory into workers + add transparency endpoint
+- [x] 15. Wire memory into workers + add transparency endpoint
   - In `explore_worker`/`worker`, before acting on a known node, call `memory.retrieve(...)` and inject preferred locators/timing hints into the agent task context
   - After a run, emit memory write-backs (locators that worked, timings, outcomes) with provenance
   - Add `GET /api/applications/{id}/memory` (paginated, owner-scoped, no secrets) + schemas + `api.ts`
@@ -142,12 +142,12 @@ Tasks are grouped by the design's layers (L0–L5). Each layer is independently 
 
 ### Layer 4 — PR Intelligence
 
-- [ ] 16. Add repo/diff/mapping data model and migration `M5`
+- [x] 16. Add repo/diff/mapping data model and migration `M5`
   - Add models `RepoConnection` (provider, repo_full_name, secret_ref, webhook_secret_ref, status, last_error), `CodeDiff` (pr_number, commit_sha, branch, changed_files json, ingest_status), `FlowMapping` (node_id, confidence, signals json, recommended_tests json, coverage_state), owner+application scoped
   - Write idempotent migration `M5`; ensure secret columns store references, never plaintext
   - _Requirements: 6.1, 9.3, 11.1_
 
-- [ ] 17. Implement the GitHub client (`integrations/github_client.py`)
+- [x] 17. Implement the GitHub client (`integrations/github_client.py`)
   - `verify_connection(token, repo)` (auth + reachability) → connected/failed + reason
   - `fetch_pr_files(repo, pr_number)` via GitHub REST (paths + patch hunks)
   - `verify_webhook_signature(raw_body, signature_header, secret)` — HMAC-SHA256 over raw body, timing-safe compare

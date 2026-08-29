@@ -96,11 +96,14 @@ def _settle() -> None:
     import time
     ex = getattr(G, "_SYNC_EXECUTOR", None)
     # Give any just-submitted task a moment to be picked up, then drain.
-    time.sleep(0.2)
+    time.sleep(0.3)
     if ex is not None:
-        # Submit a barrier task and wait — ensures prior tasks completed.
+        # Submit a barrier per worker and wait — the executor has >1 worker,
+        # so one barrier alone doesn't guarantee all in-flight tasks completed.
         try:
-            ex.submit(lambda: None).result(timeout=30)
+            futures = [ex.submit(lambda: None) for _ in range(4)]
+            for f in futures:
+                f.result(timeout=30)
         except Exception:
             pass
 

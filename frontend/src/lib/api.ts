@@ -385,6 +385,25 @@ export interface CoverageResponse {
   limit: number;
 }
 
+// ---------- Memory transparency (Layer 3) ----------
+export interface MemoryItemOut {
+  id: number;
+  kind: string; // locator|timing|auth_pattern|outcome|fingerprint
+  node_id?: number | null;
+  payload: Record<string, unknown>;
+  version: number;
+  provenance?: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface MemoryListResponse {
+  application_id: number;
+  items: MemoryItemOut[];
+  total: number;
+  skip: number;
+  limit: number;
+}
+
 // ---------- API ----------
 export const api = {
   health: () => request<{ status: string; llm_provider: string; llm_model: string }>("/api/health"),
@@ -674,6 +693,19 @@ export const api = {
     if (params?.limit != null) qs.set("limit", String(params.limit));
     const q = qs.toString();
     return request<CoverageResponse>(`/api/applications/${id}/coverage${q ? `?${q}` : ""}`);
+  },
+
+  // Memory transparency (Layer 3)
+  getApplicationMemory: (
+    id: number,
+    params?: { kind?: string; skip?: number; limit?: number },
+  ) => {
+    const qs = new URLSearchParams();
+    if (params?.kind) qs.set("kind", params.kind);
+    if (params?.skip != null) qs.set("skip", String(params.skip));
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    const q = qs.toString();
+    return request<MemoryListResponse>(`/api/applications/${id}/memory${q ? `?${q}` : ""}`);
   },
 };
 

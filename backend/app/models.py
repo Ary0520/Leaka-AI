@@ -537,3 +537,106 @@ class MemoryWriteQueue(Base):
     next_retry_at = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ===========================================================================
+# PR INTELLIGENCE (Layer 4) — connect a repo, ingest diffs, map changes to
+# affected graph nodes + recommended tests. Additive; owner+application scoped.
+#
+# SECURITY (R9.3, non-negotiable): RepoConnection stores only *references* to
+# secrets (secret_ref / webhook_secret_ref) — NEVER the token/secret plaintext.
+# There is deliberately NO plaintext token column on this model, so a secret can
+# never be accidentally persisted or returned by a read API. Resolving a ref to
+# its secret material is the job of the secret mechanism used by the GitHub
+# client / endpoints (Tasks 17–18), which honors the "never returned in
+# plaintext, never shipped to the browser" policy.
+# ===========================================================================
+
+
+class RepoConnection(Base):
+    """A source repository linked to an Application for PR Intelligence."""
+    __tablename__ = "repo_connections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(String(64), nullable=True, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=False, index=True)
+
+    provider = Column(String(32), nullable=False, default="github")   # github (first)
+    repo_full_name = Column(String(255), nullable=False)              # e.g. "org/repo"
+
+    # References to secret material — NEVER plaintext (R9.3). Nullable until set.
+    secret_ref = Column(String(255), nullable=True)
+    webhook_secret_ref = Column(String(255), nullable=True)
+
+    status = Column(String(16), nullable=False, default="connected")  # connected|failed
+    last_error = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        # One connection per (application, provider, repo) — re-connecting the
+        # same repo updates the existing row rather than duplicating.
+        UniqueConstraint(
+            "application_id", "provider", "repo_full_name",
+            name="uq_repo_connection_app_provider_repo",
+        ),
+    )
+
+
+class CodeDiff(Base):
+    """
+    An ingested pull-request / commit diff for a connected repo. Stores the
+    changed file paths + patch hunks needed for diff→flow mapping (R6.3).
+    """
+    __tablename__ = "code_diffs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(String(64), nullable=True, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=False, index=True)
+    repo_connection_id = Column(Integer, ForeignKey("repo_connections.id"), nullable=False, index=True)
+
+    pr_number = Column(String(64), nullable=True, index=True)
+    commit_sha = Column(String(64), nullable=True, index=True)
+    branch = Column(String(255), nullable=True)
+    changed_files = Column(Text, nullable=True)      # JSON-as-text: [{path, patch, ...}]
+    # pending | ingested | failed
+    ingest_status = Column(String(16), nullable=False, default="pending", index=True)
+    # Webhook delivery id for replay dedup (R6.7); unique when present.
+    delivery_id = Column(String(128), nullable=True, index=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("delivery_id", name="uq_code_diff_delivery"),
+    )
+
+
+class FlowMapping(Base):
+    """
+    The result of mapping one CodeDiff to one affected graph node: confidence,
+    the explainable signals that produced it, and the recommended test_case ids
+    (ranked). Deterministic output of the mapping engine (R7.8).
+    """
+    __tablename__ = "flow_mappings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(String(64), nullable=True, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=False, index=True)
+    code_diff_id = Column(Integer, ForeignKey("code_diffs.id"), nullable=False, index=True)
+    node_id = Column(Integer, ForeignKey("graph_nodes.id"), nullable=True, index=True)
+
+    # Stored as int milli (0..1000) to avoid float noise, mirroring coverage.
+    confidence_milli = Column(Integer, nullable=False, default=0)
+    signals = Column(Text, nullable=True)            # JSON-as-text: which signals fired
+    recommended_tests = Column(Text, nullable=True)  # JSON-as-text: ranked test_case ids
+    # covered | uncovered | undetermined
+    coverage_state = Column(String(16), nullable=False, default="undetermined")
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "code_diff_id", "node_id", name="uq_flow_mapping_diff_node",
+        ),
+    )

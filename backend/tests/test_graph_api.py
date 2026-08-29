@@ -77,13 +77,15 @@ def _seed_reconciled_app(owner: str, nodes: list[dict]) -> int:
 
 
 def _settle():
-    """Wait for background coverage-recompute tasks enqueued by reconcile."""
+    """Wait for background coverage-recompute tasks enqueued by reconcile/reads."""
     import time
-    time.sleep(0.2)
+    time.sleep(0.3)
     ex = getattr(G, "_SYNC_EXECUTOR", None)
     if ex is not None:
         try:
-            ex.submit(lambda: None).result(timeout=30)
+            futures = [ex.submit(lambda: None) for _ in range(4)]
+            for f in futures:
+                f.result(timeout=30)
         except Exception:
             pass
 

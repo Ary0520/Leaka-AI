@@ -42,6 +42,7 @@ from .models import (
     SnapshotMember,
     CoverageVerdict,
     CoverageLink,
+    MemoryItem,
     LinearIssue,
     TestCase,
     TestRun,
@@ -72,6 +73,8 @@ from .schemas import (
     CoverageRollupOut,
     CoverageGapOut,
     CoverageResponse,
+    MemoryItemOut,
+    MemoryListResponse,
     LinearTicketResponse,
     ScreenshotOut,
     TestCaseCreate,
@@ -2206,6 +2209,56 @@ def get_application_coverage(
         category_rollups=[_rollup_out(r) for r in sorted(rollups.values(), key=lambda x: x.scope)],
         gaps=gaps_out,
         total_gaps=total_gaps,
+        skip=skip,
+        limit=limit,
+    )
+
+
+# ===========================================================================
+# MEMORY TRANSPARENCY (Layer 3) — "what Leaka knows about this app" (R5.10).
+# Owner-scoped, paginated. Memory holds learned knowledge (locators, timings,
+# outcomes, fingerprints) — never secrets — but we expose only the safe fields.
+# ===========================================================================
+
+
+@app.get("/api/applications/{app_id}/memory", response_model=MemoryListResponse)
+def get_application_memory(
+    app_id: int,
+    kind: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Paginated, owner-scoped view of an application's learned Memory. Filterable
+    by kind (locator|timing|auth_pattern|outcome|fingerprint).
+    """
+    app_row = _get_owned_application(db, app_id, user)
+    limit = max(1, min(limit, 500))
+
+    q = db.query(MemoryItem).filter(MemoryItem.application_id == app_row.id)
+    if kind:
+        q = q.filter(MemoryItem.kind == kind)
+    total = q.count()
+    rows = q.order_by(MemoryItem.id.desc()).offset(skip).limit(limit).all()
+
+    items: list[MemoryItemOut] = []
+    for r in rows:
+        items.append(MemoryItemOut(
+            id=r.id,
+            kind=r.kind,
+            node_id=r.node_id,
+            payload=_parse_json_field(r.payload, default={}) or {},
+            version=r.version or 1,
+            provenance=_parse_json_field(r.provenance),
+            created_at=r.created_at,
+        ))
+
+    return MemoryListResponse(
+        application_id=app_row.id,
+        items=items,
+        total=total,
         skip=skip,
         limit=limit,
     )

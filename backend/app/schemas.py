@@ -424,3 +424,22 @@ class CoverageResponse(BaseModel):
     total_gaps: int = 0
     skip: int = 0
     limit: int = 0
+
+
+# -------------- Memory transparency (Layer 3) --------------
+class MemoryItemOut(BaseModel):
+    id: int
+    kind: str                        # locator|timing|auth_pattern|outcome|fingerprint
+    node_id: Optional[int] = None
+    payload: dict
+    version: int = 1
+    provenance: Optional[dict] = None
+    created_at: datetime
+
+
+class MemoryListResponse(BaseModel):
+    application_id: int
+    items: List[MemoryItemOut] = []
+    total: int = 0
+    skip: int = 0
+    limit: int = 0

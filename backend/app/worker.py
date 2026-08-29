@@ -67,6 +67,114 @@ os.makedirs(SCREENSHOT_ROOT, exist_ok=True)
 
 
 # ---------------------------------------------------------------------------
+# Memory integration (Task 15) — ADDITIVE + FULLY GUARDED.
+# A test run is linked to a graph node via a CoverageLink (test_case → node →
+# application). Before the run we inject learned locator/timing hints; after,
+# we write back the outcome. Every function below is best-effort: any failure
+# is swallowed so the QA run behaves EXACTLY as before.
+# ---------------------------------------------------------------------------
+def _linked_node_for_test(db, test_case_id: Optional[int]):
+    """Return (application_id, node_id, owner_id) for a test's coverage link, or None."""
+    if not test_case_id:
+        return None
+    try:
+        from .models import CoverageLink
+        link = (
+            db.query(CoverageLink)
+            .filter(CoverageLink.test_case_id == test_case_id, CoverageLink.orphaned == False)  # noqa: E712
+            .order_by(CoverageLink.id.desc())
+            .first()
+        )
+        if link is None:
+            return None
+        return (link.application_id, link.node_id, link.owner_id)
+    except Exception:
+        return None
+
+
+def _memory_hints_for_test(test_case_id: Optional[int]) -> Optional[str]:
+    """
+    Build a task-prompt hint block from learned Memory for the node this test is
+    linked to. Returns None (no hint) on any failure — never raises.
+    """
+    if not test_case_id:
+        return None
+    db = SessionLocal()
+    try:
+        linked = _linked_node_for_test(db, test_case_id)
+        if linked is None:
+            return None
+        application_id, node_id, owner_id = linked
+        from . import memory as MEM
+        items = MEM.retrieve(db, application_id, owner_id=owner_id, node_id=node_id, k=8)
+        if not items:
+            return None
+
+        locator_lines: list[str] = []
+        timing_lines: list[str] = []
+        for it in items:
+            if it.kind == "locator":
+                loc = it.payload.get("selector") or it.payload.get("css") or it.payload.get("xpath")
+                if loc:
+                    locator_lines.append(f"- {loc}")
+            elif it.kind == "timing":
+                ms = it.payload.get("ms")
+                if ms:
+                    timing_lines.append(f"- observed ~{ms}ms")
+        if not locator_lines and not timing_lines:
+            return None
+
+        parts = ["\n--- LEAKA MEMORY (learned hints — use if helpful, ignore if stale) ---"]
+        if locator_lines:
+            parts.append("Preferred element locators that worked before:")
+            parts.extend(locator_lines[:6])
+        if timing_lines:
+            parts.append("Observed timing (wait at least this long for async updates):")
+            parts.extend(timing_lines[:3])
+        return "\n".join(parts)
+    except Exception:
+        return None
+    finally:
+        db.close()
+
+
+def _write_run_outcome_memory(
+    test_case_id: Optional[int], *, is_successful: Optional[bool], duration_seconds: int
+) -> None:
+    """
+    After a run, write back an `outcome` (+ `timing`) memory item for the linked
+    node, with provenance. Best-effort; never raises (memory.write also never
+    raises, but we guard the lookup too).
+    """
+    if not test_case_id:
+        return
+    db = SessionLocal()
+    try:
+        linked = _linked_node_for_test(db, test_case_id)
+        if linked is None:
+            return
+        application_id, node_id, owner_id = linked
+        from . import memory as MEM
+        prov = {"source": "test_run", "test_case_id": test_case_id,
+                "at": datetime.utcnow().isoformat()}
+        MEM.write(db, MEM.MemoryWrite(
+            application_id=application_id, kind="outcome", owner_id=owner_id,
+            node_id=node_id, provenance=prov,
+            payload={"passed": bool(is_successful), "duration_seconds": int(duration_seconds)},
+        ))
+        if duration_seconds and duration_seconds > 0:
+            MEM.write(db, MEM.MemoryWrite(
+                application_id=application_id, kind="timing", owner_id=owner_id,
+                node_id=node_id, provenance=prov,
+                payload={"ms": int(duration_seconds) * 1000},
+            ))
+    except Exception:
+        pass
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
 # QA Incident context extractor
 # ---------------------------------------------------------------------------
 
@@ -367,6 +475,13 @@ def run_browser_test(
         "5. If the page shows a success message, report it using "
         "done(success=True, result='<exact success text you see on screen>')."
     )
+
+    # ── Memory hints (additive, fully guarded) ─────────────────────────────
+    # If this test is linked to a graph node (via a CoverageLink), inject any
+    # learned locator/timing hints Leaka has for that node. NEVER fails the run.
+    memory_hint = _memory_hints_for_test(test_case_id)
+    if memory_hint:
+        task_parts.append(memory_hint)
 
     task_text = "\n".join(task_parts)
 
@@ -839,6 +954,12 @@ def run_browser_test(
             TestRunStatus.COMPLETED if is_successful else TestRunStatus.FAILED
         )
         _update_db_status(job_id, status=final_status, patch=patch)
+
+        # Memory write-back (additive, guarded): record the outcome + timing for
+        # the linked graph node so future runs benefit. Never affects this run.
+        _write_run_outcome_memory(
+            test_case_id, is_successful=is_successful, duration_seconds=duration
+        )
 
         # Persist screenshot rows in DB
         if screenshots_persisted:
