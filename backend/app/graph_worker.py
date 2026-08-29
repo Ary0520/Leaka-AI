@@ -769,6 +769,81 @@ def _recent_pass_by_test(db, owner_id: Optional[str], test_ids: list[int]) -> di
     return out
 
 
+def _historical_failure_rates(
+    db, application_id: int, node_ids: list[int],
+) -> dict[int, float]:
+    """
+    Compute a recency-weighted historical failure rate in [0.0, 1.0] per node
+    from its stored `outcome` Memory items (R3.3, R3.6). This is the feedback
+    loop that lets a node that has been FAILING recently accrue higher risk —
+    turning Leaka's learned outcomes into a live risk signal.
+
+    Evidence source: MemoryItem(kind="outcome", payload={"passed": bool, ...}),
+    written after each run by `worker._write_run_outcome_memory`. Memory is
+    already node-scoped and bounded by compaction (latest N outcomes), so this
+    is naturally recency-limited.
+
+    Weighting: newer outcomes (higher id = more recent) count more, via a linear
+    recency weight. A node with no outcome memory is simply absent from the map
+    (the caller then passes historical_failure_rate=None → the risk engine skips
+    the factor entirely, exactly as before). Fully guarded: any error yields an
+    empty map so risk scoring proceeds unchanged (never breaks recompute).
+
+    Deterministic: pure function of the stored rows (ordered by id), no time or
+    randomness — so risk stays reproducible for identical memory state.
+    """
+    if not node_ids:
+        return {}
+    try:
+        from .models import MemoryItem  # local import; graph_worker stays light
+    except Exception:  # noqa: BLE001
+        return {}
+
+    rates: dict[int, float] = {}
+    try:
+        rows = (
+            db.query(MemoryItem)
+            .filter(
+                MemoryItem.application_id == application_id,
+                MemoryItem.kind == "outcome",
+                MemoryItem.node_id.in_(node_ids),
+            )
+            .order_by(MemoryItem.id.asc())
+            .all()
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.info("historical failure rate skipped (app=%s): %s", application_id, exc)
+        return {}
+
+    # Group outcomes per node, in chronological order (id asc).
+    by_node: dict[int, list[bool]] = {}
+    for r in rows:
+        payload = _load_json(r.payload)
+        passed = payload.get("passed")
+        if passed is None:
+            continue
+        by_node.setdefault(r.node_id, []).append(bool(passed))
+
+    for node_id, outcomes in by_node.items():
+        if not outcomes:
+            continue
+        # Linear recency weights: the i-th (0-based) of N outcomes gets weight
+        # (i+1), so the most recent run dominates. failure_rate = weighted mean
+        # of "failed" (passed == False → 1.0).
+        total_w = 0.0
+        fail_w = 0.0
+        n = len(outcomes)
+        for i, passed in enumerate(outcomes):
+            w = float(i + 1)          # oldest=1 … newest=n
+            total_w += w
+            if not passed:
+                fail_w += w
+        if total_w > 0:
+            rate = fail_w / total_w
+            rates[node_id] = max(0.0, min(1.0, round(rate, 6)))
+    return rates
+
+
 def _semantic_similarities(
     db, owner_id: Optional[str], application_id: int,
     nodes: list, tests: list,
@@ -852,6 +927,11 @@ def recompute_coverage(application_id: int, reason: str = "manual") -> dict:
         risk_graph = RISK.RiskGraph.from_edges(
             [(e.source_key, e.target_key, e.edge_type) for e in edges]
         )
+        # Memory→risk feedback loop (R3.3, R3.6): recency-weighted historical
+        # failure rate per node from stored `outcome` memory. Nodes with no
+        # outcome memory are absent → historical_failure_rate stays None (the
+        # risk engine then skips that factor, exactly as before).
+        failure_rates = _historical_failure_rates(db, application_id, [n.id for n in nodes])
         key_risk: dict[str, RISK.RiskResult] = {}
         for n in nodes:
             rn = RISK.RiskNode(
@@ -861,7 +941,10 @@ def recompute_coverage(application_id: int, reason: str = "manual") -> dict:
                 role_association=n.role_association or "unknown",
                 manual_overrides=_load_json(n.manual_overrides),
             )
-            key_risk[n.canonical_key] = RISK.score_node(rn, risk_graph, RISK.RiskSignals())
+            signals = RISK.RiskSignals(
+                historical_failure_rate=failure_rates.get(n.id),
+            )
+            key_risk[n.canonical_key] = RISK.score_node(rn, risk_graph, signals)
 
         # Candidate tests: this owner's test cases (coverage is owner-scoped).
         tests = db.query(TestCase).filter(TestCase.owner_id == owner_id).all() if owner_id else \
