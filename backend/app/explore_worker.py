@@ -227,6 +227,72 @@ def _derive_connects_from_visits(nodes: list, visited: list[str]) -> dict[str, l
     return out
 
 
+def _detect_auth_success(trajectory: list, nodes: list) -> Optional[dict]:
+    """
+    Detect whether the explore run DEMONSTRABLY authenticated, and if so return
+    a compact auth-pattern payload to remember (R5.1 "auth patterns"). Evidence-
+    only: we require the trajectory to pass THROUGH an auth-category page and
+    then reach a NON-auth page afterwards (i.e. the gate was cleared). If that
+    transition never happened, we return None and remember nothing — never
+    fabricate an auth pattern.
+
+    The remembered payload deliberately contains NO credentials — only the
+    observed shape of the successful login (the auth page URL + that a
+    submit/input sequence cleared the gate), which is safe to store and reuse.
+    """
+    try:
+        from .intelligence.relationships import RelNode
+        from .intelligence.fingerprint import normalize_url
+
+        rel_nodes = [
+            RelNode(
+                label=(n.label or "").strip(),
+                url=getattr(n, "url", None),
+                node_type=(n.node_type or "page"),
+                business_category=(getattr(n, "business_category", None)
+                                   or _infer_category(getattr(n, "url", None),
+                                                      getattr(n, "label", None))),
+            )
+            for n in nodes
+        ]
+
+        def _is_auth_url(u: Optional[str]) -> bool:
+            hay = (u or "").lower()
+            return any(k in hay for k in (
+                "login", "signin", "sign-in", "signup", "sign-up", "register",
+                "auth", "session/new", "account/login",
+            ))
+
+        # Auth-category node URLs (normalized) for matching.
+        auth_paths = {
+            normalize_url(n.url) for n in rel_nodes
+            if (n.business_category or "").lower() in ("authentication", "auth") and n.url
+        }
+
+        was_on_auth = False
+        auth_url_seen: Optional[str] = None
+        for step in trajectory:
+            after = getattr(step, "url_after", None)
+            norm_after = normalize_url(after)
+            on_auth = (norm_after in auth_paths) or _is_auth_url(after)
+            if on_auth:
+                was_on_auth = True
+                auth_url_seen = after or auth_url_seen
+            elif was_on_auth and after:
+                # We were on an auth page and now we're on a NON-auth page →
+                # the gate was cleared. That is the success signal.
+                return {
+                    "summary": f"Authenticated via {auth_url_seen or 'the login page'} "
+                               f"then reached {after}",
+                    "pattern": "form_login",
+                    "auth_url": auth_url_seen,
+                    "reached_after_auth": after,
+                }
+        return None
+    except Exception:
+        return None
+
+
 def _extract_trajectory(history) -> list:
     """
     Build the ordered TrajectoryStep list the relationship engine needs, from a
@@ -614,6 +680,30 @@ def explore_application(
             "completed_at": datetime.utcnow(),
         },
     )
+
+    # ── Auth-pattern memory (additive, guarded): if the run demonstrably
+    # authenticated (cleared an auth gate), remember the SHAPE of that login
+    # (never credentials) so future explores/tests reuse it. Evidence-only —
+    # writes nothing if no successful auth transition was observed. Never breaks
+    # the explore.
+    try:
+        auth_pattern = _detect_auth_success(_extract_trajectory(history), nodes)
+        if auth_pattern:
+            from . import memory as MEM
+            _adb = SessionLocal()
+            try:
+                MEM.write(_adb, MEM.MemoryWrite(
+                    application_id=application_id, kind="auth_pattern", owner_id=owner_id,
+                    node_id=None,  # app-level knowledge
+                    provenance={"source": "explore_run", "job_id": job_id,
+                                "at": datetime.utcnow().isoformat()},
+                    payload=auth_pattern,
+                    embed_text=auth_pattern.get("summary"),
+                ))
+            finally:
+                _adb.close()
+    except Exception as exc:  # noqa: BLE001 — memory write must not affect explore
+        logger.warning("Auth-pattern memory skipped (job_id=%s): %s", job_id, exc)
 
     # ── Downstream (additive): reconcile discoveries into the Application Graph.
     # This is a NEW, best-effort step. It never alters the explore result above;

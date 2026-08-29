@@ -35,6 +35,7 @@ from .database import SessionLocal
 from .llm import get_llm
 from .models import (
     LinearIssue,
+    TestCase,
     TestRun,
     TestRunStatus,
     TestScreenshot,
@@ -92,6 +93,130 @@ def _linked_node_for_test(db, test_case_id: Optional[int]):
         return None
 
 
+def _extract_locator_memories(history) -> list[dict]:
+    """
+    Extract the element locators that DEMONSTRABLY WORKED during this run, as a
+    ranked preferred-locator hierarchy (Requirement 5.1: "preferred locator
+    hierarchies"). Pure/best-effort: reads only the agent's own history, never
+    fabricates, and returns [] on any problem so it can never break a run.
+
+    Evidence source (verified against browser-use 0.13.7):
+      history.model_actions() → per-action dicts, each carrying the
+      `interacted_element` (a DOMInteractedElement with x_path, ax_name,
+      attributes, node_name). We keep only interaction actions (click/input/
+      select) — an element the agent actually used to progress the task is, by
+      definition, a locator that worked.
+
+    For each such element we record a STABLE, ranked locator hierarchy, most
+    durable first (self-healing seed for a later spec):
+      1. data-testid / data-test / data-cy   (purpose-built, most stable)
+      2. id                                    (stable when not generated)
+      3. name                                  (stable for form fields)
+      4. role + accessible name (ax_name)      (semantic, survives restyles)
+      5. xpath                                  (last resort, brittle)
+
+    Returns a list of payload dicts ready for MemoryWrite(kind="locator", ...).
+    Deduplicated within the run by (primary locator + element text).
+    """
+    out: list[dict] = []
+    seen: set = set()
+    _INTERACTION_ACTIONS = {
+        "click", "click_element_by_index", "input", "input_text", "type", "fill",
+        "select", "select_dropdown_option", "select_option",
+    }
+    try:
+        actions = history.model_actions() or []
+    except Exception:
+        return out
+
+    for adict in actions:
+        try:
+            if not isinstance(adict, dict):
+                continue
+            # Identify the action name (first non-meta key).
+            meta = {"result", "error", "interacted_element", "step"}
+            names = [k for k in adict if k not in meta]
+            action_name = names[0] if names else None
+            if not action_name or action_name not in _INTERACTION_ACTIONS:
+                continue
+
+            el = adict.get("interacted_element")
+            if el is None:
+                continue
+
+            # Pull element identity signals defensively (dataclass OR dict).
+            def _attr(obj, key):
+                if isinstance(obj, dict):
+                    return obj.get(key)
+                return getattr(obj, key, None)
+
+            attrs = _attr(el, "attributes") or {}
+            if not isinstance(attrs, dict):
+                attrs = {}
+            xpath = _attr(el, "x_path")
+            ax_name = _attr(el, "ax_name")
+            tag = (_attr(el, "node_name") or "").lower() or None
+
+            # Build the ranked locator hierarchy from the strongest signals present.
+            hierarchy: list[dict] = []
+            testid = (
+                attrs.get("data-testid") or attrs.get("data-test")
+                or attrs.get("data-cy") or attrs.get("data-qa")
+            )
+            if testid:
+                hierarchy.append({"strategy": "testid", "value": str(testid)})
+            if attrs.get("id"):
+                hierarchy.append({"strategy": "id", "value": str(attrs["id"])})
+            if attrs.get("name"):
+                hierarchy.append({"strategy": "name", "value": str(attrs["name"])})
+            if ax_name:
+                hierarchy.append({
+                    "strategy": "role_text",
+                    "value": str(ax_name)[:120],
+                    "role": (attrs.get("role") or tag or None),
+                })
+            if xpath:
+                hierarchy.append({"strategy": "xpath", "value": str(xpath)[:400]})
+
+            if not hierarchy:
+                continue  # no usable signal → skip (never fabricate)
+
+            primary = hierarchy[0]
+            dedup_key = (primary["strategy"], primary["value"], (ax_name or "")[:60])
+            if dedup_key in seen:
+                continue
+            seen.add(dedup_key)
+
+            # Human-readable "selector" used by the existing hint builder +
+            # embed text; keep the full ranked hierarchy for future self-healing.
+            display = _locator_display(primary, ax_name, tag)
+            out.append({
+                "selector": display,
+                "hierarchy": hierarchy,
+                "element_text": (ax_name or None),
+                "tag": tag,
+                "action": action_name,
+            })
+        except Exception:
+            continue  # never let one bad action abort extraction
+    return out[:50]  # bound per run
+
+
+def _locator_display(primary: dict, ax_name: Optional[str], tag: Optional[str]) -> str:
+    """A concise human/agent-readable locator string for the strongest strategy."""
+    strat, val = primary.get("strategy"), primary.get("value", "")
+    if strat == "testid":
+        return f'[data-testid="{val}"]'
+    if strat == "id":
+        return f"#{val}"
+    if strat == "name":
+        return f'[name="{val}"]'
+    if strat == "role_text":
+        base = f'{tag or "element"} with text "{val}"'
+        return base
+    return val  # xpath
+
+
 def _memory_hints_for_test(test_case_id: Optional[int]) -> Optional[str]:
     """
     Build a task-prompt hint block from learned Memory for the node this test is
@@ -106,7 +231,24 @@ def _memory_hints_for_test(test_case_id: Optional[int]) -> Optional[str]:
             return None
         application_id, node_id, owner_id = linked
         from . import memory as MEM
-        items = MEM.retrieve(db, application_id, owner_id=owner_id, node_id=node_id, k=8)
+
+        # Semantic query = the test's INTENT (name + prompt). This activates the
+        # genuine retrieval layer (embeddings + pgvector) rather than a pure
+        # identity cache: memory whose meaning matches this test's goal is
+        # surfaced even if it was learned on a sibling node. Degrades to
+        # identity-only automatically when the vector backend is unavailable
+        # (R5.2, R5.9). Best-effort — a lookup failure just yields no hint.
+        query: Optional[str] = None
+        try:
+            tc = db.query(TestCase).filter(TestCase.id == test_case_id).first()
+            if tc is not None:
+                query = " ".join(filter(None, [tc.name, tc.prompt]))[:400] or None
+        except Exception:
+            query = None
+
+        items = MEM.retrieve(
+            db, application_id, owner_id=owner_id, node_id=node_id, query=query, k=8
+        )
         if not items:
             return None
 
@@ -139,12 +281,18 @@ def _memory_hints_for_test(test_case_id: Optional[int]) -> Optional[str]:
 
 
 def _write_run_outcome_memory(
-    test_case_id: Optional[int], *, is_successful: Optional[bool], duration_seconds: int
+    test_case_id: Optional[int], *, is_successful: Optional[bool], duration_seconds: int,
+    locators: Optional[list[dict]] = None,
 ) -> Optional[int]:
     """
-    After a run, write back an `outcome` (+ `timing`) memory item for the linked
-    node, with provenance. Best-effort; never raises (memory.write also never
-    raises, but we guard the lookup too).
+    After a run, write back learned knowledge for the linked node, with
+    provenance (R5.1, R5.5): the run `outcome`, its `timing`, and — when the run
+    SUCCEEDED — the element `locator`s that worked (preferred-locator hierarchy).
+    Best-effort; never raises (memory.write also never raises, but we guard the
+    lookup too).
+
+    Locators are only written on a successful run: a locator that worked while
+    the test still failed is weaker evidence, so we don't teach it as preferred.
 
     Returns the `application_id` the outcome was recorded against (so the caller
     can trigger a risk/coverage recompute per R3.6), or None when there is no
@@ -172,6 +320,27 @@ def _write_run_outcome_memory(
                 node_id=node_id, provenance=prov,
                 payload={"ms": int(duration_seconds) * 1000},
             ))
+
+        # Preferred-locator hierarchy — only teach locators from a PASSING run.
+        if is_successful and locators:
+            for loc in locators:
+                # embed_text drives semantic retrieval: the element's visible
+                # text + selector is what a future run's intent matches against.
+                embed_text = " ".join(filter(None, [
+                    loc.get("element_text"), loc.get("selector"), loc.get("tag"),
+                ])) or loc.get("selector")
+                MEM.write(db, MEM.MemoryWrite(
+                    application_id=application_id, kind="locator", owner_id=owner_id,
+                    node_id=node_id, provenance=prov,
+                    payload={
+                        "selector": loc.get("selector"),
+                        "hierarchy": loc.get("hierarchy"),
+                        "element_text": loc.get("element_text"),
+                        "tag": loc.get("tag"),
+                        "action": loc.get("action"),
+                    },
+                    embed_text=embed_text,
+                ))
         return application_id
     except Exception:
         return None
@@ -932,6 +1101,14 @@ def run_browser_test(
         except Exception:
             steps_log_json = json.dumps({"note": "action_history_unavailable"})
 
+        # Extract the element locators that worked this run (preferred-locator
+        # hierarchy) while `history` is in scope — persisted to Memory below,
+        # only if the run passed. Best-effort; never affects the run.
+        try:
+            learned_locators = _extract_locator_memories(history)
+        except Exception:
+            learned_locators = []
+
         patch: dict[str, Any] = {
             "total_steps": total_steps_count,
             "duration_seconds": duration,
@@ -963,7 +1140,8 @@ def run_browser_test(
         # Memory write-back (additive, guarded): record the outcome + timing for
         # the linked graph node so future runs benefit. Never affects this run.
         _mem_app_id = _write_run_outcome_memory(
-            test_case_id, is_successful=is_successful, duration_seconds=duration
+            test_case_id, is_successful=is_successful, duration_seconds=duration,
+            locators=learned_locators,
         )
         # Feedback loop (R3.6): a completed run is a new risk signal (recent
         # pass/fail + historical failure rate). Recompute coverage+risk for the
