@@ -154,30 +154,30 @@ Tasks are grouped by the design's layers (L0–L5). Each layer is independently 
   - Ensure ingested code is never executed; parsing/AST only, and any interpretation runs sandboxed (no network/fs-write/process-spawn)
   - _Requirements: 6.1, 6.2, 6.3, 6.6, 6.7, 9.4, 9.5_
 
-- [ ] 18. Add repo connection + webhook endpoints (`main.py`)
+- [x] 18. Add repo connection + webhook endpoints (`main.py`)
   - `POST /api/applications/{id}/repo` (token in body → stored as secret ref, verify, never echoed), `GET` (status only, masked), `DELETE`
   - `POST /api/webhooks/github` — read raw body, verify signature, dedupe delivery id (reject replays), enqueue `repo_worker.ingest_diff`
   - Record an audit entry for repo connect/disconnect/secret set
   - Add schemas + `api.ts`
   - _Requirements: 6.1, 6.2, 6.7, 9.3, 9.5, 9.6_
 
-- [ ]* 18.1 Write property test for webhook authenticity (Property 12)
+- [x]* 18.1 Write property test for webhook authenticity (Property 12)
   - Assert mismatched-HMAC payloads always rejected; replayed delivery ids always rejected
   - _Requirements: 6.7, 9.5_
 
-- [ ] 19. Implement diff→flow mapping (`intelligence/mapping.py`) — deterministic
+- [x] 19. Implement diff→flow mapping (`intelligence/mapping.py`) — deterministic
   - Implement `map_diff(diff, graph, coverage) -> list[FlowMapping]` using route correspondence, component→page association (from memory/graph), semantic similarity; each mapping records its signals
   - Translate affected nodes → recommended `test_case` ids via coverage links, ranked by node risk; include the `changed file → node → test` chain
   - Handle no-coverage warning (high-confidence if coverage exists & uncovered; `undetermined` if coverage never computed)
   - Handle empty graph ("no recommendations — explore first") vs stale graph (conservative low-confidence + suggest re-explore) distinctly
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.6, 7.7, 7.8_
 
-- [ ]* 19.1 Write property tests for mapping (Properties 9, 10)
+- [x]* 19.1 Write property tests for mapping (Properties 9, 10)
   - Property 9: `map_diff` deterministic — identical inputs → identical ordering
   - Property 10: empty graph → "no recommendations available", never a fabricated list
   - _Requirements: 7.7, 7.8_
 
-- [ ] 20. Add `repo_worker` + recommendation endpoints + CI integration
+- [x] 20. Add `repo_worker` + recommendation endpoints + CI integration
   - Create `repo_worker.py` with `ingest_diff(...)` (fetch/persist changed files, classified failure, no partial writes) and `map_diff(code_diff_id)` (runs mapping, persists FlowMappings); register in autodiscover
   - `GET /api/applications/{id}/diffs` and `GET /api/applications/{id}/diffs/{diff_id}/recommendation` (affected flows + recommended tests + chains)
   - `POST /api/applications/{id}/diffs/{diff_id}/run` → dispatch recommended tests via the existing CI/run path
@@ -185,7 +185,7 @@ Tasks are grouped by the design's layers (L0–L5). Each layer is independently 
 
 ### Layer 5 — UX
 
-- [ ] 21. Build the Application Graph + Coverage UI
+- [x] 21. Build the Application Graph + Coverage UI
   - Extend the application detail page: visual graph grouped by business_category and risk (nodes with risk badges, navigable edges), drill-in panel showing semantics, risk explanation (factors), coverage verdict (evidence), memory summary
   - Add the prioritized Coverage Gaps view with one-click "generate test" (records authoritative coverage link)
   - Show snapshot diff ("since last explore: +3 flows, −1, ~2") and live progress during explore/reconcile

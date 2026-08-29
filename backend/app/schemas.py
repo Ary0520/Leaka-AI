@@ -443,3 +443,85 @@ class MemoryListResponse(BaseModel):
     total: int = 0
     skip: int = 0
     limit: int = 0
+
+
+# -------------- PR Intelligence: repo connection (Layer 4) --------------
+class RepoConnectRequest(BaseModel):
+    """Connect a repo. `token` and `webhook_secret` are write-only secrets."""
+    provider: str = "github"
+    repo_full_name: str = Field(..., min_length=3)   # "owner/repo"
+    token: str = Field(..., min_length=1)            # stored as secret ref, never echoed
+    webhook_secret: Optional[str] = None             # stored as secret ref, never echoed
+
+
+class RepoStatusOut(BaseModel):
+    """
+    Repo connection status — NEVER includes token/webhook_secret. `secret_set`
+    and `webhook_secret_set` are booleans only; `masked_*` are constant masks.
+    """
+    id: int
+    application_id: int
+    provider: str
+    repo_full_name: str
+    status: str                      # connected | failed
+    last_error: Optional[str] = None
+    secret_set: bool = False
+    webhook_secret_set: bool = False
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+
+class WebhookAck(BaseModel):
+    received: bool
+    detail: str
+    diff_id: Optional[int] = None
+
+
+# -------------- PR Intelligence: diffs + recommendations (Layer 4) --------------
+class CodeDiffOut(BaseModel):
+    id: int
+    application_id: int
+    pr_number: Optional[str] = None
+    commit_sha: Optional[str] = None
+    branch: Optional[str] = None
+    ingest_status: str
+    changed_file_count: int = 0
+    created_at: datetime
+
+
+class CodeDiffListResponse(BaseModel):
+    application_id: int
+    diffs: List[CodeDiffOut] = []
+    total: int = 0
+    skip: int = 0
+    limit: int = 0
+
+
+class FlowMappingOut(BaseModel):
+    node_id: Optional[int] = None
+    canonical_key: Optional[str] = None
+    label: Optional[str] = None
+    confidence: float
+    signals: List[dict] = []
+    recommended_test_ids: List[int] = []
+    coverage_state: str
+    risk_score: int = 0
+    risk_level: str = "Trivial"
+    chain: dict = {}
+    no_coverage_warning: bool = False
+    suggested_prompt: Optional[str] = None
+
+
+class DiffRecommendationResponse(BaseModel):
+    application_id: int
+    diff_id: int
+    status: str                       # ok | no_graph | stale | pending
+    message: str
+    mappings: List[FlowMappingOut] = []
+    recommended_test_ids: List[int] = []
+
+
+class DiffRunResponse(BaseModel):
+    message: str
+    diff_id: int
+    job_ids: List[str] = []

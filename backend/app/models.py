@@ -244,6 +244,20 @@ class AppMapNode(Base):
     label = Column(String(500), nullable=False)         # human name, e.g. "Checkout"
     url = Column(String(2048), nullable=True)            # where it lives, if known
     description = Column(Text, nullable=True)            # what it does
+    # Business function the explorer observed (authentication|billing|checkout|
+    # onboarding|account|navigation|content|search|other). NULL = unclassified.
+    # Feeds graph node business_category → risk weighting.
+    business_category = Column(String(64), nullable=True)
+    # Labels of OTHER discovered nodes this one navigates to (JSON list of
+    # strings). Evidence for deriving navigates_to edges at reconcile time.
+    connects_to = Column(Text, nullable=True)
+    # Labels of nodes this one DEPENDS ON — a precondition the explorer actually
+    # hit a gate for (JSON list). Evidence for depends_on edges → graph
+    # centrality → blast-radius risk. NULL/[] when none observed.
+    depends_on = Column(Text, nullable=True)
+    # For flow nodes: ordered labels of the steps composing the flow (JSON
+    # list). Evidence for part_of_flow edges → centrality. NULL for non-flows.
+    flow_steps = Column(Text, nullable=True)
     # Suggested test prompt the explorer drafted for this node (used by the
     # "generate test" one-click). NULL if none drafted.
     suggested_prompt = Column(Text, nullable=True)

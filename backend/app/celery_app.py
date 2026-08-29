@@ -29,4 +29,6 @@ celery_app.conf.update(
 )
 
 # Ensure our tasks modules are discovered
-celery_app.autodiscover_tasks(["app.worker", "app.explore_worker", "app.graph_worker"])
+celery_app.autodiscover_tasks([
+    "app.worker", "app.explore_worker", "app.graph_worker", "app.repo_worker",
+])
