@@ -404,6 +404,76 @@ export interface MemoryListResponse {
   limit: number;
 }
 
+// ---------- PR Intelligence: repo connection (Layer 4) ----------
+export interface RepoConnectRequest {
+  provider?: string; // "github"
+  repo_full_name: string; // "owner/repo"
+  token: string; // write-only; never returned
+  webhook_secret?: string | null; // write-only; never returned
+}
+
+export interface RepoStatusOut {
+  id: number;
+  application_id: number;
+  provider: string;
+  repo_full_name: string;
+  status: string; // connected | failed
+  last_error?: string | null;
+  secret_set: boolean;
+  webhook_secret_set: boolean;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface CodeDiffOut {
+  id: number;
+  application_id: number;
+  pr_number?: string | null;
+  commit_sha?: string | null;
+  branch?: string | null;
+  ingest_status: string;
+  changed_file_count: number;
+  created_at: string;
+}
+
+export interface CodeDiffListResponse {
+  application_id: number;
+  diffs: CodeDiffOut[];
+  total: number;
+  skip: number;
+  limit: number;
+}
+
+export interface FlowMappingOut {
+  node_id?: number | null;
+  canonical_key?: string | null;
+  label?: string | null;
+  confidence: number;
+  signals: Record<string, unknown>[];
+  recommended_test_ids: number[];
+  coverage_state: string;
+  risk_score: number;
+  risk_level: string;
+  chain: Record<string, unknown>;
+  no_coverage_warning: boolean;
+  suggested_prompt?: string | null;
+}
+
+export interface DiffRecommendationResponse {
+  application_id: number;
+  diff_id: number;
+  status: string; // ok | no_graph | stale | pending | failed
+  message: string;
+  mappings: FlowMappingOut[];
+  recommended_test_ids: number[];
+}
+
+export interface DiffRunResponse {
+  message: string;
+  diff_id: number;
+  job_ids: string[];
+}
+
 // ---------- API ----------
 export const api = {
   health: () => request<{ status: string; llm_provider: string; llm_model: string }>("/api/health"),
@@ -707,6 +777,34 @@ export const api = {
     const q = qs.toString();
     return request<MemoryListResponse>(`/api/applications/${id}/memory${q ? `?${q}` : ""}`);
   },
+
+  // PR Intelligence: repo connection (Layer 4). Secrets are write-only.
+  connectRepo: (id: number, body: RepoConnectRequest) =>
+    request<RepoStatusOut>(`/api/applications/${id}/repo`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  getRepo: (id: number) =>
+    request<RepoStatusOut | null>(`/api/applications/${id}/repo`),
+  disconnectRepo: (id: number) =>
+    request<void>(`/api/applications/${id}/repo`, { method: "DELETE" }),
+
+  // PR Intelligence: diffs + recommendations (Layer 4)
+  listDiffs: (id: number, params?: { skip?: number; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.skip != null) qs.set("skip", String(params.skip));
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    const q = qs.toString();
+    return request<CodeDiffListResponse>(`/api/applications/${id}/diffs${q ? `?${q}` : ""}`);
+  },
+  getDiffRecommendation: (id: number, diffId: number) =>
+    request<DiffRecommendationResponse>(
+      `/api/applications/${id}/diffs/${diffId}/recommendation`,
+    ),
+  runDiffRecommendation: (id: number, diffId: number) =>
+    request<DiffRunResponse>(`/api/applications/${id}/diffs/${diffId}/run`, {
+      method: "POST",
+    }),
 };
 
 export const BACKEND_URL = BASE;

@@ -207,6 +207,86 @@ def _discoveries(db, explore_run_id: int) -> list[Discovery]:
     return [Discovery.from_app_map_node(n) for n in rows]
 
 
+def _evidence_from_app_map_nodes(rows) -> tuple[list, dict]:
+    """
+    From a run's AppMapNodes, derive:
+      - edge_evidence: navigates_to edges resolved from each node's `connects_to`
+        (label list) → the canonical_key of the target node with that label.
+        Only edges to labels that ACTUALLY exist in this run are emitted — never
+        fabricated (R2.2/R2.3).
+      - category_by_key: {canonical_key -> business_category} the explorer observed.
+
+    Both operate in canonical_key space (computed identically to reconcile()).
+    Returns (edge_evidence, category_by_key).
+    """
+    import json as _json
+    from .intelligence.fingerprint import compute_canonical_key
+
+    # Build label → canonical_key and key → category maps for this run.
+    key_by_label: dict[str, str] = {}
+    category_by_key: dict[str, str] = {}
+    disc_by_row = []
+    for n in rows:
+        disc = Discovery.from_app_map_node(n)
+        key = compute_canonical_key(disc)
+        disc_by_row.append((n, disc, key))
+        lbl = (n.label or "").strip().lower()
+        if lbl:
+            key_by_label.setdefault(lbl, key)  # first node with a label wins
+        cat = (getattr(n, "business_category", None) or "").strip().lower()
+        if cat:
+            category_by_key.setdefault(key, cat)
+
+    edge_evidence: list = []
+    seen_edges: set = set()  # (source_key, target_key, edge_type)
+
+    def _labels(raw) -> list[str]:
+        if not raw:
+            return []
+        try:
+            v = _json.loads(raw) if isinstance(raw, str) else raw
+        except Exception:
+            return []
+        return [str(x) for x in v] if isinstance(v, list) else []
+
+    def _add_edge(src_key: str, tgt_key: str, edge_type: str) -> None:
+        if not tgt_key or tgt_key == src_key:
+            return  # target must exist in this run; no self-loops
+        dedup = (src_key, tgt_key, edge_type)
+        if dedup in seen_edges:
+            return
+        seen_edges.add(dedup)
+        edge_evidence.append(
+            R.EdgeEvidence(source_key=src_key, target_key=tgt_key, edge_type=edge_type)
+        )
+
+    for n, disc, src_key in disc_by_row:
+        # navigates_to: this node → each node it links to.
+        for t in _labels(getattr(n, "connects_to", None)):
+            tgt = key_by_label.get(t.strip().lower())
+            if tgt:
+                _add_edge(src_key, tgt, "navigates_to")
+
+        # depends_on: this node → each precondition it observed. In-degree of a
+        # node's depends_on = "how many flows depend on it" → drives centrality
+        # (blast radius). Direction: dependent(source) → dependency(target).
+        for t in _labels(getattr(n, "depends_on", None)):
+            tgt = key_by_label.get(t.strip().lower())
+            if tgt:
+                _add_edge(src_key, tgt, "depends_on")
+
+        # part_of_flow: each step → the flow it composes. In-degree of the flow
+        # = number of steps → the flow accrues centrality (it "contains" risk).
+        # (src_key here is the flow node; emit step→flow so the flow gains
+        # in-degree, matching the risk engine's centrality direction.)
+        for step_lbl in _labels(getattr(n, "flow_steps", None)):
+            step_key = key_by_label.get(step_lbl.strip().lower())
+            if step_key:
+                _add_edge(step_key, src_key, "part_of_flow")
+
+    return edge_evidence, category_by_key
+
+
 def _load_json(val) -> dict:
     if not val:
         return {}
@@ -248,14 +328,21 @@ def reconcile_explore(explore_run_id: int) -> dict:
 
         existing_nodes = _existing_nodes(db, application_id)
         existing_edges = _existing_edges(db, application_id)
-        discoveries = _discoveries(db, explore_run_id)
+        run_rows = (
+            db.query(AppMapNode)
+            .filter(AppMapNode.explore_run_id == explore_run_id)
+            .all()
+        )
+        discoveries = [Discovery.from_app_map_node(n) for n in run_rows]
+        edge_evidence, category_by_key = _evidence_from_app_map_nodes(run_rows)
         previous_members = _load_previous_members(db, application_id)
 
         result = R.reconcile(
             existing_nodes,
             existing_edges,
             discoveries,
-            edge_evidence=None,  # flat explorer captures no relationships yet
+            edge_evidence=edge_evidence,       # navigates_to from observed connects_to
+            category_by_key=category_by_key,   # observed business categories
             previous_members=previous_members,
         )
 
@@ -339,16 +426,24 @@ def backfill_application_graph(application_id: int) -> dict:
 
         existing_nodes = _existing_nodes(db, application_id)
         existing_edges = _existing_edges(db, application_id)
-        discoveries = _discoveries_for_application(db, application_id)
+        all_rows = (
+            db.query(AppMapNode)
+            .filter(AppMapNode.application_id == application_id)
+            .order_by(AppMapNode.id.asc())
+            .all()
+        )
+        discoveries = [Discovery.from_app_map_node(n) for n in all_rows]
         if not discoveries:
             return {"status": "skipped", "reason": "no_app_map_nodes"}
+        edge_evidence, category_by_key = _evidence_from_app_map_nodes(all_rows)
         previous_members = _load_previous_members(db, application_id)
 
         result = R.reconcile(
             existing_nodes,
             existing_edges,
             discoveries,
-            edge_evidence=None,
+            edge_evidence=edge_evidence,
+            category_by_key=category_by_key,
             previous_members=previous_members,
         )
 

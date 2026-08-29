@@ -171,6 +171,9 @@ def test_node_override_is_authoritative_and_audited():
     _as(OWNER_A)
     try:
         app_id = _seed_reconciled_app(OWNER_A, [{"label": "Billing", "url": "https://s.com/billing"}])
+        # Let the background coverage/risk recompute (enqueued by reconcile)
+        # finish BEFORE we PATCH, so it can't race-clobber our override.
+        _settle()
         g = client.get(f"/api/applications/{app_id}/graph").json()
         node_id = g["nodes"][0]["id"]
 

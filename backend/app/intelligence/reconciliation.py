@@ -201,6 +201,7 @@ def reconcile(
     *,
     edge_evidence: Optional[list[EdgeEvidence]] = None,
     previous_members: Optional[list[SnapshotMemberState]] = None,
+    category_by_key: Optional[dict[str, str]] = None,
 ) -> ReconcileResult:
     """
     Merge `discoveries` into the existing graph. Pure and deterministic.
@@ -211,11 +212,17 @@ def reconcile(
       discoveries:      this run's raw discoveries (fingerprint.Discovery).
       edge_evidence:    optional relationship evidence; only these produce edges.
       previous_members: the previous snapshot's frozen members (for diffing).
+      category_by_key:  optional {canonical_key -> business_category} observed by
+                        the explorer. Applied to NEW nodes and to matched nodes
+                        that don't yet have a category. `Discovery` stays pure
+                        (identity only); category is carried as separate evidence
+                        — mirroring how edge_evidence is passed in.
 
     Returns a ReconcileResult the caller persists inside one transaction.
     """
     edge_evidence = edge_evidence or []
     previous_members = previous_members or []
+    category_by_key = category_by_key or {}
 
     # Index existing ACTIVE nodes by canonical_key for O(1) match/lookup, and
     # keep a stable, canonical-key-sorted list for deterministic iteration.
@@ -268,12 +275,17 @@ def reconcile(
                 or (prior.aria_signature or None) != (fp.aria_signature or None)
             )
 
+            # Keep the existing category, but fill it from this run's observed
+            # category when the node doesn't have one yet (don't overwrite a
+            # previously-observed category; overrides still win below).
+            observed_cat = category_by_key.get(key) or category_by_key.get(best_key)
+            base_cat = existing.business_category or observed_cat
             # New computed metadata from the discovery, then overrides win.
             nt, lbl, urlp, bcat, role = _apply_overrides(
                 node_type=node_type,
                 label=(discovery.label or existing.label),
                 url_pattern=(fp.url_signature or existing.url_pattern),
-                business_category=existing.business_category,
+                business_category=base_cat,
                 role_association=existing.role_association,
                 overrides=existing.manual_overrides,
             )
@@ -294,7 +306,7 @@ def reconcile(
                 node_type=node_type,
                 label=(discovery.label or ""),
                 url_pattern=(fp.url_signature or None),
-                business_category=None,
+                business_category=category_by_key.get(key),  # observed category
                 role_association="unknown",
                 overrides={},  # brand-new node has no overrides yet
             )

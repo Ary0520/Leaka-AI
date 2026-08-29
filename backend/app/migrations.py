@@ -196,6 +196,47 @@ def _m5_repo_tables() -> None:
     logger.info("M5 applied: PR intelligence tables ready.")
 
 
+# ---------------------------------------------------------------------------
+# M6 — enrich app_map_nodes with business_category + connects_to
+# ---------------------------------------------------------------------------
+def _m6_app_map_node_enrichment() -> None:
+    """
+    Add relationship/category columns to the EXISTING `app_map_nodes` table so
+    the explorer can persist observed categories, navigation, DEPENDENCIES, and
+    flow composition — which feed graph edges + centrality-based risk.
+
+    create_all cannot add columns to an existing table, so we emit guarded
+    ADD COLUMNs. Idempotent + additive on both Postgres and SQLite:
+      - Postgres supports `ADD COLUMN IF NOT EXISTS`.
+      - SQLite has no IF NOT EXISTS for columns, so we check pragma first.
+    Never drops or alters existing columns.
+    """
+    from sqlalchemy import inspect
+
+    cols_to_add = {
+        "business_category": "VARCHAR(64)",
+        "connects_to": "TEXT",
+        "depends_on": "TEXT",
+        "flow_steps": "TEXT",
+    }
+
+    if _is_postgres():
+        with engine.begin() as conn:
+            for name, ddl in cols_to_add.items():
+                conn.execute(text(
+                    f"ALTER TABLE app_map_nodes ADD COLUMN IF NOT EXISTS {name} {ddl}"
+                ))
+    else:
+        # SQLite (local dev): check existing columns, add only if missing.
+        insp = inspect(engine)
+        existing = {c["name"] for c in insp.get_columns("app_map_nodes")}
+        with engine.begin() as conn:
+            for name, ddl in cols_to_add.items():
+                if name not in existing:
+                    conn.execute(text(f"ALTER TABLE app_map_nodes ADD COLUMN {name} {ddl}"))
+    logger.info("M6 applied: app_map_nodes enriched (business_category, connects_to).")
+
+
 def ensure_embeddings_hnsw_index(dim: int, threshold: int = 1000) -> None:
     """
     Lazily create an HNSW cosine index on `embeddings.embedding` once the table
@@ -264,6 +305,7 @@ _MIGRATIONS = [
     ("M3_coverage_tables", _m3_coverage_tables),
     ("M4_memory_tables", _m4_memory_tables),
     ("M5_repo_tables", _m5_repo_tables),
+    ("M6_app_map_node_enrichment", _m6_app_map_node_enrichment),
     ("B1_backfill_graph", _b1_backfill_graph),
 ]
 

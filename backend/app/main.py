@@ -43,6 +43,9 @@ from .models import (
     CoverageVerdict,
     CoverageLink,
     MemoryItem,
+    RepoConnection,
+    CodeDiff,
+    FlowMapping,
     LinearIssue,
     TestCase,
     TestRun,
@@ -75,6 +78,14 @@ from .schemas import (
     CoverageResponse,
     MemoryItemOut,
     MemoryListResponse,
+    RepoConnectRequest,
+    RepoStatusOut,
+    WebhookAck,
+    CodeDiffOut,
+    CodeDiffListResponse,
+    FlowMappingOut,
+    DiffRecommendationResponse,
+    DiffRunResponse,
     LinearTicketResponse,
     ScreenshotOut,
     TestCaseCreate,
@@ -1969,6 +1980,18 @@ def override_graph_node(
     db.commit()
     db.refresh(node)
 
+    _audit("graph_node_override", owner_id=user.get("sub"), app=app_row.id,
+           node=node.id, fields=",".join(incoming.keys()))
+
+    # Recompute coverage/risk on manual override (R3.6): the engines honor
+    # manual_overrides, so this makes the persisted state converge on the
+    # override even if a recompute was mid-flight. Best-effort, never blocks.
+    try:
+        from .graph_worker import _dispatch_recompute_coverage
+        _dispatch_recompute_coverage(app_row.id, reason="manual_override")
+    except Exception:  # noqa: BLE001
+        pass
+
     base = _graph_node_out(node)
     return GraphNodeDetail(
         **base.model_dump(),
@@ -2261,4 +2284,428 @@ def get_application_memory(
         total=total,
         skip=skip,
         limit=limit,
+    )
+
+
+# ===========================================================================
+# PR INTELLIGENCE — repo connection + webhook endpoints (Layer 4).
+#
+# SECURITY (R9.3): tokens/webhook secrets arrive in the request body, are
+# immediately converted to encrypted secret REFS via secrets_store, and are
+# NEVER returned by any read endpoint (only `*_set` booleans + masks). Webhook
+# deliveries are HMAC-verified over the RAW body and deduped by delivery id
+# (R6.7, R9.5). Security-relevant actions are audit-logged (R9.6).
+# ===========================================================================
+
+
+def _audit(action: str, *, owner_id: Optional[str], **fields) -> None:
+    """Emit a security audit log line (R9.6). Structured, greppable, no secrets."""
+    detail = " ".join(f"{k}={v}" for k, v in fields.items())
+    logger.info("AUDIT action=%s owner=%s %s", action, owner_id, detail)
+
+
+def _repo_status_out(conn: RepoConnection) -> RepoStatusOut:
+    from .secrets_store import is_ref
+    return RepoStatusOut(
+        id=conn.id,
+        application_id=conn.application_id,
+        provider=conn.provider,
+        repo_full_name=conn.repo_full_name,
+        status=conn.status,
+        last_error=conn.last_error,
+        secret_set=is_ref(conn.secret_ref),
+        webhook_secret_set=is_ref(conn.webhook_secret_ref),
+        created_at=conn.created_at,
+        updated_at=conn.updated_at,
+    )
+
+
+@app.post("/api/applications/{app_id}/repo", response_model=RepoStatusOut)
+def connect_repo(
+    app_id: int,
+    body: RepoConnectRequest,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Connect (or re-connect) a source repository. The token is verified against
+    GitHub, then stored ONLY as an encrypted secret ref — never persisted or
+    returned in plaintext (R9.3). Re-connecting the same repo updates the row.
+    """
+    app_row = _get_owned_application(db, app_id, user)
+    owner_id = user["sub"]
+
+    from .integrations import github_client as GH
+    from .secrets_store import store_secret
+
+    provider = (body.provider or "github").strip().lower()
+    if provider != "github":
+        raise HTTPException(400, "Only 'github' is supported currently.")
+
+    # Verify token + repo reachability BEFORE storing anything.
+    verify = GH.verify_connection(body.token, body.repo_full_name)
+
+    # Upsert the connection row (unique per app+provider+repo).
+    conn = (
+        db.query(RepoConnection)
+        .filter(RepoConnection.application_id == app_row.id,
+                RepoConnection.provider == provider,
+                RepoConnection.repo_full_name == body.repo_full_name)
+        .first()
+    )
+    if conn is None:
+        conn = RepoConnection(
+            owner_id=owner_id, application_id=app_row.id,
+            provider=provider, repo_full_name=body.repo_full_name,
+        )
+        db.add(conn)
+
+    # Store secrets as encrypted refs (never plaintext).
+    conn.secret_ref = store_secret(body.token)
+    if body.webhook_secret:
+        conn.webhook_secret_ref = store_secret(body.webhook_secret)
+    conn.status = "connected" if verify.get("connected") else "failed"
+    conn.last_error = None if verify.get("connected") else verify.get("reason")
+    db.commit()
+    db.refresh(conn)
+
+    _audit("repo_connect", owner_id=owner_id, app=app_row.id,
+           repo=body.repo_full_name, status=conn.status,
+           webhook_secret_set=bool(body.webhook_secret))
+
+    return _repo_status_out(conn)
+
+
+@app.get("/api/applications/{app_id}/repo", response_model=Optional[RepoStatusOut])
+def get_repo(app_id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    """Return the repo connection status (masked — never any secret). None if unconnected."""
+    app_row = _get_owned_application(db, app_id, user)
+    conn = (
+        db.query(RepoConnection)
+        .filter(RepoConnection.application_id == app_row.id)
+        .order_by(RepoConnection.id.desc())
+        .first()
+    )
+    if conn is None:
+        return None
+    return _repo_status_out(conn)
+
+
+@app.delete("/api/applications/{app_id}/repo", status_code=status.HTTP_204_NO_CONTENT)
+def disconnect_repo(app_id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    """Disconnect the repo. Removes the connection (and its encrypted secret refs)."""
+    app_row = _get_owned_application(db, app_id, user)
+    conns = db.query(RepoConnection).filter(RepoConnection.application_id == app_row.id).all()
+    for conn in conns:
+        db.delete(conn)
+    db.commit()
+    _audit("repo_disconnect", owner_id=user["sub"], app=app_row.id, removed=len(conns))
+    return None
+
+
+@app.post("/api/webhooks/github", response_model=WebhookAck)
+async def github_webhook(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Inbound GitHub webhook. Verifies the HMAC-SHA256 signature over the RAW body
+    using the connection's stored webhook secret, dedupes by delivery id (reject
+    replays), and enqueues diff ingestion. Unauthenticated/replayed/malformed
+    deliveries are rejected (R6.7, R9.5).
+
+    NOTE: this endpoint is intentionally NOT behind get_current_user — GitHub
+    authenticates via the HMAC signature, not a user JWT.
+    """
+    import json as _json
+    from .integrations import github_client as GH
+    from .secrets_store import resolve_secret_ref
+
+    # 1. Read the RAW body BEFORE any parsing (signature is over raw bytes).
+    raw_body = await request.body()
+    signature = request.headers.get("X-Hub-Signature-256")
+    delivery_id = request.headers.get("X-GitHub-Delivery")
+    event = request.headers.get("X-GitHub-Event", "")
+
+    # 2. Parse payload (as untrusted data) to find the target repo.
+    try:
+        payload = _json.loads(raw_body.decode("utf-8")) if raw_body else {}
+    except Exception:
+        raise HTTPException(400, "Malformed webhook payload.")
+
+    repo_full_name = (
+        (payload.get("repository") or {}).get("full_name")
+        if isinstance(payload, dict) else None
+    )
+    if not repo_full_name:
+        raise HTTPException(400, "Webhook payload missing repository.full_name.")
+
+    # 3. Find the connection for this repo (any tenant — the HMAC secret is the
+    #    authenticator here). We do NOT reveal existence on failure.
+    conn = (
+        db.query(RepoConnection)
+        .filter(RepoConnection.repo_full_name == repo_full_name)
+        .order_by(RepoConnection.id.desc())
+        .first()
+    )
+    if conn is None or not conn.webhook_secret_ref:
+        # No connection or no configured secret → cannot authenticate → reject.
+        raise HTTPException(401, "Webhook not authenticated.")
+
+    secret = resolve_secret_ref(conn.webhook_secret_ref)
+    if not secret or not GH.verify_webhook_signature(raw_body, signature, secret):
+        _audit("webhook_rejected", owner_id=conn.owner_id, repo=repo_full_name,
+               reason="signature_mismatch", delivery=delivery_id)
+        raise HTTPException(401, "Webhook signature verification failed.")
+
+    # 4. Replay dedup by delivery id (unique constraint on CodeDiff.delivery_id).
+    if delivery_id:
+        existing = db.query(CodeDiff).filter(CodeDiff.delivery_id == delivery_id).first()
+        if existing is not None:
+            return WebhookAck(received=True, detail="Duplicate delivery ignored.",
+                              diff_id=existing.id)
+
+    # 5. Only act on PR / push events; ack others.
+    if event not in ("pull_request", "push"):
+        return WebhookAck(received=True, detail=f"Event '{event}' acknowledged (no action).")
+
+    # 6. Extract identifiers and persist a pending CodeDiff, then enqueue ingest.
+    pr_number = None
+    commit_sha = None
+    branch = None
+    if event == "pull_request":
+        pr = payload.get("pull_request") or {}
+        pr_number = str(payload.get("number") or pr.get("number") or "") or None
+        commit_sha = (pr.get("head") or {}).get("sha")
+        branch = (pr.get("head") or {}).get("ref")
+    elif event == "push":
+        commit_sha = payload.get("after")
+        ref = payload.get("ref") or ""
+        branch = ref.rsplit("/", 1)[-1] if ref else None
+
+    diff = CodeDiff(
+        owner_id=conn.owner_id, application_id=conn.application_id,
+        repo_connection_id=conn.id, pr_number=pr_number, commit_sha=commit_sha,
+        branch=branch, ingest_status="pending", delivery_id=delivery_id,
+    )
+    db.add(diff)
+    db.commit()
+    db.refresh(diff)
+
+    _audit("webhook_accepted", owner_id=conn.owner_id, repo=repo_full_name,
+           event=event, delivery=delivery_id, diff_id=diff.id)
+
+    # Enqueue ingestion. repo_worker lands in Task 20; until then the pending
+    # CodeDiff is recorded and can be ingested once the worker exists. Never
+    # fail the webhook on dispatch problems.
+    try:
+        from . import repo_worker  # noqa: F401 — may not exist until Task 20
+        repo_worker._dispatch_ingest(diff.id)  # type: ignore[attr-defined]
+    except Exception:
+        logger.info("repo_worker not available yet; diff %s left pending.", diff.id)
+
+    return WebhookAck(received=True, detail="Accepted for ingestion.", diff_id=diff.id)
+
+
+# ===========================================================================
+# PR INTELLIGENCE — diffs + recommendations (Layer 4). Owner-scoped.
+# ===========================================================================
+
+
+def _owned_diff(db: Session, app_row: "Application", diff_id: int) -> CodeDiff:
+    d = (
+        db.query(CodeDiff)
+        .filter(CodeDiff.id == diff_id, CodeDiff.application_id == app_row.id)
+        .first()
+    )
+    if not d:
+        raise HTTPException(404, "Diff not found")
+    return d
+
+
+@app.get("/api/applications/{app_id}/diffs", response_model=CodeDiffListResponse)
+def list_diffs(
+    app_id: int,
+    skip: int = 0,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """List ingested diffs for an application, newest first (paginated)."""
+    app_row = _get_owned_application(db, app_id, user)
+    limit = max(1, min(limit, 200))
+    q = db.query(CodeDiff).filter(CodeDiff.application_id == app_row.id)
+    total = q.count()
+    rows = q.order_by(CodeDiff.id.desc()).offset(skip).limit(limit).all()
+
+    def _count_files(d: CodeDiff) -> int:
+        parsed = _parse_json_field(d.changed_files, default=[])
+        return len(parsed) if isinstance(parsed, list) else 0
+
+    return CodeDiffListResponse(
+        application_id=app_row.id,
+        diffs=[CodeDiffOut(
+            id=d.id, application_id=d.application_id, pr_number=d.pr_number,
+            commit_sha=d.commit_sha, branch=d.branch, ingest_status=d.ingest_status,
+            changed_file_count=_count_files(d), created_at=d.created_at,
+        ) for d in rows],
+        total=total, skip=skip, limit=limit,
+    )
+
+
+@app.get(
+    "/api/applications/{app_id}/diffs/{diff_id}/recommendation",
+    response_model=DiffRecommendationResponse,
+)
+def get_diff_recommendation(
+    app_id: int,
+    diff_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Affected flows + recommended tests + explain chains for a diff (R7.1, R7.6).
+    Reads persisted FlowMappings (produced by repo_worker.map_code_diff).
+    """
+    app_row = _get_owned_application(db, app_id, user)
+    diff = _owned_diff(db, app_row, diff_id)
+
+    if diff.ingest_status == "pending":
+        return DiffRecommendationResponse(
+            application_id=app_row.id, diff_id=diff.id, status="pending",
+            message="Diff is still being ingested — check back shortly.",
+        )
+    if diff.ingest_status == "failed":
+        err = _parse_json_field(diff.changed_files, default={})
+        reason = err.get("error") if isinstance(err, dict) else "ingestion failed"
+        return DiffRecommendationResponse(
+            application_id=app_row.id, diff_id=diff.id, status="failed",
+            message=f"Ingestion failed: {reason}",
+        )
+
+    rows = db.query(FlowMapping).filter(FlowMapping.code_diff_id == diff.id).all()
+
+    # Labels for the affected nodes.
+    node_ids = [r.node_id for r in rows if r.node_id is not None]
+    label_by_id: dict = {}
+    key_by_id: dict = {}
+    if node_ids:
+        for n in db.query(GraphNode).filter(GraphNode.id.in_(node_ids)).all():
+            label_by_id[n.id] = n.label
+            key_by_id[n.id] = n.canonical_key
+
+    # Determine overall status: no active graph → no_graph.
+    has_graph = db.query(GraphNode.id).filter(
+        GraphNode.application_id == app_row.id, GraphNode.status == "active"
+    ).first() is not None
+
+    mappings_out: list[FlowMappingOut] = []
+    flat: list[int] = []
+    seen: set[int] = set()
+    # Rank by risk desc, canonical_key asc (deterministic, mirrors the engine).
+    rows_sorted = sorted(
+        rows,
+        key=lambda r: (-(_parse_json_field(_node_risk(db, r.node_id), default={}) or {}).get("score", 0),
+                       key_by_id.get(r.node_id, "")),
+    )
+    for r in rows_sorted:
+        risk = _parse_json_field(_node_risk(db, r.node_id), default={}) or {}
+        rec = _parse_json_field(r.recommended_tests, default=[]) or []
+        signals = _parse_json_field(r.signals, default=[]) or []
+        mappings_out.append(FlowMappingOut(
+            node_id=r.node_id,
+            canonical_key=key_by_id.get(r.node_id),
+            label=label_by_id.get(r.node_id),
+            confidence=(r.confidence_milli or 0) / 1000.0,
+            signals=signals,
+            recommended_test_ids=rec,
+            coverage_state=r.coverage_state,
+            risk_score=int(risk.get("score", 0) or 0),
+            risk_level=str(risk.get("level", "Trivial")),
+            chain={"node": key_by_id.get(r.node_id), "covering_tests": rec},
+            no_coverage_warning=(len(rec) == 0),
+            suggested_prompt=None,
+        ))
+        for tid in rec:
+            if tid not in seen:
+                seen.add(tid)
+                flat.append(tid)
+
+    if not has_graph:
+        status_s, msg = "no_graph", "No recommendations available — explore this application first."
+    elif not rows:
+        status_s, msg = "ok", "No affected flows mapped for this diff."
+    else:
+        status_s, msg = "ok", f"{len(mappings_out)} affected flow(s)."
+
+    return DiffRecommendationResponse(
+        application_id=app_row.id, diff_id=diff.id, status=status_s, message=msg,
+        mappings=mappings_out, recommended_test_ids=flat,
+    )
+
+
+def _node_risk(db: Session, node_id: Optional[int]):
+    if node_id is None:
+        return None
+    n = db.query(GraphNode.risk).filter(GraphNode.id == node_id).first()
+    return n[0] if n else None
+
+
+@app.post(
+    "/api/applications/{app_id}/diffs/{diff_id}/run",
+    response_model=DiffRunResponse,
+)
+def run_diff_recommendation(
+    app_id: int,
+    diff_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Dispatch the diff's recommended tests via the existing run path (R7.5).
+    Reuses the same TestRun + _dispatch_run_task flow as the CI webhook.
+    """
+    app_row = _get_owned_application(db, app_id, user)
+    diff = _owned_diff(db, app_row, diff_id)
+    owner_id = user["sub"]
+
+    # Gather recommended test ids from persisted FlowMappings (deduped).
+    rows = db.query(FlowMapping).filter(FlowMapping.code_diff_id == diff.id).all()
+    ids: list[int] = []
+    seen: set[int] = set()
+    for r in rows:
+        for tid in (_parse_json_field(r.recommended_tests, default=[]) or []):
+            if tid not in seen:
+                seen.add(tid)
+                ids.append(tid)
+
+    job_ids: list[str] = []
+    for tc_id in ids:
+        tc = db.query(TestCase).filter(
+            TestCase.id == tc_id, TestCase.owner_id == owner_id
+        ).first()
+        if not tc:
+            continue  # owner-scoped: never run another tenant's test
+        job_id = uuid.uuid4().hex
+        run = TestRun(
+            job_id=job_id, owner_id=owner_id, test_case_id=tc.id,
+            name=f"[PR] {tc.name}", prompt=tc.prompt, target_url=tc.target_url,
+            success_criteria=tc.success_criteria, assertions=tc.assertions,
+            status=TestRunStatus.PENDING,
+        )
+        db.add(run)
+        db.flush()
+        task_id = _dispatch_run_task(
+            job_id=job_id, name=run.name, prompt=tc.prompt,
+            target_url=tc.target_url or "", success_criteria=tc.success_criteria,
+            use_vision=True, max_steps=50, test_case_id=tc.id,
+        )
+        run.task_id = task_id
+        job_ids.append(job_id)
+
+    db.commit()
+    _audit("diff_run", owner_id=owner_id, app=app_row.id, diff=diff.id, runs=len(job_ids))
+    return DiffRunResponse(
+        message=f"Enqueued {len(job_ids)} recommended test run(s) for diff {diff.id}.",
+        diff_id=diff.id, job_ids=job_ids,
     )
