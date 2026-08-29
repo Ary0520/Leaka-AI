@@ -110,6 +110,68 @@ def test_outcome_writeback_and_hint_roundtrip():
         _cleanup(OWNER)
 
 
+def test_passing_run_writes_locator_memory_end_to_end():
+    """A PASSING run's extracted locators are persisted as kind='locator'."""
+    try:
+        app_id, node_id, tc_id = _seed_linked_test(OWNER)
+        locators = [
+            {"selector": '[data-testid="login-btn"]',
+             "hierarchy": [{"strategy": "testid", "value": "login-btn"}],
+             "element_text": "Log in", "tag": "button", "action": "click"},
+        ]
+        W._write_run_outcome_memory(
+            tc_id, is_successful=True, duration_seconds=3, locators=locators
+        )
+        db = SessionLocal()
+        try:
+            locs = db.query(MemoryItem).filter(
+                MemoryItem.application_id == app_id,
+                MemoryItem.node_id == node_id,
+                MemoryItem.kind == "locator",
+            ).all()
+            assert len(locs) == 1
+            import json as _json
+            payload = _json.loads(locs[0].payload)
+            assert payload["selector"] == '[data-testid="login-btn"]'
+            assert payload["hierarchy"][0]["strategy"] == "testid"
+        finally:
+            db.close()
+
+        # And the hint builder surfaces it for the linked test.
+        hint = W._memory_hints_for_test(tc_id)
+        assert hint is not None and '[data-testid="login-btn"]' in hint
+    finally:
+        _cleanup(OWNER)
+
+
+def test_failing_run_does_not_teach_locators():
+    """A FAILED run must NOT write locator memory (weaker evidence, R5.1)."""
+    try:
+        app_id, node_id, tc_id = _seed_linked_test(OWNER)
+        locators = [
+            {"selector": "#maybe-wrong", "hierarchy": [{"strategy": "id", "value": "maybe-wrong"}],
+             "element_text": "X", "tag": "button", "action": "click"},
+        ]
+        W._write_run_outcome_memory(
+            tc_id, is_successful=False, duration_seconds=1, locators=locators
+        )
+        db = SessionLocal()
+        try:
+            locs = db.query(MemoryItem).filter(
+                MemoryItem.application_id == app_id, MemoryItem.kind == "locator",
+            ).all()
+            assert locs == []                 # no locators taught from a failure
+            # But the outcome (failure) IS recorded → feeds risk.
+            outcomes = db.query(MemoryItem).filter(
+                MemoryItem.application_id == app_id, MemoryItem.kind == "outcome",
+            ).all()
+            assert len(outcomes) == 1
+        finally:
+            db.close()
+    finally:
+        _cleanup(OWNER)
+
+
 def test_hint_is_none_for_unlinked_test():
     # A test with no coverage link → no hint, no error.
     db = SessionLocal()
