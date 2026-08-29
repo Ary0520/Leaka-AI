@@ -1793,7 +1793,18 @@ def _parse_json_field(val, default=None):
         return default
 
 
-def _graph_node_out(n: GraphNode) -> GraphNodeOut:
+def _graph_node_out(
+    n: GraphNode, verdict: "Optional[CoverageVerdict]" = None
+) -> GraphNodeOut:
+    """
+    Serialize a GraphNode for the API. When the node's latest CoverageVerdict is
+    passed, its state/confidence are attached so the graph view can color nodes
+    by coverage; absent a verdict they stay None (honest "undetermined").
+    """
+    coverage_state = verdict.state if verdict is not None else None
+    coverage_confidence = (
+        (verdict.confidence_milli or 0) / 1000.0 if verdict is not None else None
+    )
     return GraphNodeOut(
         id=n.id,
         canonical_key=n.canonical_key,
@@ -1807,6 +1818,8 @@ def _graph_node_out(n: GraphNode) -> GraphNodeOut:
         semantics=_parse_json_field(n.semantics),
         risk=_parse_json_field(n.risk),
         manual_overrides=_parse_json_field(n.manual_overrides),
+        coverage_state=coverage_state,
+        coverage_confidence=coverage_confidence,
         first_seen_run=n.first_seen_run,
         last_seen_run=n.last_seen_run,
         created_at=n.created_at,
@@ -1852,9 +1865,25 @@ def get_application_graph(
     # is_empty reflects whether ANY graph exists (not whether this page is empty).
     any_node = db.query(GraphNode.id).filter(GraphNode.application_id == app_row.id).first()
 
+    # Join the latest CoverageVerdict for the nodes on THIS page only (bounded),
+    # so the graph view can color each node by its computed coverage. Nodes
+    # without a verdict simply keep coverage_state=None (honest "undetermined").
+    page_node_ids = [n.id for n in nodes]
+    verdict_by_node: dict[int, CoverageVerdict] = {}
+    if page_node_ids:
+        for v in (
+            db.query(CoverageVerdict)
+            .filter(
+                CoverageVerdict.application_id == app_row.id,
+                CoverageVerdict.node_id.in_(page_node_ids),
+            )
+            .all()
+        ):
+            verdict_by_node[v.node_id] = v
+
     return GraphResponse(
         application_id=app_row.id,
-        nodes=[_graph_node_out(n) for n in nodes],
+        nodes=[_graph_node_out(n, verdict_by_node.get(n.id)) for n in nodes],
         edges=[
             GraphEdgeOut(
                 id=e.id,
@@ -1872,6 +1901,60 @@ def get_application_graph(
         skip=skip,
         limit=limit,
     )
+
+
+def _node_coverage_detail(verdict: "Optional[CoverageVerdict]") -> Optional[dict]:
+    """
+    Build the explainable coverage object for a node's detail view from its
+    stored CoverageVerdict (R4.8). Returns None when no verdict has been
+    computed yet — the UI shows an honest "not yet computed" state rather than
+    a fabricated verdict.
+    """
+    if verdict is None:
+        return None
+    evidence = _parse_json_field(verdict.evidence, default=[]) or []
+    return {
+        "state": verdict.state,
+        "confidence": (verdict.confidence_milli or 0) / 1000.0,
+        "evidence": evidence if isinstance(evidence, list) else [],
+        "updated_at": verdict.updated_at.isoformat() if verdict.updated_at else None,
+    }
+
+
+def _node_memory_summary(db: Session, application_id: int, node_id: int) -> Optional[dict]:
+    """
+    Summarize what Leaka has learned about a specific node (R5.10) for the node
+    detail view: counts per memory kind + a few most-recent human-readable
+    items. Owner scope is already enforced by the caller (app is owner-verified
+    and MemoryItem is application-scoped). Returns None when nothing is learned
+    yet so the UI can show an honest empty state.
+    """
+    rows = (
+        db.query(MemoryItem)
+        .filter(
+            MemoryItem.application_id == application_id,
+            MemoryItem.node_id == node_id,
+        )
+        .order_by(MemoryItem.id.desc())
+        .limit(50)
+        .all()
+    )
+    if not rows:
+        return None
+
+    counts: dict[str, int] = {}
+    recent: list[dict] = []
+    for r in rows:
+        counts[r.kind] = counts.get(r.kind, 0) + 1
+        if len(recent) < 8:
+            payload = _parse_json_field(r.payload, default={}) or {}
+            recent.append({
+                "kind": r.kind,
+                "version": r.version or 1,
+                "payload": payload,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            })
+    return {"counts": counts, "total": len(rows), "recent": recent}
 
 
 def _get_owned_graph_node(db: Session, app_row: "Application", node_id: int) -> GraphNode:
@@ -1897,14 +1980,25 @@ def get_graph_node(
     user: dict = Depends(get_current_user),
 ):
     """
-    Node detail: semantics + provenance + manual overrides now; risk, coverage,
-    and memory are returned as null placeholders until their engines (Tasks
-    9–15) exist — we never fabricate intelligence we haven't computed.
+    Node detail: semantics, provenance, manual overrides, and the node's real
+    computed coverage verdict + learned memory summary. Each is derived only
+    from persisted engine output (CoverageVerdict / MemoryItem); when nothing
+    has been computed yet the field is null (honest — never fabricated).
     """
     app_row = _get_owned_application(db, app_id, user)
     node = _get_owned_graph_node(db, app_row, node_id)
 
-    base = _graph_node_out(node)
+    # Latest coverage verdict for this node (attached to base + detail).
+    verdict = (
+        db.query(CoverageVerdict)
+        .filter(
+            CoverageVerdict.application_id == app_row.id,
+            CoverageVerdict.node_id == node.id,
+        )
+        .first()
+    )
+
+    base = _graph_node_out(node, verdict)
     provenance = {
         "first_seen_run": node.first_seen_run,
         "last_seen_run": node.last_seen_run,
@@ -1914,8 +2008,8 @@ def get_graph_node(
     return GraphNodeDetail(
         **base.model_dump(),
         provenance=provenance,
-        coverage=None,   # Task 11/12
-        memory=None,     # Task 14/15
+        coverage=_node_coverage_detail(verdict),
+        memory=_node_memory_summary(db, app_row.id, node.id),
     )
 
 

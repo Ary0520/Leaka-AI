@@ -254,17 +254,50 @@ function Empty({ children }: { children: React.ReactNode }) {
   return <p className="text-xs text-muted-foreground italic">{children}</p>;
 }
 
+type CoverageEvidence = { signal?: string; detail?: Record<string, unknown> };
+
 function CoverageBlock({ coverage }: { coverage: Record<string, unknown> | null }) {
-  // The node-detail endpoint returns coverage as a placeholder (null) until the
-  // coverage engine has run for this node; show an honest state.
+  // The node-detail endpoint returns the node's real CoverageVerdict (state,
+  // confidence, evidence) or null when nothing has been computed yet.
   if (!coverage) {
     return <Empty>Coverage not yet computed — check the Coverage tab.</Empty>;
   }
   const state = (coverage.state as string) || "undetermined";
   const cov = coverageMeta(state);
+  const confidence = typeof coverage.confidence === "number" ? coverage.confidence : null;
+  const evidence = Array.isArray(coverage.evidence) ? (coverage.evidence as CoverageEvidence[]) : [];
+
+  const signalLabel: Record<string, string> = {
+    explicit_link: "Linked test",
+    route: "Route match",
+    semantic: "Semantic match",
+  };
+
   return (
-    <div className={cn("rounded-md px-3 py-2 text-xs", cov.bg)}>
-      <span className={cn("font-medium", cov.text)}>{cov.label}</span>
+    <div className="space-y-2">
+      <div className={cn("flex items-center justify-between rounded-md px-3 py-2 text-xs", cov.bg)}>
+        <span className={cn("font-medium", cov.text)}>{cov.label}</span>
+        {confidence != null && (
+          <span className="font-mono text-muted-foreground">{Math.round(confidence * 100)}% confidence</span>
+        )}
+      </div>
+      {evidence.length > 0 ? (
+        <ul className="space-y-1">
+          {evidence.slice(0, 6).map((e, i) => (
+            <li key={i} className="flex items-center gap-2 text-[11px] text-muted-foreground">
+              <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/50 shrink-0" />
+              <span className="font-medium text-foreground">{signalLabel[e.signal || ""] || e.signal || "signal"}</span>
+              {e.detail?.test_case_id != null && <span>· test #{String(e.detail.test_case_id)}</span>}
+              {e.detail?.last_run_passed === false && <span className="text-destructive">· last run failed</span>}
+              {e.detail?.last_run_passed === true && <span className="text-success">· last run passed</span>}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        state === "uncovered" && (
+          <p className="text-[11px] text-muted-foreground italic">No test signals for this node yet.</p>
+        )
+      )}
     </div>
   );
 }

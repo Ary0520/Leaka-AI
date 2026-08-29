@@ -287,6 +287,10 @@ export interface GraphNodeOut {
   semantics?: Record<string, unknown> | null;
   risk?: Record<string, unknown> | null;
   manual_overrides?: Record<string, unknown> | null;
+  // Coverage cross-reference joined at read time by GET /graph and
+  // /graph/nodes/{id}. null = no verdict computed yet (undetermined).
+  coverage_state?: string | null; // covered|partially_covered|uncovered
+  coverage_confidence?: number | null; // [0.0, 1.0]
   first_seen_run?: number | null;
   last_seen_run?: number | null;
   created_at: string;

@@ -323,6 +323,11 @@ class GraphNodeOut(BaseModel):
     semantics: Optional[dict] = None
     risk: Optional[dict] = None
     manual_overrides: Optional[dict] = None
+    # Coverage cross-reference (R4.1, R8.1): the node's latest stored
+    # CoverageVerdict joined at read time so the graph view can color nodes by
+    # coverage. None = no verdict computed yet (honest "undetermined").
+    coverage_state: Optional[str] = None          # covered|partially_covered|uncovered
+    coverage_confidence: Optional[float] = None    # [0.0, 1.0]
     first_seen_run: Optional[int] = None
     last_seen_run: Optional[int] = None
     created_at: datetime
