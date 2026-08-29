@@ -89,6 +89,31 @@ def _update_explore_status(
         db.close()
 
 
+def _explore_memory_hint(application_id: int, owner_id: Optional[str]) -> Optional[str]:
+    """
+    Build an app-level Memory hint (auth patterns Leaka learned) for the explore
+    task. Best-effort — returns None on any failure, never breaks the explore.
+    """
+    db = SessionLocal()
+    try:
+        from . import memory as MEM
+        items = MEM.retrieve(db, application_id, owner_id=owner_id, kind="auth_pattern", k=3)
+        if not items:
+            return None
+        lines = []
+        for it in items:
+            hint = it.payload.get("summary") or it.payload.get("pattern")
+            if hint:
+                lines.append(f"- {hint}")
+        if not lines:
+            return None
+        return "LEAKA MEMORY (auth patterns learned previously):\n" + "\n".join(lines[:3])
+    except Exception:
+        return None
+    finally:
+        db.close()
+
+
 # ---------------------------------------------------------------------------
 # The explore task
 # ---------------------------------------------------------------------------
@@ -161,6 +186,13 @@ def explore_application(
             "",
             f"LOGIN HINT (use only to access authenticated areas): {login_hint}",
         ]
+
+    # Memory hint (additive, guarded): remind the explorer of auth patterns
+    # Leaka already learned for this app. Never fails the explore.
+    mem_hint = _explore_memory_hint(application_id, owner_id)
+    if mem_hint:
+        task_parts += ["", mem_hint]
+
     task_text = "\n".join(task_parts)
 
     async def _run_explore():

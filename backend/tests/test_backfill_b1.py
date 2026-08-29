@@ -75,7 +75,28 @@ def _seed_legacy_app(with_run: bool) -> int:
         db.close()
 
 
+def _settle():
+    """
+    /map and /graph reads (superseded in Task 12) enqueue a background coverage
+    recompute on the graph_worker sync executor, which writes coverage_verdicts
+    rows. Drain those before cleanup so they don't race the FK deletes.
+    """
+    import time
+    time.sleep(0.3)
+    ex = getattr(G, "_SYNC_EXECUTOR", None)
+    if ex is not None:
+        try:
+            # Submit a barrier per worker so ALL in-flight tasks complete
+            # (executor has >1 worker; one barrier alone isn't sufficient).
+            futures = [ex.submit(lambda: None) for _ in range(4)]
+            for f in futures:
+                f.result(timeout=30)
+        except Exception:
+            pass
+
+
 def _cleanup():
+    _settle()
     db = SessionLocal()
     try:
         app_ids = [a.id for a in db.query(Application).filter(Application.owner_id == OWNER).all()]

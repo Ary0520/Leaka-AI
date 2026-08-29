@@ -169,6 +169,33 @@ def _m4_memory_tables() -> None:
     logger.info("M4 applied: memory tables ready.")
 
 
+# ---------------------------------------------------------------------------
+# M5 — PR Intelligence tables (Layer 4)
+# ---------------------------------------------------------------------------
+def _m5_repo_tables() -> None:
+    """
+    Create the PR Intelligence tables (repo_connections, code_diffs,
+    flow_mappings).
+
+    ORM models → SQLAlchemy emits `CREATE TABLE IF NOT EXISTS` for exactly these
+    tables (checkfirst=True). Idempotent and additive; never touches existing
+    tables. Runs after M2 because flow_mappings FKs to graph_nodes.
+
+    Secret columns on repo_connections store references only (R9.3) — the schema
+    has no plaintext token column by design.
+    """
+    from .database import Base
+    from . import models  # ensure models are imported/registered on Base
+
+    repo_tables = [
+        models.RepoConnection.__table__,
+        models.CodeDiff.__table__,
+        models.FlowMapping.__table__,
+    ]
+    Base.metadata.create_all(bind=engine, tables=repo_tables, checkfirst=True)
+    logger.info("M5 applied: PR intelligence tables ready.")
+
+
 def ensure_embeddings_hnsw_index(dim: int, threshold: int = 1000) -> None:
     """
     Lazily create an HNSW cosine index on `embeddings.embedding` once the table
@@ -236,6 +263,7 @@ _MIGRATIONS = [
     ("M2_graph_tables", _m2_graph_tables),
     ("M3_coverage_tables", _m3_coverage_tables),
     ("M4_memory_tables", _m4_memory_tables),
+    ("M5_repo_tables", _m5_repo_tables),
     ("B1_backfill_graph", _b1_backfill_graph),
 ]
 
