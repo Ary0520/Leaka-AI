@@ -140,19 +140,23 @@ def _memory_hints_for_test(test_case_id: Optional[int]) -> Optional[str]:
 
 def _write_run_outcome_memory(
     test_case_id: Optional[int], *, is_successful: Optional[bool], duration_seconds: int
-) -> None:
+) -> Optional[int]:
     """
     After a run, write back an `outcome` (+ `timing`) memory item for the linked
     node, with provenance. Best-effort; never raises (memory.write also never
     raises, but we guard the lookup too).
+
+    Returns the `application_id` the outcome was recorded against (so the caller
+    can trigger a risk/coverage recompute per R3.6), or None when there is no
+    linked node / nothing was written.
     """
     if not test_case_id:
-        return
+        return None
     db = SessionLocal()
     try:
         linked = _linked_node_for_test(db, test_case_id)
         if linked is None:
-            return
+            return None
         application_id, node_id, owner_id = linked
         from . import memory as MEM
         prov = {"source": "test_run", "test_case_id": test_case_id,
@@ -168,8 +172,9 @@ def _write_run_outcome_memory(
                 node_id=node_id, provenance=prov,
                 payload={"ms": int(duration_seconds) * 1000},
             ))
+        return application_id
     except Exception:
-        pass
+        return None
     finally:
         db.close()
 
@@ -957,9 +962,19 @@ def run_browser_test(
 
         # Memory write-back (additive, guarded): record the outcome + timing for
         # the linked graph node so future runs benefit. Never affects this run.
-        _write_run_outcome_memory(
+        _mem_app_id = _write_run_outcome_memory(
             test_case_id, is_successful=is_successful, duration_seconds=duration
         )
+        # Feedback loop (R3.6): a completed run is a new risk signal (recent
+        # pass/fail + historical failure rate). Recompute coverage+risk for the
+        # affected application so the graph reflects it without a re-explore.
+        # Best-effort, guarded — must never affect the run that just finished.
+        if _mem_app_id is not None:
+            try:
+                from .graph_worker import _dispatch_recompute_coverage
+                _dispatch_recompute_coverage(_mem_app_id, reason="run_completed")
+            except Exception:  # noqa: BLE001
+                pass
 
         # Persist screenshot rows in DB
         if screenshots_persisted:
