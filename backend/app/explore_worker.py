@@ -227,6 +227,77 @@ def _derive_connects_from_visits(nodes: list, visited: list[str]) -> dict[str, l
     return out
 
 
+def _extract_trajectory(history) -> list:
+    """
+    Build the ordered TrajectoryStep list the relationship engine needs, from a
+    browser-use AgentHistoryList. Best-effort and fully defensive: any missing
+    field degrades to None and never raises (a failure here must never break the
+    explore — we simply derive fewer relationships).
+
+    Evidence per step (verified against browser-use 0.13.7 AgentHistoryList):
+      - state.url per step  → the URL the action LANDED on (captures redirects).
+      - model_output.action → the action taken; go_to_url carries a target url.
+      - interacted_element.ax_name → visible text of the clicked element.
+    """
+    from .intelligence.relationships import TrajectoryStep
+
+    steps: list = []
+    try:
+        items = list(getattr(history, "history", []) or [])
+    except Exception:
+        return steps
+
+    prev_url: Optional[str] = None
+    for h in items:
+        try:
+            state = getattr(h, "state", None)
+            url_after = getattr(state, "url", None) if state is not None else None
+
+            action_name = ""
+            intended_url: Optional[str] = None
+            element_text: Optional[str] = None
+
+            model_output = getattr(h, "model_output", None)
+            actions = getattr(model_output, "action", None) if model_output else None
+            if actions:
+                first = actions[0]
+                try:
+                    adict = first.model_dump(exclude_none=True, mode="json")
+                except Exception:
+                    adict = {}
+                meta = {"result", "error", "interacted_element", "step"}
+                keys = [k for k in adict if k not in meta]
+                if keys:
+                    action_name = keys[0]
+                    params = adict.get(action_name)
+                    if isinstance(params, dict):
+                        # go_to_url carries the explicit intended target.
+                        intended_url = params.get("url") or params.get("href")
+
+            # Visible text of the element the agent interacted with, if any.
+            try:
+                interacted = getattr(state, "interacted_element", None) if state else None
+                if interacted:
+                    el = interacted[0] if isinstance(interacted, list) else interacted
+                    element_text = getattr(el, "ax_name", None) or getattr(el, "node_value", None)
+            except Exception:
+                element_text = None
+
+            steps.append(TrajectoryStep(
+                url_before=prev_url,
+                url_after=url_after,
+                action=action_name or "",
+                intended_url=intended_url,
+                element_text=element_text,
+            ))
+            if url_after:
+                prev_url = url_after
+        except Exception:
+            # Skip an unparseable step; never abort the whole extraction.
+            continue
+    return steps
+
+
 # ---------------------------------------------------------------------------
 # The explore task
 # ---------------------------------------------------------------------------
@@ -430,6 +501,42 @@ def explore_application(
     # connects_to empty.
     derived_connects = _derive_connects_from_visits(nodes, visited or [])
 
+    # Evidence-based relationship derivation (navigates_to / depends_on /
+    # part_of_flow) from the OBSERVED trajectory. This is the high-value signal
+    # the LLM routinely omits — derived from what the agent demonstrably did,
+    # never fabricated. Used ONLY as a fallback (an LLM-provided value wins).
+    # Fully guarded: any failure yields empty derivations, never breaks explore.
+    derived_depends: dict[str, list[str]] = {}
+    derived_flow_steps: dict[str, list[str]] = {}
+    derived_nav: dict[str, list[str]] = {}
+    try:
+        from .intelligence.relationships import RelNode, derive_relationships
+
+        rel_nodes = [
+            RelNode(
+                label=(n.label or "").strip(),
+                url=getattr(n, "url", None),
+                node_type=(n.node_type or "page"),
+                business_category=(getattr(n, "business_category", None)
+                                   or _infer_category(getattr(n, "url", None),
+                                                      getattr(n, "label", None))),
+            )
+            for n in nodes
+        ]
+        trajectory = _extract_trajectory(history)
+        rel = derive_relationships(trajectory, rel_nodes)
+        derived_depends = rel.depends_on or {}
+        derived_flow_steps = rel.flow_steps or {}
+        derived_nav = rel.connects_to or {}
+        logger.info(
+            "relationship derivation (job_id=%s): +%s navigates_to, +%s depends_on, +%s flows",
+            job_id, sum(len(v) for v in derived_nav.values()),
+            sum(len(v) for v in derived_depends.values()),
+            len(derived_flow_steps),
+        )
+    except Exception as exc:  # noqa: BLE001 — derivation must never break explore
+        logger.warning("Relationship derivation skipped (job_id=%s): %s", job_id, exc)
+
     db = SessionLocal()
     try:
         run_row = db.query(ExploreRun).filter(ExploreRun.job_id == job_id).first()
@@ -455,12 +562,29 @@ def explore_application(
                 vals = getattr(n, attr, None) or []
                 return [str(c).strip() for c in vals if str(c).strip()][:20]
 
+            node_label = (n.label or "").strip()
+
             connects = _labels("connects_to")
-            # Fallback: if the LLM gave no navigation, use the observed visit order.
+            # Fallback (weakest→strongest): if the LLM gave no navigation, prefer
+            # the evidence-based trajectory derivation (real actions), then fall
+            # back to visit-order adjacency.
             if not connects:
-                connects = derived_connects.get((n.label or "").strip(), [])[:20]
+                connects = (
+                    derived_nav.get(node_label)
+                    or derived_connects.get(node_label, [])
+                )[:20]
+
+            # depends_on: the blast-radius signal. LLM value wins; otherwise use
+            # the gate-redirect evidence derived from the trajectory.
             depends = _labels("depends_on")
+            if not depends:
+                depends = derived_depends.get(node_label, [])[:20]
+
+            # flow_steps: LLM value wins; otherwise use the contiguous-flow-run
+            # evidence (only emitted for genuinely multi-step business areas).
             steps = _labels("flow_steps")
+            if not steps:
+                steps = derived_flow_steps.get(node_label, [])[:20]
 
             db.add(AppMapNode(
                 owner_id=owner_id,

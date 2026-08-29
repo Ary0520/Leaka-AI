@@ -28,6 +28,7 @@ import {
   Handle,
   Position,
   BackgroundVariant,
+  MarkerType,
   useReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -72,7 +73,7 @@ function AppGraphNode({ data }: NodeProps) {
   const risk = (n.risk as { level?: string; score?: number } | null) || null;
   const level = risk?.level || "Trivial";
   const rc = riskClasses(level);
-  const cov = coverageMeta((n as { coverage_state?: string }).coverage_state);
+  const cov = coverageMeta(n.coverage_state ?? undefined);
   const stale = n.status === "stale";
   const critical = level === "Critical" || level === "High";
 
@@ -152,32 +153,33 @@ const nodeTypes = { app: AppGraphNode };
 // ---------------------------------------------------------------------------
 // Edge styling — depends_on is the important structural signal.
 // ---------------------------------------------------------------------------
-function edgeStyle(edgeType: string, stale: boolean): { style: React.CSSProperties; animated: boolean } {
+function edgeStyle(
+  edgeType: string,
+  stale: boolean,
+): { style: React.CSSProperties; animated: boolean; markerColor: string } {
   const muted = stale;
   if (edgeType === "depends_on") {
+    const color = muted ? "hsl(var(--destructive) / 0.2)" : "hsl(var(--destructive) / 0.55)";
     return {
       animated: !muted,
-      style: {
-        stroke: muted ? "hsl(var(--destructive) / 0.2)" : "hsl(var(--destructive) / 0.55)",
-        strokeWidth: 2,
-        strokeDasharray: muted ? "4 4" : undefined,
-      },
+      style: { stroke: color, strokeWidth: 2, strokeDasharray: muted ? "4 4" : undefined },
+      markerColor: color,
     };
   }
   if (edgeType === "part_of_flow") {
+    const color = "hsl(var(--primary) / 0.5)";
     return {
       animated: false,
-      style: { stroke: "hsl(var(--primary) / 0.5)", strokeWidth: 2, strokeDasharray: "6 3" },
+      style: { stroke: color, strokeWidth: 2, strokeDasharray: "6 3" },
+      markerColor: color,
     };
   }
   // navigates_to
+  const color = muted ? "hsl(var(--muted-foreground) / 0.15)" : "hsl(var(--muted-foreground) / 0.55)";
   return {
     animated: false,
-    style: {
-      stroke: muted ? "hsl(var(--muted-foreground) / 0.15)" : "hsl(var(--muted-foreground) / 0.35)",
-      strokeWidth: 1.5,
-      strokeDasharray: muted ? "4 4" : undefined,
-    },
+    style: { stroke: color, strokeWidth: 1.5, strokeDasharray: muted ? "4 4" : undefined },
+    markerColor: color,
   };
 }
 
@@ -224,6 +226,14 @@ function Flow({
           type: "smoothstep",
           animated: st.animated,
           style: st.style,
+          // Directional arrowhead — the signature that makes the canvas read as
+          // a workflow flow rather than an undirected web.
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            width: 18,
+            height: 18,
+            color: st.markerColor,
+          },
           label: e.edge_type === "depends_on" ? "depends on" : undefined,
           labelStyle: { fill: "hsl(var(--muted-foreground))", fontSize: 9, fontWeight: 600 },
           labelBgStyle: { fill: "hsl(var(--card))", fillOpacity: 0.9 },
