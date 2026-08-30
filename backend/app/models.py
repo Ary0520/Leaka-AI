@@ -78,6 +78,10 @@ class TestRun(Base):
     duration_seconds = Column(Integer, default=0)
     visited_urls = Column(Text, nullable=True)
 
+    console_logs = Column(Text, nullable=True)
+    har_data = Column(Text, nullable=True)
+    rca_category = Column(String(64), nullable=True)
+
     dom_snapshot = Column(Text, nullable=True)
     steps_log = Column(Text, nullable=True)
     live_steps = Column(Text, nullable=True)   # incremental steps written per-step during run

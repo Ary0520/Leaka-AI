@@ -671,8 +671,11 @@ def run_browser_test(
         from browser_use.browser.session import BrowserSession
         from browser_use.controller.service import Controller
         from browser_use.browser.context import BrowserContext
+        import tempfile
+        import os
 
-        browser_session = BrowserSession(headless=True)
+        har_path = os.path.join(tempfile.gettempdir(), f"har_{job_id}.json")
+        browser_session = BrowserSession(headless=True, record_har_path=har_path)
         controller = Controller()
 
         @controller.action("Recover missing element locator using semantic search. Call this ONLY if you fail to find an element you need.")
@@ -1174,6 +1177,46 @@ def run_browser_test(
         except Exception:
             learned_locators = []
 
+        # --- Root Cause Analysis & Forensic Evidence ---
+        har_data_str: Optional[str] = None
+        rca_category_val: Optional[str] = None
+        
+        # Read the HAR file created by Playwright
+        if os.path.exists(har_path):
+            try:
+                with open(har_path, "r", encoding="utf-8") as f:
+                    har_data_str = f.read()
+                os.remove(har_path)  # Cleanup temp file
+            except Exception:
+                pass
+                
+        # If test failed, invoke RCA
+        if not is_successful:
+            try:
+                from .intelligence import rca
+                err_msg_for_rca = agent_abort_reason or final_result_text or (assertion_results_json if not all_passed else "Unknown failure")
+                last_action_str = json.dumps(actions_flat[-1].get("action", {})) if actions_flat else None
+                
+                rca_result = rca.analyze_failure(
+                    llm=llm,
+                    error_message=str(err_msg_for_rca),
+                    console_logs="", 
+                    har_data=har_data_str or "",
+                    dom_snapshot=dom_html,
+                    last_action=last_action_str
+                )
+                rca_category_val = rca_result.category
+                
+                rca_explanation = f"\n\n🤖 [RCA: {rca_category_val}] {rca_result.explanation}"
+                if agent_abort_reason:
+                    agent_abort_reason += rca_explanation
+                elif final_result_text:
+                    final_result_text += rca_explanation
+                else:
+                    agent_abort_reason = rca_explanation
+            except Exception as e:
+                logger.error(f"RCA failed: {e}")
+
         patch: dict[str, Any] = {
             "total_steps": total_steps_count,
             "duration_seconds": duration,
@@ -1183,6 +1226,8 @@ def run_browser_test(
             "steps_log": steps_log_json,
             "final_result": str(final_result_text) if final_result_text else None,
             "dom_snapshot": dom_html,
+            "har_data": har_data_str,
+            "rca_category": rca_category_val,
             "result_summary": (
                 f"Steps: {total_steps_count} | Duration: {duration}s | "
                 f"Done: {is_done} | Intermediate errors: {any_errors}"
