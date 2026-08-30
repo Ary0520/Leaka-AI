@@ -22,6 +22,7 @@ import {
   Background,
   Controls,
   MiniMap,
+  Panel,
   type Node,
   type Edge,
   type NodeProps,
@@ -65,7 +66,13 @@ const ELK_OPTIONS = {
 // ---------------------------------------------------------------------------
 // Custom node — bold, ported, risk-colored (n8n-style)
 // ---------------------------------------------------------------------------
-type NodeData = { node: GraphNodeOut; selected?: boolean };
+type NodeData = {
+  node: GraphNodeOut;
+  selected?: boolean;
+  // Blast-radius focus states (set while a node is selected):
+  impacted?: boolean;   // this node is a transitive dependent of the selection
+  dimmed?: boolean;     // not the selection and not in its blast radius
+};
 
 function AppGraphNode({ data }: NodeProps) {
   const d = data as unknown as NodeData;
@@ -83,19 +90,29 @@ function AppGraphNode({ data }: NodeProps) {
     <div
       style={{ width: NODE_W }}
       className={cn(
-        "group relative rounded-xl border bg-card text-left overflow-hidden transition-all duration-150",
+        "group relative rounded-xl border bg-card text-left overflow-hidden transition-all duration-200",
         rc.border,
         d.selected
           ? "ring-2 ring-primary shadow-lg shadow-primary/10"
           : "hover:-translate-y-0.5 hover:shadow-lg hover:border-primary/50",
+        // Blast-radius focus: impacted dependents get a warning ring; unrelated
+        // nodes fade back so the impact path is unmistakable.
+        d.impacted && "ring-2 ring-destructive/70 shadow-lg shadow-destructive/10",
+        d.dimmed && "opacity-25 saturate-50",
         stale && "opacity-45 border-dashed",
       )}
     >
       {/* Risk accent bar down the left edge */}
       <div className={cn("absolute left-0 top-0 h-full w-1", rc.dot)} />
       {/* Critical/High ambient glow */}
-      {critical && !stale && (
+      {critical && !stale && !d.dimmed && (
         <div className={cn("absolute -inset-1 rounded-xl opacity-30 blur-lg -z-10", rc.dot)} />
+      )}
+      {/* Blast-radius badge on impacted dependents */}
+      {d.impacted && (
+        <div className="absolute -top-2 -right-2 z-10 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-destructive text-destructive-foreground shadow">
+          at risk
+        </div>
       )}
 
       {/* Ports */}
@@ -149,6 +166,49 @@ function AppGraphNode({ data }: NodeProps) {
 }
 
 const nodeTypes = { app: AppGraphNode };
+
+// ---------------------------------------------------------------------------
+// Blast radius — "if this node breaks, what else breaks?"
+// An edge  A --depends_on--> B  means A depends on B, so if B breaks, A breaks.
+// The blast radius of a selected node S is therefore every node that can REACH
+// S through depends_on / part_of_flow edges (S's transitive dependents). Pure,
+// deterministic BFS over the reverse dependency edges. Returns the set of node
+// ids in the blast radius (excluding S itself) plus the edge ids that connect
+// them, so the canvas can highlight the impact path and dim everything else.
+// ---------------------------------------------------------------------------
+const _IMPACT_EDGE_TYPES = new Set(["depends_on", "part_of_flow"]);
+
+function computeBlastRadius(
+  selectedId: number,
+  edges: GraphEdgeOut[],
+): { nodeIds: Set<number>; edgeIds: Set<number> } {
+  // Reverse adjacency: for each dependency target B, who depends on it (sources)?
+  const dependentsOf = new Map<number, { node: number; edgeId: number }[]>();
+  for (const e of edges) {
+    if (!_IMPACT_EDGE_TYPES.has(e.edge_type)) continue;
+    const arr = dependentsOf.get(e.target_node_id) ?? [];
+    arr.push({ node: e.source_node_id, edgeId: e.id });
+    dependentsOf.set(e.target_node_id, arr);
+  }
+
+  const impactedNodes = new Set<number>();
+  const impactedEdges = new Set<number>();
+  const queue: number[] = [selectedId];
+  const visited = new Set<number>([selectedId]);
+
+  while (queue.length) {
+    const cur = queue.shift() as number;
+    for (const { node, edgeId } of dependentsOf.get(cur) ?? []) {
+      impactedEdges.add(edgeId);
+      if (!visited.has(node)) {
+        visited.add(node);
+        impactedNodes.add(node);
+        queue.push(node);
+      }
+    }
+  }
+  return { nodeIds: impactedNodes, edgeIds: impactedEdges };
+}
 
 // ---------------------------------------------------------------------------
 // Edge styling — depends_on is the important structural signal.
@@ -283,15 +343,70 @@ function Flow({
     };
   }, [baseNodes, baseEdges, fitView]);
 
-  // Reflect selection into node data.
+  // Blast radius for the currently-selected node (its transitive dependents).
+  const blast = useMemo(() => {
+    if (selectedId == null) return { nodeIds: new Set<number>(), edgeIds: new Set<number>() };
+    return computeBlastRadius(selectedId, gEdges);
+  }, [selectedId, gEdges]);
+
+  const focusActive = selectedId != null;
+  const selectedLabel = useMemo(
+    () => gNodes.find((n) => n.id === selectedId)?.label || "This flow",
+    [gNodes, selectedId],
+  );
+
+  // Reflect selection + blast-radius focus into node data.
   const decoratedNodes = useMemo(
     () =>
-      rfNodes.map((n) => ({
-        ...n,
-        data: { ...(n.data as object), selected: Number(n.id) === selectedId },
-      })),
-    [rfNodes, selectedId],
+      rfNodes.map((n) => {
+        const id = Number(n.id);
+        const isSelected = id === selectedId;
+        const isImpacted = blast.nodeIds.has(id);
+        return {
+          ...n,
+          data: {
+            ...(n.data as object),
+            selected: isSelected,
+            impacted: focusActive && isImpacted,
+            dimmed: focusActive && !isSelected && !isImpacted,
+          },
+        };
+      }),
+    [rfNodes, selectedId, blast, focusActive],
   );
+
+  // Reflect blast-radius focus into edges: impact-path edges brighten, others
+  // fade, so the "if this breaks, these break" chain stands out.
+  const decoratedEdges = useMemo(() => {
+    if (!focusActive) return rfEdges;
+    return rfEdges.map((e) => {
+      const onImpactPath = blast.edgeIds.has(Number(e.id));
+      if (onImpactPath) {
+        return {
+          ...e,
+          animated: true,
+          style: {
+            ...(e.style as React.CSSProperties),
+            stroke: "hsl(var(--destructive) / 0.85)",
+            strokeWidth: 2.5,
+            opacity: 1,
+          },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            width: 18,
+            height: 18,
+            color: "hsl(var(--destructive) / 0.85)",
+          },
+          zIndex: 10,
+        };
+      }
+      return {
+        ...e,
+        animated: false,
+        style: { ...(e.style as React.CSSProperties), opacity: 0.12 },
+      };
+    });
+  }, [rfEdges, blast, focusActive]);
 
   const handleNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => onSelect(Number(node.id)),
@@ -301,7 +416,7 @@ function Flow({
   return (
     <ReactFlow
       nodes={decoratedNodes}
-      edges={rfEdges}
+      edges={decoratedEdges}
       nodeTypes={nodeTypes}
       onNodeClick={handleNodeClick}
       fitView
@@ -314,6 +429,51 @@ function Flow({
       defaultEdgeOptions={{ type: "smoothstep" }}
     >
       <Background variant={BackgroundVariant.Dots} gap={22} size={1.5} color="hsl(var(--border))" />
+
+      {/* Blast-radius banner — the enterprise "if this breaks, what breaks?" answer */}
+      {focusActive && (
+        <Panel position="top-center">
+          <div className="pointer-events-none flex items-center gap-2 rounded-full border border-border bg-card/95 px-3 py-1.5 shadow-md backdrop-blur">
+            {blast.nodeIds.size > 0 ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-destructive animate-pulse" />
+                <span className="text-xs text-foreground">
+                  <span className="font-semibold text-destructive">{selectedLabel}</span> impacts{" "}
+                  <span className="font-semibold">{blast.nodeIds.size}</span> downstream flow
+                  {blast.nodeIds.size === 1 ? "" : "s"} if it breaks
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="w-2 h-2 rounded-full bg-muted-foreground/50" />
+                <span className="text-xs text-muted-foreground">
+                  Nothing else depends on <span className="font-medium text-foreground">{selectedLabel}</span> —
+                  isolated flow
+                </span>
+              </>
+            )}
+          </div>
+        </Panel>
+      )}
+
+      {/* Legend — self-explanatory visual language (risk + edge types) */}
+      <Panel position="bottom-right">
+        <div className="rounded-lg border border-border bg-card/95 px-3 py-2 shadow-md backdrop-blur text-[10px] space-y-1.5">
+          <div className="font-semibold text-muted-foreground uppercase tracking-wide text-[9px]">Risk</div>
+          <div className="flex items-center gap-3">
+            <LegendDot className="bg-destructive" label="Critical / High" />
+            <LegendDot className="bg-amber-500" label="Medium" />
+            <LegendDot className="bg-muted-foreground/50" label="Low / Trivial" />
+          </div>
+          <div className="font-semibold text-muted-foreground uppercase tracking-wide text-[9px] pt-1">Relationships</div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <LegendLine className="bg-destructive/60" label="depends on" />
+            <LegendLine className="border-t border-dashed border-primary/60" label="part of flow" dashed />
+            <LegendLine className="bg-muted-foreground/50" label="navigates to" />
+          </div>
+        </div>
+      </Panel>
+
       <Controls
         showInteractive={false}
         className="!bg-card !border-border !rounded-lg !shadow-md [&_button]:!bg-card [&_button]:!border-border [&_button]:!text-muted-foreground [&_button:hover]:!bg-muted"
@@ -332,6 +492,27 @@ function Flow({
         }}
       />
     </ReactFlow>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Legend primitives
+// ---------------------------------------------------------------------------
+function LegendDot({ className, label }: { className: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1 text-muted-foreground">
+      <span className={cn("w-2 h-2 rounded-full", className)} />
+      {label}
+    </span>
+  );
+}
+
+function LegendLine({ className, label, dashed }: { className: string; label: string; dashed?: boolean }) {
+  return (
+    <span className="inline-flex items-center gap-1 text-muted-foreground">
+      <span className={cn("inline-block w-4", dashed ? "h-0" : "h-0.5 rounded", className)} />
+      {label}
+    </span>
   );
 }
 

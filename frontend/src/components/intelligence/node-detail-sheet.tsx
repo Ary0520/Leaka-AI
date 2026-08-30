@@ -155,13 +155,7 @@ export function NodeDetailSheet({
 
                 {/* Memory */}
                 <Section icon={<Brain className="w-4 h-4" />} title="What Leaka learned">
-                  {node.memory ? (
-                    <pre className="text-[11px] text-muted-foreground whitespace-pre-wrap font-mono">
-                      {JSON.stringify(node.memory, null, 2)}
-                    </pre>
-                  ) : (
-                    <Empty>No learned memory for this node yet.</Empty>
-                  )}
+                  <MemoryBlock memory={node.memory as Record<string, unknown> | null} />
                 </Section>
 
                 {/* Provenance */}
@@ -255,6 +249,50 @@ function Empty({ children }: { children: React.ReactNode }) {
 }
 
 type CoverageEvidence = { signal?: string; detail?: Record<string, unknown> };
+
+type MemoryRecent = { kind?: string; version?: number; payload?: Record<string, unknown> };
+
+function MemoryBlock({ memory }: { memory: Record<string, unknown> | null }) {
+  // The node-detail endpoint returns {counts, total, recent} or null.
+  if (!memory) {
+    return <Empty>No learned memory for this node yet.</Empty>;
+  }
+  const counts = (memory.counts as Record<string, number>) || {};
+  const total = typeof memory.total === "number" ? memory.total : 0;
+  const recent = Array.isArray(memory.recent) ? (memory.recent as MemoryRecent[]) : [];
+
+  const kindLabel: Record<string, string> = {
+    locator: "locators", auth_pattern: "auth", timing: "timings",
+    outcome: "outcomes", fingerprint: "fingerprints",
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-1.5">
+        {Object.entries(counts).map(([k, v]) => (
+          <span key={k} className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+            {(kindLabel[k] || k)} · {v}
+          </span>
+        ))}
+        {total === 0 && <Empty>Nothing learned for this node yet.</Empty>}
+      </div>
+      {recent.slice(0, 5).map((r, i) => {
+        const p = r.payload || {};
+        let line = "";
+        if (r.kind === "locator") line = (p.selector as string) || "locator";
+        else if (r.kind === "timing") line = `~${Number(p.ms || 0)}ms`;
+        else if (r.kind === "outcome") line = p.passed ? "passed" : "failed";
+        else if (r.kind === "auth_pattern") line = (p.summary as string) || "auth pattern";
+        else line = r.kind || "item";
+        return (
+          <div key={i} className="text-[11px] text-muted-foreground truncate">
+            <span className="text-foreground/70">{r.kind}</span> · {line}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function CoverageBlock({ coverage }: { coverage: Record<string, unknown> | null }) {
   // The node-detail endpoint returns the node's real CoverageVerdict (state,

@@ -125,18 +125,11 @@ export function GraphTab({ appId }: { appId: number }) {
         selectedId={selected}
         onSelect={setSelected}
       />
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-        <span>Click a node for its risk breakdown, coverage evidence & memory.</span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block w-4 h-0.5 bg-destructive/60 rounded" /> depends on
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block w-4 h-0.5 border-t border-dashed border-primary/60" /> part of flow
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block w-4 h-0.5 bg-muted-foreground/40 rounded" /> navigates to
-        </span>
-      </div>
+      <p className="text-xs text-muted-foreground">
+        Click a node to see its blast radius — the downstream flows that break if it does —
+        plus its risk breakdown, coverage evidence, and what Leaka has learned. The legend
+        is bottom-right.
+      </p>
 
       <NodeDetailSheet appId={appId} nodeId={selected} onClose={() => setSelected(null)} />
     </div>

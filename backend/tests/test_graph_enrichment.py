@@ -79,6 +79,13 @@ def _cleanup():
             if node_ids:
                 db.query(NodeFingerprint).filter(NodeFingerprint.node_id.in_(node_ids)).delete(synchronize_session=False)
             db.query(GraphEdge).filter(GraphEdge.application_id.in_(app_ids)).delete(synchronize_session=False)
+            # A late background recompute (sync_demo runs it on a thread pool) can
+            # insert coverage_verdicts AFTER the delete above and just before we
+            # drop graph_nodes, causing an FK violation. Settle once more and
+            # re-delete verdicts immediately before removing the nodes so cleanup
+            # is race-free regardless of recompute timing (test-only hardening).
+            _settle()
+            db.query(CoverageVerdict).filter(CoverageVerdict.application_id.in_(app_ids)).delete(synchronize_session=False)
             db.query(GraphNode).filter(GraphNode.application_id.in_(app_ids)).delete(synchronize_session=False)
             db.query(AppMapNode).filter(AppMapNode.application_id.in_(app_ids)).delete(synchronize_session=False)
             db.query(ExploreRun).filter(ExploreRun.application_id.in_(app_ids)).delete(synchronize_session=False)
