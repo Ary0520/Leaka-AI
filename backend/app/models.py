@@ -42,6 +42,10 @@ class TestCase(Base):
     # Deterministic assertions (JSON array of {type, value, options}).
     # NULL = no assertions → run behaves exactly as before (LLM verdict only).
     assertions = Column(Text, nullable=True)
+
+    environment_id = Column(Integer, ForeignKey("environments.id"), nullable=True)
+    fixture_id = Column(Integer, ForeignKey("test_fixtures.id"), nullable=True)
+    is_quarantined = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -57,6 +61,7 @@ class TestRun(Base):
     job_id = Column(String(64), unique=True, index=True, nullable=False)
     task_id = Column(String(128), unique=True, index=True, nullable=True)
     test_case_id = Column(Integer, ForeignKey("test_cases.id"), nullable=True)
+    validation_for_job_id = Column(String(64), nullable=True)
 
     name = Column(String(255), nullable=False)
     prompt = Column(Text, nullable=False)
@@ -71,6 +76,9 @@ class TestRun(Base):
 
     status = Column(SAEnum(TestRunStatus), default=TestRunStatus.PENDING, index=True)
     result_summary = Column(Text, nullable=True)
+
+    environment_id = Column(Integer, ForeignKey("environments.id"), nullable=True)
+    fixture_id = Column(Integer, ForeignKey("test_fixtures.id"), nullable=True)
     final_result = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
 
@@ -200,6 +208,46 @@ class Application(Base):
     map_nodes = relationship(
         "AppMapNode", back_populates="application", cascade="all, delete-orphan"
     )
+    environments = relationship(
+        "Environment", back_populates="application", cascade="all, delete-orphan"
+    )
+    fixtures = relationship(
+        "TestFixture", back_populates="application", cascade="all, delete-orphan"
+    )
+
+
+class Environment(Base):
+    """
+    Scoping for test execution (e.g. Staging, Prod).
+    """
+    __tablename__ = "environments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=False, index=True)
+    name = Column(String(128), nullable=False)
+    base_url = Column(String(2048), nullable=False)
+    variables = Column(Text, nullable=True) # JSON dictionary of environment variables/credentials
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    application = relationship("Application", back_populates="environments")
+
+
+class TestFixture(Base):
+    """
+    API-driven test data provisioning.
+    """
+    __tablename__ = "test_fixtures"
+
+    id = Column(Integer, primary_key=True, index=True)
+    application_id = Column(Integer, ForeignKey("applications.id"), nullable=False, index=True)
+    name = Column(String(128), nullable=False)
+    setup_api_url = Column(String(2048), nullable=False)
+    setup_payload = Column(Text, nullable=True) # JSON payload
+    teardown_api_url = Column(String(2048), nullable=True)
+    teardown_payload = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    application = relationship("Application", back_populates="fixtures")
 
 
 class ExploreRun(Base):

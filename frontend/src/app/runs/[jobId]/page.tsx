@@ -299,6 +299,16 @@ function RunView({
 
   return (
     <>
+      {data.validation_for_job_id && (
+        <Alert className="bg-amber-500/10 border-amber-500/40 text-amber-700 dark:text-amber-300">
+          <AlertTriangle className="w-4 h-4 text-amber-600" />
+          <AlertTitle>Validation Run</AlertTitle>
+          <AlertDescription>
+            This is an automated Validation Run triggered by a failure in job <code>{data.validation_for_job_id.slice(0, 8)}</code>.
+            The system is verifying if the failure was a true product bug or just environment flakiness.
+          </AlertDescription>
+        </Alert>
+      )}
       {/* Status banners */}
       {data.status === "failed" && (() => {
         // Distinguish: did the agent complete and report a QA failure,

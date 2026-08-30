@@ -65,6 +65,9 @@ function NewTestContent() {
   const [existingCaseId, setExistingCaseId] = useState<string>("");
   const [suiteId, setSuiteId] = useState<number | undefined>(preselectedSuiteId);
   const [assertions, setAssertions] = useState<Assertion[]>([]);
+  const [appId, setAppId] = useState<string>(linkAppId ? String(linkAppId) : "");
+  const [environmentId, setEnvironmentId] = useState<string>("");
+  const [fixtureId, setFixtureId] = useState<string>("");
 
   const addAssertion = () =>
     setAssertions((prev) => [...prev, { type: "page_contains_text", value: "", case_sensitive: false }]);
@@ -89,6 +92,23 @@ function NewTestContent() {
   const { data: suites } = useQuery({
     queryKey: ["suites"],
     queryFn: () => api.listSuites({ limit: 100 }),
+  });
+
+  const { data: apps } = useQuery({
+    queryKey: ["applications"],
+    queryFn: () => api.listApplications(),
+  });
+
+  const { data: envs } = useQuery({
+    queryKey: ["environments", appId],
+    queryFn: () => api.listEnvironments(Number(appId)),
+    enabled: !!appId,
+  });
+
+  const { data: fixtures } = useQuery({
+    queryKey: ["fixtures", appId],
+    queryFn: () => api.listFixtures(Number(appId)),
+    enabled: !!appId,
   });
 
   const enqueueMut = useMutation({
@@ -140,6 +160,8 @@ function NewTestContent() {
         use_vision: true,
         max_steps: 50,
         assertions: assertionsPayload,
+        environment_id: environmentId && environmentId !== "none" ? Number(environmentId) : undefined,
+        fixture_id: fixtureId && fixtureId !== "none" ? Number(fixtureId) : undefined,
       });
     },
     onSuccess: (r) => {
@@ -239,6 +261,63 @@ function NewTestContent() {
 
           <Card className="border-0 bg-[#161922]">
             <CardContent className="p-6 space-y-8">
+              {/* Test Data Management Block */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pb-6 border-b border-indigo-500/10">
+                <div>
+                  <Label className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground mb-3 block">
+                    Application
+                  </Label>
+                  <Select value={appId} onValueChange={setAppId}>
+                    <SelectTrigger className="bg-[#0B0E14] border-transparent font-mono text-sm h-11 text-muted-foreground">
+                      <SelectValue placeholder="Select Application..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {apps?.map(app => (
+                        <SelectItem key={app.id} value={String(app.id)}>{app.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground mb-3 block">
+                    Environment
+                  </Label>
+                  <Select value={environmentId} onValueChange={setEnvironmentId} disabled={!appId || envs?.length === 0}>
+                    <SelectTrigger className="bg-[#0B0E14] border-transparent font-mono text-sm h-11 text-muted-foreground">
+                      <SelectValue placeholder={appId ? (envs?.length ? "Select Environment..." : "No environments") : "Select App first"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">None</SelectItem>
+                      {envs?.map(env => (
+                        <SelectItem key={env.id} value={String(env.id)}>{env.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground mb-3 block">
+                    Fixture
+                  </Label>
+                  <Select value={fixtureId} onValueChange={setFixtureId} disabled={!appId || fixtures?.length === 0}>
+                    <SelectTrigger className="bg-[#0B0E14] border-transparent font-mono text-sm h-11 text-muted-foreground">
+                      <SelectValue placeholder={appId ? (fixtures?.length ? "Select Fixture..." : "No fixtures") : "Select App first"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">None</SelectItem>
+                      {fixtures?.map(fix => (
+                        <SelectItem key={fix.id} value={String(fix.id)}>{fix.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {fixtureId && fixtureId !== "none" && (
+                <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 p-3 rounded-md text-xs">
+                  <span className="font-semibold">💡 Fixture Attached:</span> The agent will provision test data before running. You can refer to this data in your workflow description below (e.g. "Login with the provisioned test account").
+                </div>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                   <Label htmlFor="name" className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground mb-3 block">

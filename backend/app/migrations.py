@@ -312,6 +312,58 @@ def _m7_test_run_forensics() -> None:
                     logger.error("Failed to add column %s: %s", col, e)
     logger.info("M7 applied: test_run forensics columns added.")
 
+def _m8_test_data_management() -> None:
+    """Add environments and test_fixtures tables."""
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS environments (
+                id SERIAL PRIMARY KEY,
+                application_id INTEGER NOT NULL,
+                name VARCHAR(128) NOT NULL,
+                base_url VARCHAR(2048) NOT NULL,
+                variables TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(application_id) REFERENCES applications(id) ON DELETE CASCADE
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS test_fixtures (
+                id SERIAL PRIMARY KEY,
+                application_id INTEGER NOT NULL,
+                name VARCHAR(128) NOT NULL,
+                setup_api_url VARCHAR(2048) NOT NULL,
+                setup_payload TEXT,
+                teardown_api_url VARCHAR(2048),
+                teardown_payload TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(application_id) REFERENCES applications(id) ON DELETE CASCADE
+            )
+        """))
+        for tbl in ["test_runs", "test_cases"]:
+            for col in ["environment_id", "fixture_id"]:
+                try:
+                    conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN {col} INTEGER"))
+                except Exception as e:
+                    if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
+                        logger.error("Failed to add column %s to %s: %s", col, tbl, e)
+    logger.info("M8 applied: test data management tables created.")
+
+
+def _m9_flakiness_intelligence() -> None:
+    """Add quarantine and validation tracking columns."""
+    with engine.begin() as conn:
+        try:
+            conn.execute(text("ALTER TABLE test_cases ADD COLUMN is_quarantined BOOLEAN DEFAULT FALSE"))
+        except Exception as e:
+            if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
+                logger.error("Failed to add column is_quarantined: %s", e)
+        try:
+            conn.execute(text("ALTER TABLE test_runs ADD COLUMN validation_for_job_id VARCHAR(64)"))
+        except Exception as e:
+            if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
+                logger.error("Failed to add column validation_for_job_id: %s", e)
+    logger.info("M9 applied: flakiness intelligence columns added.")
+
 # ---------------------------------------------------------------------------
 # Public runner
 # ---------------------------------------------------------------------------
@@ -323,6 +375,8 @@ _MIGRATIONS = [
     ("M5_repo_tables", _m5_repo_tables),
     ("M6_app_map_node_enrichment", _m6_app_map_node_enrichment),
     ("M7_test_run_forensics", _m7_test_run_forensics),
+    ("M8_test_data_management", _m8_test_data_management),
+    ("M9_flakiness_intelligence", _m9_flakiness_intelligence),
     ("B1_backfill_graph", _b1_backfill_graph),
 ]
 
