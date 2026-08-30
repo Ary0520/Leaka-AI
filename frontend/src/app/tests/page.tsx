@@ -134,9 +134,14 @@ export default function TestCasesPage() {
                   <TableRow key={c.id}>
                     <TableCell className="font-medium text-sm max-w-[180px]">
                       <div className="truncate">{c.name}</div>
-                      {c.suite_id && (
-                        <Badge variant="outline" className="text-xs mt-0.5">Suite {c.suite_id}</Badge>
-                      )}
+                      <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                        {c.suite_id && (
+                          <Badge variant="outline" className="text-xs">Suite {c.suite_id}</Badge>
+                        )}
+                        {c.is_quarantined && (
+                          <Badge variant="destructive" className="text-xs">Quarantined</Badge>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground max-w-xs truncate">
                       {truncate(c.prompt, 90)}

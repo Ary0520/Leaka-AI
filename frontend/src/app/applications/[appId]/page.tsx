@@ -13,7 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   ArrowLeft, Compass, Loader2, Play, Globe, FileText,
   ClipboardList, GitBranch, CheckCircle2, CircleDashed, Sparkles, XCircle,
-  List, Network, TestTube2, History, Brain, GitPullRequest,
+  List, Network, TestTube2, History, Brain, GitPullRequest, Settings,
 } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 import { GraphTab } from "@/components/intelligence/graph-tab";
@@ -21,6 +21,7 @@ import { CoverageTab } from "@/components/intelligence/coverage-tab";
 import { HistoryTab } from "@/components/intelligence/history-tab";
 import { MemoryTab } from "@/components/intelligence/memory-tab";
 import { PRIntelligenceTab } from "@/components/intelligence/pr-intelligence-tab";
+import { ConfigurationTab } from "@/components/intelligence/configuration-tab";
 
 const TERMINAL: ExploreStatus[] = ["completed", "failed", "cancelled"];
 
@@ -95,7 +96,13 @@ export default function ApplicationDetailPage() {
           <TabsTrigger value="pr"><GitPullRequest className="w-4 h-4 mr-1.5" />PR Intelligence</TabsTrigger>
           <TabsTrigger value="map"><List className="w-4 h-4 mr-1.5" />List</TabsTrigger>
           <TabsTrigger value="history"><History className="w-4 h-4 mr-1.5" />History</TabsTrigger>
+          <TabsTrigger value="config"><Settings className="w-4 h-4 mr-1.5" />Settings</TabsTrigger>
         </TabsList>
+
+        {/* ── Configuration ── */}
+        <TabsContent value="config" className="mt-4">
+          <ConfigurationTab appId={appId} />
+        </TabsContent>
 
         {/* ── Graph (React Flow node graph + risk/coverage) ── */}
         <TabsContent value="graph" className="mt-4">

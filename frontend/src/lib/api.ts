@@ -77,6 +77,7 @@ export interface Screenshot {
 export interface RunStatusResponse {
   job_id: string;
   task_id?: string | null;
+  validation_for_job_id?: string | null;
   status: RunStatus;
   name: string;
   prompt: string;
@@ -96,6 +97,9 @@ export interface RunStatusResponse {
   steps_log?: string | null;
   visited_urls?: string | null;
   live_steps?: string | null;
+  console_logs?: string | null;
+  har_data?: string | null;
+  rca_category?: string | null;
   is_successful?: boolean | null;
   assertions?: string | null;          // JSON string: Assertion[]
   assertion_results?: string | null;   // JSON string: AssertionResult[]
@@ -145,6 +149,8 @@ export interface TestRunRequest {
   use_vision?: boolean;
   max_steps?: number;
   assertions?: Assertion[] | null;
+  environment_id?: number | null;
+  fixture_id?: number | null;
 }
 
 export interface EnqueueResponse {
@@ -161,6 +167,7 @@ export interface TestCaseOut {
   target_url?: string | null;
   suite_id?: number | null;
   assertions?: Assertion[] | null;
+  is_quarantined?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -185,6 +192,7 @@ export interface TestCaseUpdate {
   target_url?: string | null;
   suite_id?: number | null;
   assertions?: Assertion[] | null;
+  is_quarantined?: boolean | null;
 }
 
 export interface TestSuiteOut {
@@ -236,6 +244,42 @@ export interface ApplicationCreate {
   base_url: string;
   description?: string | null;
   login_hint?: string | null;
+}
+
+export interface EnvironmentOut {
+  id: number;
+  application_id: number;
+  name: string;
+  base_url: string;
+  variables?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EnvironmentCreate {
+  name: string;
+  base_url: string;
+  variables?: string | null;
+}
+
+export interface TestFixtureOut {
+  id: number;
+  application_id: number;
+  name: string;
+  setup_api_url: string;
+  setup_payload?: string | null;
+  teardown_api_url?: string | null;
+  teardown_payload?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TestFixtureCreate {
+  name: string;
+  setup_api_url: string;
+  setup_payload?: string | null;
+  teardown_api_url?: string | null;
+  teardown_payload?: string | null;
 }
 
 export interface AppMapNodeOut {
@@ -615,6 +659,22 @@ export const api = {
       { method: "POST" },
     );
   },
+
+  // Environments & Fixtures
+  listEnvironments: (appId: number) =>
+    request<EnvironmentOut[]>(`/api/applications/${appId}/environments`),
+  createEnvironment: (appId: number, body: EnvironmentCreate) =>
+    request<EnvironmentOut>(`/api/applications/${appId}/environments`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  listFixtures: (appId: number) =>
+    request<TestFixtureOut[]>(`/api/applications/${appId}/fixtures`),
+  createFixture: (appId: number, body: TestFixtureCreate) =>
+    request<TestFixtureOut>(`/api/applications/${appId}/fixtures`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   // Linear
   createLinearIssue: (body: {

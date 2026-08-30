@@ -55,6 +55,7 @@ class TestCaseUpdate(BaseModel):
     success_criteria: Optional[str] = None
     target_url: Optional[str] = None
     suite_id: Optional[int] = None
+    is_quarantined: Optional[bool] = None
     assertions: Optional[List[Assertion]] = None
 
 
@@ -65,6 +66,7 @@ class TestCaseOut(BaseModel):
     success_criteria: Optional[str] = None
     target_url: Optional[str] = None
     suite_id: Optional[int] = None
+    is_quarantined: bool = False
     # Stored as a JSON string in the DB column; exposed as a parsed list.
     assertions: Optional[List[Assertion]] = None
     created_at: datetime
@@ -152,6 +154,8 @@ class TestRunRequest(BaseModel):
     success_criteria: Optional[str] = None
     target_url: Optional[str] = None
     test_case_id: Optional[int] = None
+    environment_id: Optional[int] = None
+    fixture_id: Optional[int] = None
     use_vision: Optional[bool] = True
     max_steps: Optional[int] = 50
     assertions: Optional[List[Assertion]] = None
@@ -166,6 +170,7 @@ class TestRunEnqueueResponse(BaseModel):
 class TestRunStatusResponse(BaseModel):
     job_id: str
     task_id: Optional[str]
+    validation_for_job_id: Optional[str] = None
     status: TestRunStatus
     name: str
     prompt: str
@@ -258,6 +263,53 @@ class ApplicationOut(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    class Config:
+        from_attributes = True
+
+class EnvironmentCreate(BaseModel):
+    name: str = Field(..., min_length=1)
+    base_url: str = Field(..., min_length=3)
+    variables: Optional[str] = None
+
+class EnvironmentUpdate(BaseModel):
+    name: Optional[str] = None
+    base_url: Optional[str] = None
+    variables: Optional[str] = None
+
+class EnvironmentOut(BaseModel):
+    id: int
+    application_id: int
+    name: str
+    base_url: str
+    variables: Optional[str] = None
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+
+class TestFixtureCreate(BaseModel):
+    name: str = Field(..., min_length=1)
+    setup_api_url: str = Field(..., min_length=3)
+    setup_payload: Optional[str] = None
+    teardown_api_url: Optional[str] = None
+    teardown_payload: Optional[str] = None
+
+class TestFixtureUpdate(BaseModel):
+    name: Optional[str] = None
+    setup_api_url: Optional[str] = None
+    setup_payload: Optional[str] = None
+    teardown_api_url: Optional[str] = None
+    teardown_payload: Optional[str] = None
+
+class TestFixtureOut(BaseModel):
+    id: int
+    application_id: int
+    name: str
+    setup_api_url: str
+    setup_payload: Optional[str] = None
+    teardown_api_url: Optional[str] = None
+    teardown_payload: Optional[str] = None
+    created_at: datetime
     class Config:
         from_attributes = True
 

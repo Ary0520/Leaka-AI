@@ -53,6 +53,8 @@ from .models import (
     TestScreenshot,
     TestSuite,
     UserSettings,
+    Environment,
+    TestFixture,
 )
 from .schemas import (
     AppMapNodeOut,
@@ -99,6 +101,10 @@ from .schemas import (
     TestSuiteOut,
     TestSuiteRunResponse,
     TestSuiteUpdate,
+    EnvironmentOut,
+    EnvironmentCreate,
+    TestFixtureOut,
+    TestFixtureCreate,
 )
 from .worker import run_browser_test
 from .explore_worker import explore_application
@@ -130,6 +136,8 @@ def _dispatch_run_task(
     use_vision: bool,
     max_steps: int,
     test_case_id: Optional[int],
+    environment_id: Optional[int] = None,
+    fixture_id: Optional[int] = None,
 ) -> str:
     """Dispatch a test run.
 
@@ -147,6 +155,8 @@ def _dispatch_run_task(
         use_vision=use_vision,
         max_steps=max_steps,
         test_case_id=test_case_id,
+        environment_id=environment_id,
+        fixture_id=fixture_id,
     )
 
     if settings.RUN_MODE == "sync_demo":
@@ -853,6 +863,9 @@ def enqueue_test(body: TestRunRequest, db: Session = Depends(get_db), user: dict
     success_criteria = body.success_criteria
     test_case_id = body.test_case_id
 
+    environment_id = body.environment_id
+    fixture_id = body.fixture_id
+
     # Resolve assertions: explicit request assertions take precedence, else
     # inherit from the test case. Serialized to a JSON string for storage.
     assertions_json: Optional[str] = None
@@ -865,6 +878,8 @@ def enqueue_test(body: TestRunRequest, db: Session = Depends(get_db), user: dict
             prompt = prompt or tc.prompt
             target_url = target_url or tc.target_url
             success_criteria = success_criteria or tc.success_criteria
+            environment_id = environment_id or tc.environment_id
+            fixture_id = fixture_id or tc.fixture_id
             if assertions_json is None and tc.assertions:
                 assertions_json = tc.assertions  # already a JSON string
             if not body.name:
@@ -875,6 +890,8 @@ def enqueue_test(body: TestRunRequest, db: Session = Depends(get_db), user: dict
         task_id=None,
         owner_id=owner_id,
         test_case_id=test_case_id,
+        environment_id=environment_id,
+        fixture_id=fixture_id,
         name=run_name,
         prompt=prompt,
         target_url=target_url,
@@ -895,6 +912,8 @@ def enqueue_test(body: TestRunRequest, db: Session = Depends(get_db), user: dict
         use_vision=bool(body.use_vision),
         max_steps=body.max_steps if body.max_steps is not None else 50,
         test_case_id=test_case_id,
+        environment_id=environment_id,
+        fixture_id=fixture_id,
     )
     run.task_id = task_id
     db.commit()
@@ -1583,6 +1602,38 @@ def delete_application(app_id: int, db: Session = Depends(get_db), user: dict = 
     db.delete(app_row)
     db.commit()
     return None
+
+
+# ── Environments ──
+@app.get("/api/applications/{app_id}/environments", response_model=list[EnvironmentOut])
+def list_environments(app_id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    _get_owned_application(db, app_id, user)
+    return db.query(Environment).filter(Environment.application_id == app_id).all()
+
+@app.post("/api/applications/{app_id}/environments", response_model=EnvironmentOut)
+def create_environment(app_id: int, body: EnvironmentCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    _get_owned_application(db, app_id, user)
+    env = Environment(application_id=app_id, **body.model_dump())
+    db.add(env)
+    db.commit()
+    db.refresh(env)
+    return env
+
+
+# ── Fixtures ──
+@app.get("/api/applications/{app_id}/fixtures", response_model=list[TestFixtureOut])
+def list_fixtures(app_id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    _get_owned_application(db, app_id, user)
+    return db.query(TestFixture).filter(TestFixture.application_id == app_id).all()
+
+@app.post("/api/applications/{app_id}/fixtures", response_model=TestFixtureOut)
+def create_fixture(app_id: int, body: TestFixtureCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    _get_owned_application(db, app_id, user)
+    fix = TestFixture(application_id=app_id, **body.model_dump())
+    db.add(fix)
+    db.commit()
+    db.refresh(fix)
+    return fix
 
 
 @app.post("/api/applications/{app_id}/explore", response_model=ExploreEnqueueResponse)

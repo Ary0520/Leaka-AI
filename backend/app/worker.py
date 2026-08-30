@@ -579,6 +579,8 @@ def run_browser_test(
     use_vision: bool = True,
     max_steps: int = 100,
     test_case_id: Optional[int] = None,
+    environment_id: Optional[int] = None,
+    fixture_id: Optional[int] = None,
 ) -> dict[str, Any]:
     """
     Run a browser-use Agent against a natural-language QA prompt.
@@ -613,11 +615,66 @@ def run_browser_test(
         )
         raise RuntimeError(f"LLM init failed: {exc}") from exc
 
+    # ── Test Data Management ──────────────────────────────────────────────────
+    import requests
+    db = SessionLocal()
+    env = None
+    fixture = None
+    fixture_teardown_url = None
+    fixture_teardown_payload = None
+    try:
+        from .models import Environment, TestFixture
+        if environment_id:
+            env = db.query(Environment).filter(Environment.id == environment_id).first()
+        if fixture_id:
+            fixture = db.query(TestFixture).filter(TestFixture.id == fixture_id).first()
+            if fixture:
+                fixture_teardown_url = fixture.teardown_api_url
+                fixture_teardown_payload = fixture.teardown_payload
+    finally:
+        db.close()
+
     # Build the full task string
     task_parts = []
+    
+    # 1. Environment scoping
+    if env:
+        # Override target URL with environment's base URL if we don't have an absolute one,
+        # or simply rely on the environment's base_url as the starting point.
+        # But usually we just instruct the agent:
+        task_parts.append(f"Environment Base URL: {env.base_url}")
+        if target_url and not target_url.startswith("http"):
+            target_url = f"{env.base_url.rstrip('/')}/{target_url.lstrip('/')}"
+        elif not target_url:
+            target_url = env.base_url
+            
+        if env.variables:
+            task_parts.append(f"Environment Variables (Credentials/Config): {env.variables}")
+
     if target_url:
         task_parts.append(f"Target URL: {target_url}")
     task_parts.append(f"Task: {prompt}")
+    
+    # 2. Fixture execution (Setup)
+    if fixture:
+        try:
+            payload = json.loads(fixture.setup_payload) if fixture.setup_payload else {}
+            resp = requests.post(fixture.setup_api_url, json=payload, timeout=15)
+            resp.raise_for_status()
+            fixture_data = resp.json()
+            task_parts.append(f"Provisioned Test Data (Fixture): {json.dumps(fixture_data)}")
+        except Exception as e:
+            _update_db_status(
+                job_id,
+                status=TestRunStatus.FAILED,
+                patch={
+                    "error_message": f"Fixture setup failed: {e}",
+                    "completed_at": datetime.utcnow(),
+                    "is_successful": False,
+                },
+            )
+            raise RuntimeError(f"Fixture setup failed: {e}") from e
+
     if success_criteria:
         task_parts.append(f"Success criteria to validate after execution: {success_criteria}")
 
@@ -1283,8 +1340,87 @@ def run_browser_test(
             finally:
                 db.close()
 
-        # --- Auto-integrations on FAILURE ---
+        # --- Flakiness Intelligence & Auto-Orchestration ---
+        skip_integrations = False
+        is_quarantined = False
+
         if final_status == TestRunStatus.FAILED:
+            db = SessionLocal()
+            try:
+                run = db.query(TestRun).filter(TestRun.job_id == job_id).first()
+                if run and run.test_case_id:
+                    tc = db.query(TestCase).filter(TestCase.id == run.test_case_id).first()
+                    if tc:
+                        if rca_category_val in ["FLAKY_SELECTOR", "ENVIRONMENT_TIMEOUT"]:
+                            logger.info(f"Test {tc.id} categorized as FLAKY. Quarantining.")
+                            tc.is_quarantined = True
+                            db.commit()
+                            skip_integrations = True
+                            is_quarantined = True
+                            # Optional: Send a specific Slack message about quarantine
+                        elif rca_category_val == "PRODUCT_BUG":
+                            if not run.validation_for_job_id:
+                                logger.info(f"Test {tc.id} categorized as PRODUCT_BUG. Dispatching Validation Run.")
+                                # Dispatch validation run and skip integrations for now
+                                from .main import _dispatch_run_task
+                                import uuid
+                                
+                                val_job_id = uuid.uuid4().hex
+                                val_run = TestRun(
+                                    job_id=val_job_id,
+                                    task_id=None,
+                                    owner_id=run.owner_id,
+                                    test_case_id=test_case_id,
+                                    validation_for_job_id=job_id,
+                                    environment_id=environment_id,
+                                    fixture_id=fixture_id,
+                                    name=f"[Validation] {name}",
+                                    prompt=prompt,
+                                    target_url=target_url,
+                                    success_criteria=success_criteria,
+                                    status=TestRunStatus.PENDING,
+                                )
+                                db.add(val_run)
+                                db.commit()
+                                
+                                task_id = _dispatch_run_task(
+                                    job_id=val_job_id,
+                                    name=f"[Validation] {name}",
+                                    prompt=prompt,
+                                    target_url=target_url or "",
+                                    success_criteria=success_criteria,
+                                    use_vision=use_vision,
+                                    max_steps=max_steps,
+                                    test_case_id=test_case_id,
+                                    environment_id=environment_id,
+                                    fixture_id=fixture_id,
+                                )
+                                val_run.task_id = task_id
+                                db.commit()
+                                
+                                skip_integrations = True
+                            else:
+                                logger.info(f"Validation Run {job_id} failed. 99% Confidence reached.")
+                                # We continue to integrations!
+            finally:
+                db.close()
+                
+        elif final_status == TestRunStatus.COMPLETED:
+            db = SessionLocal()
+            try:
+                run = db.query(TestRun).filter(TestRun.job_id == job_id).first()
+                if run and run.validation_for_job_id and run.test_case_id:
+                    logger.info(f"Validation Run {job_id} PASSED. Original failure was flaky. Quarantining.")
+                    tc = db.query(TestCase).filter(TestCase.id == run.test_case_id).first()
+                    if tc:
+                        tc.is_quarantined = True
+                        db.commit()
+            finally:
+                db.close()
+
+
+        # --- Auto-integrations on FAILURE ---
+        if final_status == TestRunStatus.FAILED and not skip_integrations:
             logger.info("AUTO-INTEGRATIONS TRIGGERED for job_id=%s", job_id)
             try:
                 from .integrations import linear_client, email_client, slack_client
@@ -1309,9 +1445,11 @@ def run_browser_test(
                                 .first()
                             )
                             if not existing:
-                                lin_title = f"[QA FAILURE] {name} — {job_id[:8]}"
+                                conf_badge = "🔒 **99% Confidence (Verified across 2 fresh runs)**\n\n" if (run and run.validation_for_job_id) else ""
+                                lin_title = f"[QA BUG] {name} — {job_id[:8]}"
                                 lin_desc = (
                                     f"### Test run failed\n\n"
+                                    f"{conf_badge}"
                                     f"- **Name:** {name}\n"
                                     f"- **Job ID:** `{job_id}`\n"
                                     f"- **Target URL:** {target_url or 'N/A'}\n"
@@ -1478,6 +1616,14 @@ def run_browser_test(
                     job_id, _integ_exc, exc_info=True,
                 )
 
+        if fixture_teardown_url:
+            try:
+                payload = json.loads(fixture_teardown_payload) if fixture_teardown_payload else {}
+                requests.post(fixture_teardown_url, json=payload, timeout=15)
+                logger.info("Fixture teardown completed for job_id=%s", job_id)
+            except Exception as e:
+                logger.warning("Fixture teardown failed (job_id=%s): %s", job_id, e)
+
         return {
             "job_id": job_id,
             "status": final_status.value,
@@ -1499,4 +1645,11 @@ def run_browser_test(
                 "is_successful": False,
             },
         )
+        if fixture_teardown_url:
+            try:
+                payload = json.loads(fixture_teardown_payload) if fixture_teardown_payload else {}
+                requests.post(fixture_teardown_url, json=payload, timeout=15)
+                logger.info("Fixture teardown completed for job_id=%s after error", job_id)
+            except Exception as e:
+                logger.warning("Fixture teardown failed after error (job_id=%s): %s", job_id, e)
         raise
