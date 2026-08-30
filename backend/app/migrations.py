@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 
 from .database import engine
 from .config import settings
@@ -296,6 +297,21 @@ def _b1_backfill_graph() -> None:
     )
 
 
+def _m7_test_run_forensics() -> None:
+    """Add forensic evidence and RCA columns to test_runs."""
+    with engine.begin() as conn:
+        for col, col_def in [
+            ("console_logs", "TEXT"),
+            ("har_data", "TEXT"),
+            ("rca_category", "VARCHAR(64)")
+        ]:
+            try:
+                conn.execute(text(f"ALTER TABLE test_runs ADD COLUMN {col} {col_def}"))
+            except Exception as e:
+                if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
+                    logger.error("Failed to add column %s: %s", col, e)
+    logger.info("M7 applied: test_run forensics columns added.")
+
 # ---------------------------------------------------------------------------
 # Public runner
 # ---------------------------------------------------------------------------
@@ -306,6 +322,7 @@ _MIGRATIONS = [
     ("M4_memory_tables", _m4_memory_tables),
     ("M5_repo_tables", _m5_repo_tables),
     ("M6_app_map_node_enrichment", _m6_app_map_node_enrichment),
+    ("M7_test_run_forensics", _m7_test_run_forensics),
     ("B1_backfill_graph", _b1_backfill_graph),
 ]
 

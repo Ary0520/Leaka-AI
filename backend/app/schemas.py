@@ -180,6 +180,9 @@ class TestRunStatusResponse(BaseModel):
     steps_log: Optional[str] = None        # JSON string: list[dict] — agent action history
     visited_urls: Optional[str] = None     # JSON string: list[str]
     live_steps: Optional[str] = None       # JSON string: steps written live during run
+    console_logs: Optional[str] = None
+    har_data: Optional[str] = None
+    rca_category: Optional[str] = None
     is_successful: Optional[bool] = None
     assertions: Optional[str] = None            # JSON string: the assertions requested
     assertion_results: Optional[str] = None     # JSON string: per-assertion pass/fail

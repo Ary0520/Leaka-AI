@@ -383,6 +383,7 @@ function RunView({
             {data.screenshots.length > 0 && <span className="ml-1.5 text-xs text-muted-foreground">({data.screenshots.length})</span>}
           </TabsTrigger>
           <TabsTrigger value="integrations">Integrations</TabsTrigger>
+          <TabsTrigger value="forensics">Forensics & RCA</TabsTrigger>
         </TabsList>
 
         {/* ── STEPS TIMELINE ── */}
@@ -690,6 +691,97 @@ function RunView({
               </CardContent>
             </Card>
           </div>
+        </TabsContent>
+        
+        {/* ── FORENSICS & RCA ── */}
+        <TabsContent value="forensics" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Search className="w-4 h-4" /> Root Cause Analysis
+              </CardTitle>
+              <CardDescription>
+                AI-driven analysis of the failure based on captured forensic evidence.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {data.rca_category ? (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Badge variant={data.rca_category === "PRODUCT_BUG" ? "destructive" : "secondary"} className="text-sm">
+                      {data.rca_category}
+                    </Badge>
+                  </div>
+                  <pre className="whitespace-pre-wrap text-sm bg-muted/50 p-4 rounded-md border font-mono">
+                    {/* Extract just the RCA explanation from error message if it's there, 
+                        or display the error message. */}
+                    {data.error_message || "No explanation provided."}
+                  </pre>
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground text-center py-8">
+                  {data.status === "failed" ? "No RCA category computed." : "RCA is only generated upon failure."}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Globe className="w-4 h-4" /> Network Logs (HAR)
+              </CardTitle>
+              <CardDescription>
+                Captured network requests leading up to the failure.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {data.har_data ? (
+                <div className="max-h-96 overflow-auto bg-muted/50 border rounded-md">
+                   {/* Format JSON beautifully, but if it's massive we could just do pre */}
+                  <pre className="text-xs p-4 font-mono">
+                    {(() => {
+                      try {
+                        const parsed = JSON.parse(data.har_data);
+                        // show just the first 500 lines so it doesn't crash the browser
+                        const str = JSON.stringify(parsed, null, 2);
+                        if (str.length > 50000) return str.slice(0, 50000) + "\n... [Truncated for UI performance]";
+                        return str;
+                      } catch {
+                        return data.har_data;
+                      }
+                    })()}
+                  </pre>
+                </div>
+              ) : (
+                <div className="text-sm text-muted-foreground text-center py-8">
+                  No HAR data captured.
+                </div>
+              )}
+            </CardContent>
+          </Card>
+          
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <ScrollText className="w-4 h-4" /> Browser Console
+              </CardTitle>
+              <CardDescription>
+                Console logs from the browser environment.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {data.console_logs ? (
+                <pre className="whitespace-pre-wrap text-xs bg-muted/50 p-4 rounded-md border font-mono max-h-96 overflow-auto">
+                  {data.console_logs}
+                </pre>
+              ) : (
+                <div className="text-sm text-muted-foreground text-center py-8">
+                  No console logs captured.
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </>
