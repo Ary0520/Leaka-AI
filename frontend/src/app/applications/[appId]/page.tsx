@@ -13,13 +13,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   ArrowLeft, Compass, Loader2, Play, Globe, FileText,
   ClipboardList, GitBranch, CheckCircle2, CircleDashed, Sparkles, XCircle,
-  List, Network, TestTube2, History, Brain,
+  List, Network, TestTube2, History, Brain, GitPullRequest,
 } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 import { GraphTab } from "@/components/intelligence/graph-tab";
 import { CoverageTab } from "@/components/intelligence/coverage-tab";
 import { HistoryTab } from "@/components/intelligence/history-tab";
 import { MemoryTab } from "@/components/intelligence/memory-tab";
+import { PRIntelligenceTab } from "@/components/intelligence/pr-intelligence-tab";
 
 const TERMINAL: ExploreStatus[] = ["completed", "failed", "cancelled"];
 
@@ -91,6 +92,7 @@ export default function ApplicationDetailPage() {
           <TabsTrigger value="graph"><Network className="w-4 h-4 mr-1.5" />Graph</TabsTrigger>
           <TabsTrigger value="coverage"><TestTube2 className="w-4 h-4 mr-1.5" />Coverage</TabsTrigger>
           <TabsTrigger value="memory"><Brain className="w-4 h-4 mr-1.5" />Memory</TabsTrigger>
+          <TabsTrigger value="pr"><GitPullRequest className="w-4 h-4 mr-1.5" />PR Intelligence</TabsTrigger>
           <TabsTrigger value="map"><List className="w-4 h-4 mr-1.5" />List</TabsTrigger>
           <TabsTrigger value="history"><History className="w-4 h-4 mr-1.5" />History</TabsTrigger>
         </TabsList>
@@ -108,6 +110,11 @@ export default function ApplicationDetailPage() {
         {/* ── Memory ("what Leaka knows about this app") ── */}
         <TabsContent value="memory" className="mt-4">
           <MemoryTab appId={appId} />
+        </TabsContent>
+
+        {/* ── PR Intelligence (connect repo → per-PR affected flows + tests) ── */}
+        <TabsContent value="pr" className="mt-4">
+          <PRIntelligenceTab appId={appId} />
         </TabsContent>
 
         {/* ── History (append-only snapshots + diff) ── */}
