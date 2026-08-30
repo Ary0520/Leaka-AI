@@ -461,13 +461,72 @@ def explore_application(
     if mem_hint:
         task_parts += ["", mem_hint]
 
+    task_parts += [
+        "\n--- RECOVERY RULES ---\n",
+        "If you cannot find a link or button you previously found (or one mentioned in the login hints), DO NOT fail immediately. ",
+        "Call the `recover_missing_element` action with a description of what you are looking for. ",
+        "It will use AI semantic search over past explorations to find the element's new location on the page."
+    ]
+
     task_text = "\n".join(task_parts)
 
     async def _run_explore():
         from browser_use import Agent
         from browser_use.browser.session import BrowserSession
+        from browser_use.controller.service import Controller
+        from browser_use.browser.context import BrowserContext
 
         browser_session = BrowserSession(headless=True)
+        controller = Controller()
+
+        @controller.action("Recover missing element locator using semantic search. Call this ONLY if you fail to find an element you need.")
+        async def recover_missing_element(intent: str, browser: BrowserContext) -> str:
+            """
+            Use this action if a button or element is missing from the page.
+            Provide a descriptive 'intent' of what you are looking for (e.g. 'Submit Order button').
+            It will search Leaka's historical memory and map the old element to its new location on the current page.
+            """
+            try:
+                from .intelligence import recovery
+                # For explorer, we don't have a specific test_case_id/node_id to filter by,
+                # but we can still search app-level memory for the intent.
+                
+                page = await browser.get_current_page()
+                js_script = '''
+                () => {
+                    const elements = Array.from(document.querySelectorAll('a, button, input, select, textarea, [role="button"], [role="link"], [role="menuitem"], [tabindex]:not([tabindex="-1"])'));
+                    return elements.map(el => {
+                        let text = (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('alt') || '').trim();
+                        let getPathTo = function(element) {
+                            if (element.id!=='') return 'id("'+element.id+'")';
+                            if (element===document.body) return element.tagName;
+                            var ix= 0;
+                            var siblings= element.parentNode.childNodes;
+                            for (var i= 0; i<siblings.length; i++) {
+                                var sibling= siblings[i];
+                                if (sibling===element) return getPathTo(element.parentNode)+'/'+element.tagName+'['+(ix+1)+']';
+                                if (sibling.nodeType===1 && sibling.tagName===element.tagName) ix++;
+                            }
+                        }
+                        return { text: text, role: el.getAttribute('role') || el.tagName.toLowerCase(), xpath: getPathTo(el) };
+                    }).filter(e => e.text.length > 0);
+                }
+                '''
+                live_elements = await page.evaluate(js_script)
+                
+                best_match = recovery.find_new_locator(
+                    intent=intent,
+                    application_id=application_id,
+                    owner_id=owner_id,
+                    live_elements=live_elements,
+                    node_id=None
+                )
+                if best_match:
+                    return f"Found semantic match with {best_match['confidence']*100}% confidence. New xpath: {best_match['xpath']} (text: '{best_match['text']}'). Try clicking this element."
+                return "Recovery failed: Could not find a confident semantic match on the current page."
+            except Exception as exc:
+                return f"Recovery failed: {exc}"
+
         live_step_buffer: list[dict] = []
         visited: list[str] = []
 
@@ -506,6 +565,7 @@ def explore_application(
             task=task_text,
             llm=llm,
             browser_session=browser_session,
+            controller=controller,
             use_vision=True,
             use_thinking=False,
             max_failures=5,
