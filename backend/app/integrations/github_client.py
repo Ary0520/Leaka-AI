@@ -212,3 +212,36 @@ def compute_signature(raw_body: bytes, secret: str) -> str:
     """
     mac = hmac.new(secret.encode("utf-8"), msg=raw_body, digestmod=hashlib.sha256)
     return "sha256=" + mac.hexdigest()
+
+def post_commit_status(token: str, repo_full_name: str, sha: str, state: str, description: str, target_url: Optional[str] = None, context: str = "leaka-ai/qa") -> bool:
+    """
+    Update a commit status in GitHub for CI/CD pipeline gating.
+    State must be one of: error, failure, pending, or success.
+    """
+    if not token or not repo_full_name or not sha:
+        return False
+        
+    try:
+        owner, repo = _split_repo(repo_full_name)
+    except ValueError:
+        return False
+
+    url = f"{GITHUB_API_BASE}/repos/{owner}/{repo}/statuses/{sha}"
+    payload = {
+        "state": state,
+        "description": description[:140], # GitHub max
+        "context": context
+    }
+    if target_url:
+        payload["target_url"] = target_url
+        
+    try:
+        resp = requests.post(url, json=payload, headers=_headers(token), timeout=_TIMEOUT)
+        if resp.status_code == 201:
+            logger.info("Successfully posted %s commit status to %s on %s", state, sha, repo_full_name)
+            return True
+        logger.warning("Failed to post commit status: HTTP %s: %s", resp.status_code, resp.text)
+        return False
+    except Exception as e:
+        logger.error("Exception posting commit status: %s", e)
+        return False

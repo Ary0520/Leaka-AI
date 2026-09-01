@@ -364,6 +364,31 @@ def _m9_flakiness_intelligence() -> None:
                 logger.error("Failed to add column validation_for_job_id: %s", e)
     logger.info("M9 applied: flakiness intelligence columns added.")
 
+def _m10_ci_commit_status() -> None:
+    """Add commit_sha and repo_full_name tracking columns."""
+    with engine.begin() as conn:
+        try:
+            conn.execute(text("ALTER TABLE test_runs ADD COLUMN commit_sha VARCHAR(64)"))
+        except Exception as e:
+            if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
+                logger.error("Failed to add column commit_sha: %s", e)
+        try:
+            conn.execute(text("ALTER TABLE test_runs ADD COLUMN repo_full_name VARCHAR(255)"))
+        except Exception as e:
+            if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
+                logger.error("Failed to add column repo_full_name: %s", e)
+    logger.info("M10 applied: ci commit status columns added.")
+
+def _m11_governable_ai() -> None:
+    """Add policies column to environments."""
+    with engine.begin() as conn:
+        try:
+            conn.execute(text("ALTER TABLE environments ADD COLUMN policies TEXT"))
+        except Exception as e:
+            if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
+                logger.error("Failed to add column policies: %s", e)
+    logger.info("M11 applied: governable AI policies added.")
+
 # ---------------------------------------------------------------------------
 # Public runner
 # ---------------------------------------------------------------------------
@@ -377,6 +402,8 @@ _MIGRATIONS = [
     ("M7_test_run_forensics", _m7_test_run_forensics),
     ("M8_test_data_management", _m8_test_data_management),
     ("M9_flakiness_intelligence", _m9_flakiness_intelligence),
+    ("M10_ci_commit_status", _m10_ci_commit_status),
+    ("M11_governable_ai", _m11_governable_ai),
     ("B1_backfill_graph", _b1_backfill_graph),
 ]
 

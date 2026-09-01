@@ -1215,9 +1215,34 @@ def ci_webhook(
             success_criteria=tc.success_criteria,
             assertions=tc.assertions,  # inherit deterministic assertions
             status=TestRunStatus.PENDING,
+            commit_sha=body.commit_sha,
+            repo_full_name=body.repo_full_name,
         )
         db.add(run)
         db.flush()
+
+        # Try to post pending commit status if repo info provided
+        if body.commit_sha and body.repo_full_name:
+            from app.models import RepoConnection
+            from app.secrets_store import resolve_secret_ref
+            from app.integrations.github_client import post_commit_status
+            
+            repo_conn = db.query(RepoConnection).filter(
+                RepoConnection.repo_full_name == body.repo_full_name,
+                RepoConnection.owner_id == run.owner_id
+            ).first()
+            if repo_conn and repo_conn.secret_ref:
+                pat = resolve_secret_ref(repo_conn.secret_ref)
+                if pat:
+                    post_commit_status(
+                        token=pat,
+                        repo_full_name=body.repo_full_name,
+                        sha=body.commit_sha,
+                        state="pending",
+                        description="Leaka AI test queued.",
+                        context=f"leaka-ai/qa/{run.name}"
+                    )
+
         task_id = _dispatch_run_task(
             job_id=job_id,
             name=run.name,
@@ -2018,6 +2043,38 @@ def _get_owned_graph_node(db: Session, app_row: "Application", node_id: int) -> 
     if not node:
         raise HTTPException(404, "Graph node not found")
     return node
+
+
+class GenerateMatrixRequest(BaseModel):
+    app_map_node_id: Optional[int] = None
+    graph_node_id: Optional[int] = None
+
+
+@app.post("/api/applications/{app_id}/generate-matrix")
+def generate_matrix(
+    app_id: int,
+    body: GenerateMatrixRequest,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Generate a test matrix (happy/negative/edge cases) for a flow."""
+    app_row = _get_owned_application(db, app_id, user)
+    
+    graph_node = None
+    app_map_node = None
+    
+    if body.graph_node_id:
+        graph_node = _get_owned_graph_node(db, app_row, body.graph_node_id)
+    if body.app_map_node_id:
+        app_map_node = db.query(AppMapNode).filter(AppMapNode.id == body.app_map_node_id, AppMapNode.application_id == app_row.id).first()
+        
+    if not graph_node and not app_map_node:
+        raise HTTPException(400, "Must provide either graph_node_id or app_map_node_id")
+        
+    from app.intelligence.generator import generate_test_matrix_for_node
+    matrix = generate_test_matrix_for_node(graph_node, app_map_node)
+    
+    return matrix.model_dump()
 
 
 @app.get(

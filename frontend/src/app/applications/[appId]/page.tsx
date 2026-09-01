@@ -22,6 +22,8 @@ import { HistoryTab } from "@/components/intelligence/history-tab";
 import { MemoryTab } from "@/components/intelligence/memory-tab";
 import { PRIntelligenceTab } from "@/components/intelligence/pr-intelligence-tab";
 import { ConfigurationTab } from "@/components/intelligence/configuration-tab";
+import { TestMatrixDialog } from "@/components/intelligence/test-matrix-dialog";
+import { useState } from "react";
 
 const TERMINAL: ExploreStatus[] = ["completed", "failed", "cancelled"];
 
@@ -60,13 +62,12 @@ export default function ApplicationDetailPage() {
   const latest = data?.latest_explore;
   const isExploring = latest?.status === "running" || latest?.status === "pending";
 
+  const [matrixOpen, setMatrixOpen] = useState(false);
+  const [selectedNode, setSelectedNode] = useState<AppMapNodeOut | null>(null);
+
   const generateTest = (node: AppMapNodeOut) => {
-    // Pre-fill the New Test page from this discovered node
-    const params = new URLSearchParams();
-    params.set("prompt", node.suggested_prompt || `Test the "${node.label}" flow.`);
-    if (node.url) params.set("target_url", node.url);
-    params.set("name", node.label);
-    router.push(`/new?${params.toString()}`);
+    setSelectedNode(node);
+    setMatrixOpen(true);
   };
 
   return (
@@ -275,6 +276,13 @@ export default function ApplicationDetailPage() {
       )}
         </TabsContent>
       </Tabs>
+      <TestMatrixDialog
+        appId={appId}
+        open={matrixOpen}
+        onOpenChange={setMatrixOpen}
+        appMapNodeId={selectedNode?.id}
+        nodeLabel={selectedNode?.label}
+      />
     </div>
   );
 }

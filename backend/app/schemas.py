@@ -214,6 +214,7 @@ class CIWebhookRequest(BaseModel):
     test_case_ids: Optional[List[int]] = None
     branch: Optional[str] = None
     commit_sha: Optional[str] = None
+    repo_full_name: Optional[str] = None
     triggered_by: Optional[str] = None
 
 
@@ -270,11 +271,13 @@ class EnvironmentCreate(BaseModel):
     name: str = Field(..., min_length=1)
     base_url: str = Field(..., min_length=3)
     variables: Optional[str] = None
+    policies: Optional[str] = None
 
 class EnvironmentUpdate(BaseModel):
     name: Optional[str] = None
     base_url: Optional[str] = None
     variables: Optional[str] = None
+    policies: Optional[str] = None
 
 class EnvironmentOut(BaseModel):
     id: int
@@ -282,6 +285,7 @@ class EnvironmentOut(BaseModel):
     name: str
     base_url: str
     variables: Optional[str] = None
+    policies: Optional[str] = None
     created_at: datetime
     class Config:
         from_attributes = True

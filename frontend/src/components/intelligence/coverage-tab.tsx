@@ -17,6 +17,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Sparkles, TestTube2 } from "lucide-react";
 import { riskClasses, coverageMeta } from "@/lib/intelligence";
 import { cn } from "@/lib/utils";
+import { useState } from "react";
+import { TestMatrixDialog } from "./test-matrix-dialog";
 
 export function CoverageTab({ appId }: { appId: number }) {
   const router = useRouter();
@@ -48,14 +50,12 @@ export function CoverageTab({ appId }: { appId: number }) {
     );
   }
 
+  const [matrixOpen, setMatrixOpen] = useState(false);
+  const [selectedGap, setSelectedGap] = useState<NonNullable<typeof data.gaps>[number] | null>(null);
+
   const generate = (gap: NonNullable<typeof data.gaps>[number]) => {
-    const params = new URLSearchParams();
-    params.set("prompt", gap.suggested_prompt || `Test the "${gap.label}" flow.`);
-    if (gap.url) params.set("target_url", gap.url);
-    params.set("name", gap.label);
-    params.set("app_id", String(appId));
-    params.set("node_id", String(gap.node_id)); // real GraphNode id → authoritative link
-    router.push(`/new?${params.toString()}`);
+    setSelectedGap(gap);
+    setMatrixOpen(true);
   };
 
   const app = data.application_rollup;
@@ -156,6 +156,13 @@ export function CoverageTab({ appId }: { appId: number }) {
           )}
         </CardContent>
       </Card>
+      <TestMatrixDialog
+        appId={appId}
+        open={matrixOpen}
+        onOpenChange={setMatrixOpen}
+        graphNodeId={selectedGap?.node_id}
+        nodeLabel={selectedGap?.label}
+      />
     </div>
   );
 }

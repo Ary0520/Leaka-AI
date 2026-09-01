@@ -40,6 +40,7 @@ from .models import (
     TestRunStatus,
     TestScreenshot,
     UserSettings,
+    RepoConnection,
 )
 
 # ---------------------------------------------------------------------------
@@ -651,6 +652,16 @@ def run_browser_test(
         if env.variables:
             task_parts.append(f"Environment Variables (Credentials/Config): {env.variables}")
 
+        if env.policies:
+            task_parts.append(
+                "\n--- GOVERNABLE AI POLICY (CRITICAL) ---\n"
+                "Before performing ANY interaction (click, type, submit, press) that modifies state, "
+                "you MUST explicitly evaluate if the action violates any of the following policies.\n"
+                "If it does, you must abort the action, fail the test, and state which policy was violated.\n"
+                f"POLICIES:\n{env.policies}\n"
+                "---------------------------------------\n"
+            )
+
     if target_url:
         task_parts.append(f"Target URL: {target_url}")
     task_parts.append(f"Task: {prompt}")
@@ -726,7 +737,7 @@ def run_browser_test(
     async def _run_agent():
         from browser_use import Agent
         from browser_use.browser.session import BrowserSession
-        from browser_use.controller.service import Controller
+        from browser_use.controller import Controller
         from browser_use.browser.context import BrowserContext
         import tempfile
         import os
@@ -734,6 +745,25 @@ def run_browser_test(
         har_path = os.path.join(tempfile.gettempdir(), f"har_{job_id}.json")
         browser_session = BrowserSession(headless=True, record_har_path=har_path)
         controller = Controller()
+
+        @controller.action("Execute a raw HTTP API request to test backend endpoints.")
+        async def execute_api_request(method: str, url: str, headers_json: str = "{}", body_json: str = "{}") -> str:
+            """
+            Use this action to test APIs directly without using the browser UI.
+            method: 'GET', 'POST', 'PUT', 'DELETE', etc.
+            url: The endpoint URL.
+            headers_json: JSON string of headers (e.g. '{"Authorization": "Bearer ..."}'). You MUST use credentials from Environment Variables if required.
+            body_json: JSON string of the request body (or empty '{}' if none).
+            """
+            import requests
+            import json
+            try:
+                headers = json.loads(headers_json)
+                body = json.loads(body_json)
+                resp = requests.request(method, url, headers=headers, json=body if body else None, timeout=15)
+                return f"Status Code: {resp.status_code}\nResponse Body: {resp.text}"
+            except Exception as e:
+                return f"API Request Failed: {e}"
 
         @controller.action("Recover missing element locator using semantic search. Call this ONLY if you fail to find an element you need.")
         async def recover_missing_element(intent: str, browser: BrowserContext) -> str:
@@ -1409,9 +1439,26 @@ def run_browser_test(
             db = SessionLocal()
             try:
                 run = db.query(TestRun).filter(TestRun.job_id == job_id).first()
+                if run and run.test_case_id:
+                    tc = db.query(TestCase).filter(TestCase.id == run.test_case_id).first()
+                    # Auto-resolve Linear issues
+                    open_issues = db.query(LinearIssue).filter(LinearIssue.test_run_id.in_(
+                        db.query(TestRun.id).filter(TestRun.test_case_id == tc.id)
+                    )).all()
+                    
+                    if open_issues:
+                        from .integrations.linear_client import close_issue
+                        for issue in open_issues:
+                            logger.info(f"Auto-resolving Linear issue {issue.identifier} for passed test {tc.id}")
+                            try:
+                                close_issue(issue.issue_id)
+                                db.delete(issue) # Remove from DB so it's not tracked as open
+                            except Exception as e:
+                                logger.error(f"Failed to auto-resolve issue: {e}")
+                        db.commit()
+
                 if run and run.validation_for_job_id and run.test_case_id:
                     logger.info(f"Validation Run {job_id} PASSED. Original failure was flaky. Quarantining.")
-                    tc = db.query(TestCase).filter(TestCase.id == run.test_case_id).first()
                     if tc:
                         tc.is_quarantined = True
                         db.commit()
@@ -1615,6 +1662,50 @@ def run_browser_test(
                     "Auto-integration block CRASHED (job_id=%s): %s",
                     job_id, _integ_exc, exc_info=True,
                 )
+
+        # --- Update GitHub Commit Status ---
+        db = SessionLocal()
+        try:
+            run = db.query(TestRun).filter(TestRun.job_id == job_id).first()
+            if run and run.commit_sha and run.repo_full_name:
+                from .secrets_store import resolve_secret_ref
+                from .integrations.github_client import post_commit_status
+                
+                report_state = None
+                if final_status == TestRunStatus.COMPLETED:
+                    report_state = "success"
+                elif final_status == TestRunStatus.FAILED:
+                    if not skip_integrations:
+                        report_state = "failure"
+                
+                if report_state:
+                    repo_conn = db.query(RepoConnection).filter(
+                        RepoConnection.repo_full_name == run.repo_full_name,
+                        RepoConnection.owner_id == run.owner_id
+                    ).first()
+                    
+                    if repo_conn and repo_conn.secret_ref:
+                        pat = resolve_secret_ref(repo_conn.secret_ref)
+                        if pat:
+                            user_settings = db.query(UserSettings).filter(UserSettings.owner_id == run.owner_id).first()
+                            dash_url = user_settings.dashboard_base_url if user_settings else settings.DASHBOARD_BASE_URL
+                            target_url = f"{dash_url}/runs/{job_id}" if dash_url else None
+                            
+                            desc = "Test Passed" if report_state == "success" else f"Test Failed: {run.rca_category or 'Unknown'}"
+                            
+                            post_commit_status(
+                                token=pat,
+                                repo_full_name=run.repo_full_name,
+                                sha=run.commit_sha,
+                                state=report_state,
+                                description=desc,
+                                target_url=target_url,
+                                context=f"leaka-ai/qa/{name}"
+                            )
+        except Exception as _gh_exc:
+            logger.error("GitHub commit status update CRASHED (job_id=%s): %s", job_id, _gh_exc)
+        finally:
+            db.close()
 
         if fixture_teardown_url:
             try:

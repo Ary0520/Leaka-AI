@@ -62,6 +62,8 @@ class TestRun(Base):
     task_id = Column(String(128), unique=True, index=True, nullable=True)
     test_case_id = Column(Integer, ForeignKey("test_cases.id"), nullable=True)
     validation_for_job_id = Column(String(64), nullable=True)
+    commit_sha = Column(String(64), nullable=True)
+    repo_full_name = Column(String(255), nullable=True)
 
     name = Column(String(255), nullable=False)
     prompt = Column(Text, nullable=False)
@@ -227,6 +229,7 @@ class Environment(Base):
     name = Column(String(128), nullable=False)
     base_url = Column(String(2048), nullable=False)
     variables = Column(Text, nullable=True) # JSON dictionary of environment variables/credentials
+    policies = Column(Text, nullable=True) # Natural language rules (e.g. "Do not click delete buttons")
     created_at = Column(DateTime, default=datetime.utcnow)
 
     application = relationship("Application", back_populates="environments")
