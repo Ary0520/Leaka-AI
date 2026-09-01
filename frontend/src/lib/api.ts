@@ -252,6 +252,7 @@ export interface EnvironmentOut {
   name: string;
   base_url: string;
   variables?: string | null;
+  policies?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -260,6 +261,7 @@ export interface EnvironmentCreate {
   name: string;
   base_url: string;
   variables?: string | null;
+  policies?: string | null;
 }
 
 export interface TestFixtureOut {
@@ -790,6 +792,11 @@ export const api = {
     request<ExploreRunStatusResponse>(`/api/explore/status/${jobId}`),
   getApplicationMap: (id: number) =>
     request<ApplicationMapResponse>(`/api/applications/${id}/map`),
+  generateTestMatrix: (id: number, app_map_node_id?: number, graph_node_id?: number) =>
+    request<{ test_cases: Array<{ name: string; prompt: string; success_criteria: string; assertions: any[] }> }>(
+      `/api/applications/${id}/generate-matrix`,
+      { method: "POST", body: JSON.stringify({ app_map_node_id, graph_node_id }) },
+    ),
 
   // Application Graph (Layer 1)
   getApplicationGraph: (

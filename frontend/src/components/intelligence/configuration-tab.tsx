@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Database, Server, Key, RefreshCw } from "lucide-react";
+import { Plus, Database, Server, Key, RefreshCw, Shield } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 import {
   Dialog,
@@ -39,17 +39,19 @@ export function ConfigurationTab({ appId }: { appId: number }) {
   const [envName, setEnvName] = useState("");
   const [envBaseUrl, setEnvBaseUrl] = useState("");
   const [envVars, setEnvVars] = useState("");
+  const [envPolicies, setEnvPolicies] = useState("");
 
   const envMut = useMutation({
     mutationFn: () => api.createEnvironment(appId, {
       name: envName,
       base_url: envBaseUrl,
       variables: envVars || undefined,
+      policies: envPolicies || undefined,
     }),
     onSuccess: () => {
       toast({ title: "Environment created" });
       setEnvOpen(false);
-      setEnvName(""); setEnvBaseUrl(""); setEnvVars("");
+      setEnvName(""); setEnvBaseUrl(""); setEnvVars(""); setEnvPolicies("");
       qc.invalidateQueries({ queryKey: ["environments", appId] });
     },
   });
@@ -113,6 +115,14 @@ export function ConfigurationTab({ appId }: { appId: number }) {
                   <Label>Variables (JSON)</Label>
                   <Textarea placeholder={'{"API_KEY": "xxx"}'} value={envVars} onChange={e => setEnvVars(e.target.value)} className="font-mono text-sm" />
                 </div>
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-2">
+                    <Shield className="w-4 h-4 text-amber-500" />
+                    AI Policies (Natural Language)
+                  </Label>
+                  <Textarea placeholder="e.g. Do not submit any forms with 'Delete' in the title." value={envPolicies} onChange={e => setEnvPolicies(e.target.value)} className="text-sm h-20" />
+                  <p className="text-xs text-muted-foreground">Governable AI: The agent will explicitly evaluate these rules before executing actions.</p>
+                </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setEnvOpen(false)}>Cancel</Button>
@@ -128,19 +138,27 @@ export function ConfigurationTab({ appId }: { appId: number }) {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {envs?.length === 0 && <p className="text-sm text-muted-foreground col-span-full">No environments defined.</p>}
               {envs?.map(env => (
-                <Card key={env.id} className="overflow-hidden">
+                <Card key={env.id} className="overflow-hidden border-t-4 border-t-primary">
                   <CardHeader className="p-4 bg-muted/30 pb-2">
                     <CardTitle className="text-base flex justify-between">
                       {env.name}
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className="p-4 pt-2 space-y-2">
-                    <div className="text-sm truncate font-mono text-muted-foreground" title={env.base_url}>
+                  <CardContent className="p-4 pt-3 space-y-3">
+                    <div className="text-sm truncate font-mono text-muted-foreground bg-muted p-2 rounded" title={env.base_url}>
                       {env.base_url}
                     </div>
                     {env.variables && (
-                      <div className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                      <div className="flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-400 font-medium bg-emerald-500/10 p-2 rounded">
                         <Key className="w-3 h-3" /> Secure variables injected
+                      </div>
+                    )}
+                    {env.policies && (
+                      <div className="flex flex-col gap-1 text-xs text-amber-600 dark:text-amber-500 font-medium bg-amber-500/10 p-2 rounded border border-amber-500/20">
+                        <div className="flex items-center gap-2">
+                          <Shield className="w-3 h-3" /> Active Policies
+                        </div>
+                        <span className="font-normal text-muted-foreground line-clamp-2" title={env.policies}>{env.policies}</span>
                       </div>
                     )}
                   </CardContent>

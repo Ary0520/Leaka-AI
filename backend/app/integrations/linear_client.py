@@ -81,3 +81,55 @@ def list_teams() -> list[dict[str, Any]]:
     )
     resp.raise_for_status()
     return resp.json().get("data", {}).get("teams", {}).get("nodes", []) or []
+def close_issue(issue_id: str, team_id: Optional[str] = None) -> bool:
+    """
+    Close/Resolve a Linear issue by setting its state to a 'completed' workflow state.
+    """
+    tid = team_id or settings.LINEAR_TEAM_ID
+    if not tid:
+        return False
+
+    # 1. Fetch completed state ID for the team
+    query = """
+    query TeamStates($teamId: String!) {
+        team(id: $teamId) {
+            workflowStates {
+                nodes { id type }
+            }
+        }
+    }
+    """
+    resp = requests.post(
+        LINEAR_ENDPOINT,
+        headers=_headers(),
+        data=json.dumps({"query": query, "variables": {"teamId": tid}}),
+        timeout=15,
+    )
+    if resp.status_code != 200:
+        return False
+        
+    states = resp.json().get("data", {}).get("team", {}).get("workflowStates", {}).get("nodes", [])
+    completed_state_id = next((s["id"] for s in states if s.get("type") == "completed"), None)
+    
+    if not completed_state_id:
+        return False
+
+    # 2. Update issue
+    mutation = """
+    mutation IssueUpdate($id: String!, $input: IssueUpdateInput!) {
+        issueUpdate(id: $id, input: $input) {
+            success
+        }
+    }
+    """
+    variables = {
+        "id": issue_id,
+        "input": {"stateId": completed_state_id}
+    }
+    resp2 = requests.post(
+        LINEAR_ENDPOINT,
+        headers=_headers(),
+        data=json.dumps({"query": mutation, "variables": variables}),
+        timeout=15,
+    )
+    return resp2.status_code == 200 and resp2.json().get("data", {}).get("issueUpdate", {}).get("success") == True
