@@ -389,6 +389,16 @@ def _m11_governable_ai() -> None:
                 logger.error("Failed to add column policies: %s", e)
     logger.info("M11 applied: governable AI policies added.")
 
+def _m12_user_settings_onboarding() -> None:
+    """Add onboarding_completed to user_settings."""
+    with engine.begin() as conn:
+        try:
+            conn.execute(text("ALTER TABLE user_settings ADD COLUMN onboarding_completed BOOLEAN NOT NULL DEFAULT FALSE"))
+        except Exception as e:
+            if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
+                logger.error("Failed to add column onboarding_completed: %s", e)
+    logger.info("M12 applied: onboarding_completed added.")
+
 # ---------------------------------------------------------------------------
 # Public runner
 # ---------------------------------------------------------------------------
@@ -404,6 +414,7 @@ _MIGRATIONS = [
     ("M9_flakiness_intelligence", _m9_flakiness_intelligence),
     ("M10_ci_commit_status", _m10_ci_commit_status),
     ("M11_governable_ai", _m11_governable_ai),
+    ("M12_user_settings_onboarding", _m12_user_settings_onboarding),
     ("B1_backfill_graph", _b1_backfill_graph),
 ]
 
