@@ -1,0 +1,49 @@
+name: Trigger auto deployment for leaka-api
+
+# When this action will be executed
+on:
+  # Automatically trigger it when detected changes in repo
+  push:
+    branches: 
+      [ main ]
+    paths:
+    - '**'
+    - '.github/workflows/leaka-api-AutoDeployTrigger-6655fb7e-70bc-48bb-8393-ad72a642cb69.yml'
+
+  # Allow manual trigger 
+  workflow_dispatch:      
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions: 
+      id-token: write #This is required for requesting the OIDC JWT Token
+      contents: read #Required when GH token is used to authenticate with private repo
+
+    steps:
+      - name: Checkout to the branch
+        uses: actions/checkout@v2
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.LEAKAAPI_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.LEAKAAPI_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.LEAKAAPI_AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push container image to registry
+        uses: azure/container-apps-deploy-action@v2
+        with:
+          appSourcePath: ${{ github.workspace }}/backend
+          _dockerfilePathKey_: _dockerfilePath_
+          _targetLabelKey_: _targetLabel_
+          registryUrl: leakaairegistery.azurecr.io
+          registryUsername: ${{ secrets.LEAKAAPI_REGISTRY_USERNAME }}
+          registryPassword: ${{ secrets.LEAKAAPI_REGISTRY_PASSWORD }}
+          containerAppName: leaka-api
+          resourceGroup: leaka-ai-rg
+          imageToBuild: leakaairegistery.azurecr.io/leaka-api:${{ github.sha }}
+          _buildArgumentsKey_: |
+            _buildArgumentsValues_
+
+
