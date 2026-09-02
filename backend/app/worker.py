@@ -734,15 +734,16 @@ def run_browser_test(
 
     task_text = "\n".join(task_parts)
 
+    import tempfile
+    import os
+    har_path = os.path.join(tempfile.gettempdir(), f"har_{job_id}.json")
+
     async def _run_agent():
         from browser_use import Agent
         from browser_use.browser.session import BrowserSession
         from browser_use.controller import Controller
-        from browser_use.browser.context import BrowserContext
-        import tempfile
         import os
 
-        har_path = os.path.join(tempfile.gettempdir(), f"har_{job_id}.json")
         browser_session = BrowserSession(headless=True, record_har_path=har_path)
         controller = Controller()
 
@@ -766,7 +767,7 @@ def run_browser_test(
                 return f"API Request Failed: {e}"
 
         @controller.action("Recover missing element locator using semantic search. Call this ONLY if you fail to find an element you need.")
-        async def recover_missing_element(intent: str, browser: BrowserContext) -> str:
+        async def recover_missing_element(intent: str, browser_session: BrowserSession) -> str:
             """
             Use this action if a button or element is missing from the page.
             Provide a descriptive 'intent' of what you are looking for (e.g. 'Submit Order button').
@@ -783,7 +784,7 @@ def run_browser_test(
                 finally:
                     db.close()
                 
-                page = await browser.get_current_page()
+                page = await browser_session.get_current_page()
                 js_script = '''
                 () => {
                     const elements = Array.from(document.querySelectorAll('a, button, input, select, textarea, [role="button"], [role="link"], [role="menuitem"], [tabindex]:not([tabindex="-1"])'));
