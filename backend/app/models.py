@@ -230,6 +230,14 @@ class Environment(Base):
     base_url = Column(String(2048), nullable=False)
     variables = Column(Text, nullable=True) # JSON dictionary of environment variables/credentials
     policies = Column(Text, nullable=True) # Natural language rules (e.g. "Do not click delete buttons")
+    
+    # --- Enterprise State & Authentication Architecture ---
+    auth_strategy = Column(String(32), nullable=False, default="none")  # none | api_injection | state_cache | ephemeral_users
+    auth_api_url = Column(String(2048), nullable=True)  # The API endpoint to provision the session or ephemeral user
+    auth_payload = Column(Text, nullable=True)          # JSON payload for the auth API
+    auth_token_path = Column(String(128), nullable=True) # JSON key containing the token in the API response (e.g., "access_token")
+    auth_state_template = Column(Text, nullable=True)    # The Playwright storageState JSON. For api_injection, supports {{token}} replacement. For state_cache, contains the raw Golden State.
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     application = relationship("Application", back_populates="environments")
