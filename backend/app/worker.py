@@ -686,6 +686,58 @@ def run_browser_test(
             )
             raise RuntimeError(f"Fixture setup failed: {e}") from e
 
+    # 3. Enterprise Auth Strategy Resolution
+    storage_state_dict = None
+    if env and env.auth_strategy and env.auth_strategy != "none":
+        try:
+            if env.auth_strategy == "state_cache":
+                if env.auth_state_template:
+                    import tempfile
+                    import os
+                    fd, temp_state_path = tempfile.mkstemp(suffix=".json", prefix="auth_state_")
+                    with os.fdopen(fd, "w") as f:
+                        f.write(env.auth_state_template)
+                    storage_state_dict = temp_state_path
+            elif env.auth_strategy in ("api_injection", "ephemeral_users"):
+                payload = json.loads(env.auth_payload) if env.auth_payload else {}
+                resp = requests.post(env.auth_api_url, json=payload, timeout=15)
+                resp.raise_for_status()
+                auth_data = resp.json()
+                
+                # Extract the token based on dot-notation path
+                token = auth_data
+                if env.auth_token_path:
+                    for key in env.auth_token_path.split('.'):
+                        if isinstance(token, dict):
+                            token = token.get(key)
+                            
+                if env.auth_state_template and token:
+                    templated = env.auth_state_template.replace("{{token}}", str(token))
+                    
+                    # ── BROWSER-USE WINDOWS BUGFIX ─────────────────────────────────────
+                    # browser-use 0.13.7 StorageStateWatchdog crashes on Windows with WinError 123
+                    # if storage_state is passed as a dict because os.path.exists() fails.
+                    # We must write it to a temporary JSON file and pass the filepath string instead.
+                    import tempfile
+                    import os
+                    fd, temp_state_path = tempfile.mkstemp(suffix=".json", prefix="auth_state_")
+                    with os.fdopen(fd, "w") as f:
+                        f.write(templated)
+                    
+                    storage_state_dict = temp_state_path
+                    task_parts.append(f"Enterprise Auth (API Injection): Successfully provisioned headless session.")
+        except Exception as e:
+            _update_db_status(
+                job_id,
+                status=TestRunStatus.FAILED,
+                patch={
+                    "error_message": f"Auth Strategy '{env.auth_strategy}' failed: {e}",
+                    "completed_at": datetime.utcnow(),
+                    "is_successful": False,
+                },
+            )
+            raise RuntimeError(f"Auth Strategy '{env.auth_strategy}' failed: {e}") from e
+
     if success_criteria:
         task_parts.append(f"Success criteria to validate after execution: {success_criteria}")
 
@@ -744,7 +796,7 @@ def run_browser_test(
         from browser_use.controller import Controller
         import os
 
-        browser_session = BrowserSession(headless=True, record_har_path=har_path)
+        browser_session = BrowserSession(headless=True, record_har_path=har_path, storage_state=storage_state_dict)
         controller = Controller()
 
         @controller.action("Execute a raw HTTP API request to test backend endpoints.")
