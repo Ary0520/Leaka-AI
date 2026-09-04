@@ -1644,6 +1644,16 @@ def create_environment(app_id: int, body: EnvironmentCreate, db: Session = Depen
     db.refresh(env)
     return env
 
+@app.delete("/api/applications/{app_id}/environments/{env_id}")
+def delete_environment(app_id: int, env_id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    _get_owned_application(db, app_id, user)
+    env = db.query(Environment).filter(Environment.id == env_id, Environment.application_id == app_id).first()
+    if not env:
+        raise HTTPException(status_code=404, detail="Environment not found")
+    db.delete(env)
+    db.commit()
+    return {"success": True}
+
 
 # ── Fixtures ──
 @app.get("/api/applications/{app_id}/fixtures", response_model=list[TestFixtureOut])

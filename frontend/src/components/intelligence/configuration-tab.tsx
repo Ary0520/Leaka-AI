@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Database, Server, Key, RefreshCw, Shield } from "lucide-react";
+import { Plus, Database, Server, Key, RefreshCw, Shield, Trash2 } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 import {
   Dialog,
@@ -66,6 +66,20 @@ export function ConfigurationTab({ appId }: { appId: number }) {
       qc.invalidateQueries({ queryKey: ["environments", appId] });
     },
   });
+
+  const envDeleteMut = useMutation({
+    mutationFn: (envId: number) => api.deleteEnvironment(appId, envId),
+    onSuccess: () => {
+      toast({ title: "Environment deleted" });
+      qc.invalidateQueries({ queryKey: ["environments", appId] });
+    },
+  });
+
+  const handleDeleteEnv = (id: number, name: string) => {
+    if (window.confirm(`Are you sure you want to permanently delete the environment "${name}"?`)) {
+      envDeleteMut.mutate(id);
+    }
+  };
 
   // Fixture form state
   const [fixOpen, setFixOpen] = useState(false);
@@ -204,8 +218,11 @@ export function ConfigurationTab({ appId }: { appId: number }) {
               {envs?.map(env => (
                 <Card key={env.id} className="overflow-hidden border-t-4 border-t-primary">
                   <CardHeader className="p-4 bg-muted/30 pb-2">
-                    <CardTitle className="text-base flex justify-between">
+                    <CardTitle className="text-base flex justify-between items-center">
                       {env.name}
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteEnv(env.id, env.name)}>
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="p-4 pt-3 space-y-3">
