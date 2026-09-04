@@ -253,6 +253,11 @@ export interface EnvironmentOut {
   base_url: string;
   variables?: string | null;
   policies?: string | null;
+  auth_strategy?: string | null;
+  auth_api_url?: string | null;
+  auth_payload?: string | null;
+  auth_token_path?: string | null;
+  auth_state_template?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -262,6 +267,11 @@ export interface EnvironmentCreate {
   base_url: string;
   variables?: string | null;
   policies?: string | null;
+  auth_strategy?: string | null;
+  auth_api_url?: string | null;
+  auth_payload?: string | null;
+  auth_token_path?: string | null;
+  auth_state_template?: string | null;
 }
 
 export interface TestFixtureOut {
