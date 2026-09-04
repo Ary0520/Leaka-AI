@@ -679,6 +679,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  deleteEnvironment: (appId: number, envId: number) =>
+    request<{ success: boolean }>(`/api/applications/${appId}/environments/${envId}`, {
+      method: "DELETE",
+    }),
   listFixtures: (appId: number) =>
     request<TestFixtureOut[]>(`/api/applications/${appId}/fixtures`),
   createFixture: (appId: number, body: TestFixtureCreate) =>
