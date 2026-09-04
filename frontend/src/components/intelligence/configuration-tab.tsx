@@ -40,6 +40,11 @@ export function ConfigurationTab({ appId }: { appId: number }) {
   const [envBaseUrl, setEnvBaseUrl] = useState("");
   const [envVars, setEnvVars] = useState("");
   const [envPolicies, setEnvPolicies] = useState("");
+  const [envAuthStrategy, setEnvAuthStrategy] = useState("none");
+  const [envAuthApiUrl, setEnvAuthApiUrl] = useState("");
+  const [envAuthPayload, setEnvAuthPayload] = useState("");
+  const [envAuthTokenPath, setEnvAuthTokenPath] = useState("");
+  const [envAuthStateTemplate, setEnvAuthStateTemplate] = useState("");
 
   const envMut = useMutation({
     mutationFn: () => api.createEnvironment(appId, {
@@ -47,11 +52,17 @@ export function ConfigurationTab({ appId }: { appId: number }) {
       base_url: envBaseUrl,
       variables: envVars || undefined,
       policies: envPolicies || undefined,
+      auth_strategy: envAuthStrategy !== "none" ? envAuthStrategy : undefined,
+      auth_api_url: envAuthApiUrl || undefined,
+      auth_payload: envAuthPayload || undefined,
+      auth_token_path: envAuthTokenPath || undefined,
+      auth_state_template: envAuthStateTemplate || undefined,
     }),
     onSuccess: () => {
       toast({ title: "Environment created" });
       setEnvOpen(false);
       setEnvName(""); setEnvBaseUrl(""); setEnvVars(""); setEnvPolicies("");
+      setEnvAuthStrategy("none"); setEnvAuthApiUrl(""); setEnvAuthPayload(""); setEnvAuthTokenPath(""); setEnvAuthStateTemplate("");
       qc.invalidateQueries({ queryKey: ["environments", appId] });
     },
   });
@@ -102,7 +113,7 @@ export function ConfigurationTab({ appId }: { appId: number }) {
                 <DialogTitle>New Environment</DialogTitle>
                 <DialogDescription>Define a reusable target environment.</DialogDescription>
               </DialogHeader>
-              <div className="space-y-4 py-4">
+              <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto px-2">
                 <div className="space-y-2">
                   <Label>Name</Label>
                   <Input placeholder="e.g. Staging" value={envName} onChange={e => setEnvName(e.target.value)} />
@@ -123,6 +134,59 @@ export function ConfigurationTab({ appId }: { appId: number }) {
                   <Textarea placeholder="e.g. Do not submit any forms with 'Delete' in the title." value={envPolicies} onChange={e => setEnvPolicies(e.target.value)} className="text-sm h-20" />
                   <p className="text-xs text-muted-foreground">Governable AI: The agent will explicitly evaluate these rules before executing actions.</p>
                 </div>
+                <div className="space-y-2 pt-4 border-t border-muted">
+                  <h4 className="font-medium text-sm">Enterprise Authentication</h4>
+                  <p className="text-xs text-muted-foreground">Automatically inject session state to bypass UI logins.</p>
+                  
+                  <div className="space-y-4 pt-2">
+                    <div className="space-y-2">
+                      <Label>Auth Strategy</Label>
+                      <select 
+                        value={envAuthStrategy} 
+                        onChange={e => setEnvAuthStrategy(e.target.value)}
+                        className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <option value="none">None (Standard UI Login)</option>
+                        <option value="api_injection">API Session Injection</option>
+                        <option value="state_cache">Golden State Cache</option>
+                      </select>
+                    </div>
+
+                    {envAuthStrategy === "api_injection" && (
+                      <div className="space-y-4 p-4 border rounded-md bg-muted/10">
+                        <div className="space-y-2">
+                          <Label className="text-xs">Auth API URL (POST)</Label>
+                          <Input placeholder="https://api.myapp.com/login" value={envAuthApiUrl} onChange={e => setEnvAuthApiUrl(e.target.value)} />
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-xs">Auth Payload (JSON)</Label>
+                          <Textarea placeholder={'{"username": "admin", "password": "xxx"}'} value={envAuthPayload} onChange={e => setEnvAuthPayload(e.target.value)} className="font-mono text-xs h-20" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-xs">Auth Token Path</Label>
+                          <Input placeholder="data.token" value={envAuthTokenPath} onChange={e => setEnvAuthTokenPath(e.target.value)} />
+                          <p className="text-[10px] text-muted-foreground">Dot notation path to extract token from response.</p>
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-xs">Auth State Template (Playwright JSON)</Label>
+                          <Textarea placeholder={'{"origins": [{"origin": "...", "localStorage": [{"name": "token", "value": "{{token}}"}]}]}'} value={envAuthStateTemplate} onChange={e => setEnvAuthStateTemplate(e.target.value)} className="font-mono text-xs h-32" />
+                          <p className="text-[10px] text-muted-foreground">Use {'{{token}}'} to inject the extracted token.</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {envAuthStrategy === "state_cache" && (
+                      <div className="space-y-4 p-4 border rounded-md bg-muted/10">
+                        <div className="space-y-2">
+                          <Label className="text-xs">Golden State JSON (Playwright format)</Label>
+                          <Textarea placeholder={'{"cookies": [...], "origins": [...]}'} value={envAuthStateTemplate} onChange={e => setEnvAuthStateTemplate(e.target.value)} className="font-mono text-xs h-40" />
+                          <p className="text-[10px] text-muted-foreground">Paste your pre-authenticated Playwright storage state here.</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setEnvOpen(false)}>Cancel</Button>
@@ -189,7 +253,7 @@ export function ConfigurationTab({ appId }: { appId: number }) {
                 <DialogTitle>New Test Fixture</DialogTitle>
                 <DialogDescription>Configure webhook endpoints to provision temporary test data.</DialogDescription>
               </DialogHeader>
-              <div className="grid grid-cols-2 gap-4 py-4">
+              <div className="grid grid-cols-2 gap-4 py-4 max-h-[60vh] overflow-y-auto px-2">
                 <div className="col-span-2 space-y-2">
                   <Label>Fixture Name</Label>
                   <Input placeholder="e.g. Fresh Pro User" value={fixName} onChange={e => setFixName(e.target.value)} />

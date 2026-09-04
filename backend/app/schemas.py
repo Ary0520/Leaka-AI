@@ -272,12 +272,22 @@ class EnvironmentCreate(BaseModel):
     base_url: str = Field(..., min_length=3)
     variables: Optional[str] = None
     policies: Optional[str] = None
+    auth_strategy: Optional[str] = None
+    auth_api_url: Optional[str] = None
+    auth_payload: Optional[str] = None
+    auth_token_path: Optional[str] = None
+    auth_state_template: Optional[str] = None
 
 class EnvironmentUpdate(BaseModel):
     name: Optional[str] = None
     base_url: Optional[str] = None
     variables: Optional[str] = None
     policies: Optional[str] = None
+    auth_strategy: Optional[str] = None
+    auth_api_url: Optional[str] = None
+    auth_payload: Optional[str] = None
+    auth_token_path: Optional[str] = None
+    auth_state_template: Optional[str] = None
 
 class EnvironmentOut(BaseModel):
     id: int
@@ -286,7 +296,13 @@ class EnvironmentOut(BaseModel):
     base_url: str
     variables: Optional[str] = None
     policies: Optional[str] = None
+    auth_strategy: str
+    auth_api_url: Optional[str] = None
+    auth_payload: Optional[str] = None
+    auth_token_path: Optional[str] = None
+    auth_state_template: Optional[str] = None
     created_at: datetime
+    updated_at: datetime
     class Config:
         from_attributes = True
 
