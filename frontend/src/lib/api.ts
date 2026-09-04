@@ -259,7 +259,6 @@ export interface EnvironmentOut {
   auth_token_path?: string | null;
   auth_state_template?: string | null;
   created_at: string;
-  updated_at: string;
 }
 
 export interface EnvironmentCreate {
