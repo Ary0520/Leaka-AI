@@ -302,7 +302,6 @@ class EnvironmentOut(BaseModel):
     auth_token_path: Optional[str] = None
     auth_state_template: Optional[str] = None
     created_at: datetime
-    updated_at: datetime
     class Config:
         from_attributes = True
 
