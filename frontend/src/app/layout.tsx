@@ -10,9 +10,11 @@ export const metadata: Metadata = {
     "Autonomous QA agent for e-commerce and SaaS revenue flows using natural language.",
 };
 
-import { JetBrains_Mono } from "next/font/google";
+import { JetBrains_Mono, Instrument_Sans, Instrument_Serif } from "next/font/google";
 
-const font = JetBrains_Mono({ subsets: ["latin"] });
+const jetbrainsMono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains" });
+const instrumentSans = Instrument_Sans({ subsets: ["latin"], variable: "--font-instrument" });
+const instrumentSerif = Instrument_Serif({ subsets: ["latin"], weight: "400", variable: "--font-instrument-serif" });
 
 import NextTopLoader from 'nextjs-toploader';
 
@@ -23,7 +25,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`min-h-screen bg-background ${font.className}`}>
+      <body className={`min-h-screen bg-background ${instrumentSans.variable} ${instrumentSerif.variable} ${jetbrainsMono.variable} font-sans antialiased`}>
         <NextTopLoader color="#5E6AD2" showSpinner={false} />
         <ReactQueryProvider>
           <ConditionalShell>{children}</ConditionalShell>
