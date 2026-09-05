@@ -166,6 +166,19 @@ class UserSettings(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+class ApiKey(Base):
+    """
+    Long-lived API keys for CI/CD integrations and Self-Hosted Runners.
+    """
+    __tablename__ = "api_keys"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(String(64), nullable=False, index=True)
+    name = Column(String(128), nullable=False)
+    key_hash = Column(String(64), nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_used_at = Column(DateTime, nullable=True)
+
 
 # ===========================================================================
 # APPLICATION INTELLIGENCE (Explore Mode)
