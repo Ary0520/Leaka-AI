@@ -139,3 +139,33 @@ def get_current_user_optional(
         return verify_token(creds.credentials)
     except HTTPException:
         return None
+
+import hashlib
+from fastapi import Header
+from sqlalchemy.orm import Session
+from .database import get_db
+from .models import ApiKey
+from datetime import datetime
+
+def get_runner_user(
+    x_runner_token: str = Header(..., description="Long-lived API key for CI/CD runners"),
+    db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """
+    Authenticates a CI/CD Runner using a long-lived API Key.
+    Returns a mock JWT payload dict containing `{"sub": owner_id}` 
+    so it cleanly interfaces with existing functions like _get_owned_run.
+    """
+    key_hash = hashlib.sha256(x_runner_token.encode("utf-8")).hexdigest()
+    api_key = db.query(ApiKey).filter(ApiKey.key_hash == key_hash).first()
+    
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or revoked Runner Token."
+        )
+        
+    api_key.last_used_at = datetime.utcnow()
+    db.commit()
+    
+    return {"sub": api_key.owner_id, "is_runner": True, "api_key_id": api_key.id}
