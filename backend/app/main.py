@@ -225,6 +225,9 @@ app = FastAPI(
     description="Autonomous QA agent for revenue flows using browser-use.",
 )
 
+from .routers import runner
+app.include_router(runner.router)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS or ["*"],
