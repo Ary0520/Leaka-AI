@@ -463,6 +463,43 @@ def update_integration_settings(body: IntegrationSettingsUpdate, user: dict = De
 # Dashboard health overview — test cases with run history
 # ---------------------------------------------------------------------------
 @app.get("/api/dashboard/health")
+
+@app.get("/api/dashboard/kpis")
+def dashboard_kpis(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    owner = user["sub"]
+    from datetime import datetime, timedelta
+    seven_days_ago = datetime.utcnow() - timedelta(days=7)
+
+    # 1. Pipeline Pass Rate (Last 7 Days)
+    total_runs_7d = db.query(TestRun).filter(TestRun.owner_id == owner, TestRun.created_at >= seven_days_ago, TestRun.status != TestRunStatus.PENDING).count()
+    passed_runs_7d = db.query(TestRun).filter(TestRun.owner_id == owner, TestRun.created_at >= seven_days_ago, TestRun.is_successful == True).count()
+    pass_rate = round((passed_runs_7d / total_runs_7d) * 100, 1) if total_runs_7d > 0 else None
+
+    # 2. Flake Rate
+    flaky_runs = db.query(TestRun).filter(TestRun.owner_id == owner, TestRun.created_at >= seven_days_ago, TestRun.is_flaky == True).count()
+    flake_rate = round((flaky_runs / total_runs_7d) * 100, 1) if total_runs_7d > 0 else 0
+
+    # 3. Quarantined Tests
+    quarantined_tests = db.query(TestCase).filter(TestCase.owner_id == owner, TestCase.is_quarantined == True).count()
+
+    # 4. Failure Categories
+    from sqlalchemy import func
+    failures = db.query(TestRun.rca_category, func.count(TestRun.id)).filter(
+        TestRun.owner_id == owner, TestRun.is_successful == False, TestRun.rca_category != None
+    ).group_by(TestRun.rca_category).all()
+    failure_categories = [{"category": str(f[0]), "count": f[1]} for f in failures]
+
+    return {
+        "pass_rate": pass_rate,
+        "flake_rate": flake_rate,
+        "quarantined_tests": quarantined_tests,
+        "failure_categories": failure_categories
+    }
+
+
 def dashboard_health(
     limit: int = 14,
     db: Session = Depends(get_db),
