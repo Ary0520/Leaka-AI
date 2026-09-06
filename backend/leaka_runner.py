@@ -8,8 +8,6 @@ import tempfile
 from typing import Any
 
 from pydantic import SecretStr
-from langchain_openai import ChatOpenAI
-from langchain_anthropic import ChatAnthropic
 from browser_use import Agent
 from browser_use.browser.session import BrowserSession
 
@@ -42,21 +40,24 @@ async def run_job(job_id: str, token: str):
     
     # Configure LLM (Honors standard env vars)
     llm_provider = os.getenv("LLM_PROVIDER", "openai").lower()
+    
     if llm_provider == "anthropic":
+        from browser_use.llm import ChatAnthropic
         llm = ChatAnthropic(
             model_name="claude-3-5-sonnet-20241022",
-            api_key=SecretStr(os.getenv("ANTHROPIC_API_KEY", "")),
+            api_key=os.getenv("ANTHROPIC_API_KEY", ""),
         )
     elif llm_provider == "openrouter":
-        llm = ChatOpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=SecretStr(os.getenv("OPENROUTER_API_KEY", "")),
-            model="anthropic/claude-3.5-sonnet", # default openrouter model
+        from browser_use.llm import ChatOpenRouter
+        llm = ChatOpenRouter(
+            model=os.getenv("LLM_MODEL", "openai/gpt-4o"), # BYOK: Allow passing model in env
+            api_key=os.getenv("OPENROUTER_API_KEY", ""),
         )
     else:
+        from browser_use.llm import ChatOpenAI
         llm = ChatOpenAI(
             model="gpt-4o",
-            api_key=SecretStr(os.getenv("OPENAI_API_KEY", "")),
+            api_key=os.getenv("OPENAI_API_KEY", ""),
         )
 
     # Auth Strategy handling
@@ -91,8 +92,13 @@ async def run_job(job_id: str, token: str):
         with open(auth_state_path, "r") as f:
             storage_state_dict = json.load(f)
 
-    # Initialize Browser Session
-    browser_session = BrowserSession(headless=False, storage_state=storage_state_dict)
+    # Initialize Browser Session for CI/CD (must be headless with no-sandbox)
+    browser_session = BrowserSession(
+        headless=True, 
+        storage_state=storage_state_dict,
+        chromium_sandbox=False,
+        args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--disable-setuid-sandbox"]
+    )
 
     try:
         agent = Agent(
