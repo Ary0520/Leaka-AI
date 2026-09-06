@@ -547,6 +547,13 @@ export const api = {
     ),
 
   // Dashboard health grid
+  dashboardKpis: () =>
+    request<{
+      pass_rate: number | null;
+      flake_rate: number;
+      quarantined_tests: number;
+      failure_categories: Array<{ category: string; count: number }>;
+    }>("/api/dashboard/kpis"),
   dashboardHealth: (limit = 14) =>
     request<Array<{
       id: number;

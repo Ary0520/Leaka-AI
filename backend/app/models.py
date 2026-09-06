@@ -60,6 +60,7 @@ class TestRun(Base):
     owner_id = Column(String(64), nullable=True, index=True)  # Supabase user UUID
     job_id = Column(String(64), unique=True, index=True, nullable=False)
     task_id = Column(String(128), unique=True, index=True, nullable=True)
+    run_group_id = Column(String(255), nullable=True, index=True) # Groups runs in CI pipelines
     test_case_id = Column(Integer, ForeignKey("test_cases.id"), nullable=True)
     validation_for_job_id = Column(String(64), nullable=True)
     commit_sha = Column(String(64), nullable=True)
@@ -97,6 +98,7 @@ class TestRun(Base):
     live_steps = Column(Text, nullable=True)   # incremental steps written per-step during run
 
     is_successful = Column(Boolean, nullable=True)
+    is_flaky = Column(Boolean, default=False)
     has_visual_proof = Column(Boolean, default=False)
 
     started_at = Column(DateTime, nullable=True)

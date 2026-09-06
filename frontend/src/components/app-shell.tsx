@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { LayoutDashboard, FileText, Sparkles, Layers, History, Webhook, Settings2, LogOut, Compass } from "lucide-react";
+import { LayoutDashboard, FileText, Sparkles, Layers, History, Webhook, Settings2, LogOut, Compass, ShieldAlert, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePathname } from "next/navigation";
 import React from "react";
@@ -9,15 +9,45 @@ import { useAuth } from "@/app/providers";
 import { signOut } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 
-const NAV = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/applications", label: "Applications", icon: Compass },
-  { href: "/runs", label: "All Runs", icon: History },
-  { href: "/tests", label: "Test Cases", icon: FileText },
-  { href: "/suites", label: "Test Suites", icon: Layers },
-  { href: "/new", label: "Run a Test", icon: Sparkles },
-  { href: "/ci", label: "CI / CD", icon: Webhook },
-  { href: "/settings", label: "Settings", icon: Settings2 },
+type NavItem = { href: string; label: string; icon: React.ElementType };
+type NavGroup = { title: string; items: NavItem[] };
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    title: "Overview",
+    items: [
+      { href: "/dashboard", label: "Analytics & Health", icon: LayoutDashboard },
+    ],
+  },
+  {
+    title: "Execution",
+    items: [
+      { href: "/run-groups", label: "Pipeline Runs", icon: Layers },
+      { href: "/runs", label: "All Runs", icon: History },
+      { href: "/quarantine", label: "Quarantine", icon: ShieldAlert },
+    ],
+  },
+  {
+    title: "Authoring",
+    items: [
+      { href: "/applications", label: "Applications", icon: Compass },
+      { href: "/tests", label: "Test Cases & Suites", icon: FileText },
+      { href: "/new", label: "Run a Test", icon: Sparkles },
+    ],
+  },
+  {
+    title: "Triage",
+    items: [
+      { href: "/failures", label: "Failure Analysis", icon: Activity },
+    ],
+  },
+  {
+    title: "Management",
+    items: [
+      { href: "/ci", label: "CI / CD integrations", icon: Webhook },
+      { href: "/settings", label: "Settings", icon: Settings2 },
+    ],
+  },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -37,17 +67,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className="font-semibold text-sm">Leaka AI</div>
           </div>
         </div>
-        <nav className="p-3 space-y-1 flex-1 overflow-y-auto">
-          {NAV.map((item) => {
-            const Icon = item.icon;
-            const active =
-              item.href === "/dashboard"
-                ? pathname === "/dashboard"
-                : pathname?.startsWith(item.href);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
+        <nav className="p-4 space-y-6 flex-1 overflow-y-auto">
+          {NAV_GROUPS.map((group) => (
+            <div key={group.title}>
+              <h4 className="px-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                {group.title}
+              </h4>
+              <div className="space-y-1">
+                {group.items.map((item) => {
+                  const Icon = item.icon;
+                  const active =
+                    item.href === "/dashboard"
+                      ? pathname === "/dashboard"
+                      : pathname?.startsWith(item.href);
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
                 className={cn(
                   "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
                   active
@@ -58,8 +94,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <Icon className="w-4 h-4" />
                 {item.label}
               </Link>
-            );
-          })}
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </nav>
 
         {/* User footer */}
