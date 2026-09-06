@@ -38,6 +38,7 @@ export function ConfigurationTab({ appId }: { appId: number }) {
   const [envOpen, setEnvOpen] = useState(false);
   const [envName, setEnvName] = useState("");
   const [envBaseUrl, setEnvBaseUrl] = useState("");
+  const [envExecutionLocation, setEnvExecutionLocation] = useState("cloud");
   const [envVars, setEnvVars] = useState("");
   const [envPolicies, setEnvPolicies] = useState("");
   const [envAuthStrategy, setEnvAuthStrategy] = useState("none");
@@ -50,6 +51,7 @@ export function ConfigurationTab({ appId }: { appId: number }) {
     mutationFn: () => api.createEnvironment(appId, {
       name: envName,
       base_url: envBaseUrl,
+      execution_location: envExecutionLocation,
       variables: envVars || undefined,
       policies: envPolicies || undefined,
       auth_strategy: envAuthStrategy !== "none" ? envAuthStrategy : undefined,
@@ -154,6 +156,23 @@ export function ConfigurationTab({ appId }: { appId: number }) {
                   
                   <div className="space-y-4 pt-2">
                     <div className="space-y-2">
+                      <Label>Execution Location</Label>
+                      <select 
+                        value={envExecutionLocation} 
+                        onChange={e => setEnvExecutionLocation(e.target.value)}
+                        className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <option value="cloud">Leaka Cloud (Azure Serverless)</option>
+                        <option value="self_hosted">Self-Hosted Runner (CI/CD, VPC)</option>
+                      </select>
+                      <p className="text-xs text-muted-foreground">
+                        {envExecutionLocation === "cloud" ? 
+                          "Tests run instantly on our Azure infrastructure. Best for public URLs." : 
+                          "Tests will queue and wait for your local CI/CD CLI runner to pick them up. Best for private localhost or VPNs."}
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
                       <Label>Auth Strategy</Label>
                       <select 
                         value={envAuthStrategy} 
@@ -229,6 +248,12 @@ export function ConfigurationTab({ appId }: { appId: number }) {
                     <div className="text-sm truncate font-mono text-muted-foreground bg-muted p-2 rounded" title={env.base_url}>
                       {env.base_url}
                     </div>
+                    
+                    <div className="flex items-center gap-2 text-xs font-medium bg-secondary/50 p-2 rounded text-secondary-foreground border border-border/50">
+                      <Server className="w-3 h-3" /> 
+                      {env.execution_location === 'self_hosted' ? 'Self-Hosted Runner (VPC/CI)' : 'Leaka Cloud (Azure)'}
+                    </div>
+
                     {env.variables && (
                       <div className="flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-400 font-medium bg-emerald-500/10 p-2 rounded">
                         <Key className="w-3 h-3" /> Secure variables injected

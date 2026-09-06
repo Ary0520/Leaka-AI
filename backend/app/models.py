@@ -251,6 +251,9 @@ class Environment(Base):
     auth_token_path = Column(String(128), nullable=True) # JSON key containing the token in the API response (e.g., "access_token")
     auth_state_template = Column(Text, nullable=True)    # The Playwright storageState JSON. For api_injection, supports {{token}} replacement. For state_cache, contains the raw Golden State.
 
+    # --- Execution Architecture ---
+    execution_location = Column(String(32), nullable=False, default="cloud") # cloud | self_hosted
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     application = relationship("Application", back_populates="environments")
