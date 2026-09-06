@@ -258,6 +258,7 @@ export interface EnvironmentOut {
   auth_payload?: string | null;
   auth_token_path?: string | null;
   auth_state_template?: string | null;
+  execution_location?: string | null;
   created_at: string;
 }
 
@@ -271,6 +272,7 @@ export interface EnvironmentCreate {
   auth_payload?: string | null;
   auth_token_path?: string | null;
   auth_state_template?: string | null;
+  execution_location?: string | null;
 }
 
 export interface TestFixtureOut {

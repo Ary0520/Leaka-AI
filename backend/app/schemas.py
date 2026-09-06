@@ -277,6 +277,7 @@ class EnvironmentCreate(BaseModel):
     auth_payload: Optional[str] = None
     auth_token_path: Optional[str] = None
     auth_state_template: Optional[str] = None
+    execution_location: Optional[str] = "cloud"
 
 class EnvironmentUpdate(BaseModel):
     name: Optional[str] = None
@@ -288,6 +289,7 @@ class EnvironmentUpdate(BaseModel):
     auth_payload: Optional[str] = None
     auth_token_path: Optional[str] = None
     auth_state_template: Optional[str] = None
+    execution_location: Optional[str] = None
 
 class EnvironmentOut(BaseModel):
     id: int
@@ -301,6 +303,7 @@ class EnvironmentOut(BaseModel):
     auth_payload: Optional[str] = None
     auth_token_path: Optional[str] = None
     auth_state_template: Optional[str] = None
+    execution_location: str
     created_at: datetime
     class Config:
         from_attributes = True

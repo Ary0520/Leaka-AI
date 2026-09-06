@@ -146,6 +146,19 @@ def _dispatch_run_task(
                            background thread. No mocking. All DB writes, screenshots,
                            DOM snapshots, and auto-integrations run identically.
     """
+    if environment_id:
+        from .database import SessionLocal
+        from .models import Environment
+        db = SessionLocal()
+        try:
+            env = db.query(Environment).filter(Environment.id == environment_id).first()
+            if env and env.execution_location == "self_hosted":
+                import logging
+                logging.info(f"Job {job_id} is marked for self-hosted execution. Not dispatching to cloud.")
+                return f"queued-for-runner-{job_id}"
+        finally:
+            db.close()
+
     kwargs = dict(
         job_id=job_id,
         name=name,
