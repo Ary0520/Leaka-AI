@@ -470,22 +470,20 @@ def dashboard_kpis(
     user: dict = Depends(get_current_user),
 ):
     owner = user["sub"]
-    from datetime import datetime, timedelta
-    seven_days_ago = datetime.utcnow() - timedelta(days=7)
+    
+    # All-time stats
+    total_runs = db.query(TestRun).filter(TestRun.owner_id == owner, TestRun.status != TestRunStatus.PENDING).count()
+    passed_runs = db.query(TestRun).filter(TestRun.owner_id == owner, TestRun.is_successful == True).count()
+    pass_rate = round((passed_runs / total_runs) * 100, 1) if total_runs > 0 else None
 
-    # 1. Pipeline Pass Rate (Last 7 Days)
-    total_runs_7d = db.query(TestRun).filter(TestRun.owner_id == owner, TestRun.created_at >= seven_days_ago, TestRun.status != TestRunStatus.PENDING).count()
-    passed_runs_7d = db.query(TestRun).filter(TestRun.owner_id == owner, TestRun.created_at >= seven_days_ago, TestRun.is_successful == True).count()
-    pass_rate = round((passed_runs_7d / total_runs_7d) * 100, 1) if total_runs_7d > 0 else None
+    # Flake Rate
+    flaky_runs = db.query(TestRun).filter(TestRun.owner_id == owner, TestRun.is_flaky == True).count()
+    flake_rate = round((flaky_runs / total_runs) * 100, 1) if total_runs > 0 else 0
 
-    # 2. Flake Rate
-    flaky_runs = db.query(TestRun).filter(TestRun.owner_id == owner, TestRun.created_at >= seven_days_ago, TestRun.is_flaky == True).count()
-    flake_rate = round((flaky_runs / total_runs_7d) * 100, 1) if total_runs_7d > 0 else 0
-
-    # 3. Quarantined Tests
+    # Quarantined Tests
     quarantined_tests = db.query(TestCase).filter(TestCase.owner_id == owner, TestCase.is_quarantined == True).count()
 
-    # 4. Failure Categories
+    # Failure Categories
     from sqlalchemy import func
     failures = db.query(TestRun.rca_category, func.count(TestRun.id)).filter(
         TestRun.owner_id == owner, TestRun.is_successful == False, TestRun.rca_category != None
@@ -496,7 +494,10 @@ def dashboard_kpis(
         "pass_rate": pass_rate,
         "flake_rate": flake_rate,
         "quarantined_tests": quarantined_tests,
-        "failure_categories": failure_categories
+        "failure_categories": failure_categories,
+        "total_runs": total_runs,
+        "passed_runs": passed_runs,
+        "failed_runs": total_runs - passed_runs
     }
 
 

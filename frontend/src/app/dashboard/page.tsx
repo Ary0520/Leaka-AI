@@ -88,17 +88,38 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard 
+          label="Total Runs" 
+          value={kpis?.total_runs ?? 0} 
+          tone="default"
+          description="All time executions"
+          icon={Activity}
+        />
+        <StatCard 
+          label="Passed" 
+          value={kpis?.passed_runs ?? 0} 
+          tone="success"
+          description="Successful workflows"
+          icon={CheckCircle2}
+        />
+        <StatCard 
+          label="Failed" 
+          value={kpis?.failed_runs ?? 0} 
+          tone="destructive"
+          description="Failed workflows"
+          icon={XCircle}
+        />
+        <StatCard 
           label="Pipeline Pass Rate" 
           value={passRate} 
           tone={passTone}
-          description="Last 7 days"
+          description="All time average"
           icon={Activity}
         />
         <StatCard 
           label="Flake Rate" 
           value={`${kpis?.flake_rate ?? 0}%`} 
           tone="default"
-          description="Runs marked flaky (7d)"
+          description="Runs marked flaky"
           icon={RefreshCcw}
         />
         <StatCard 

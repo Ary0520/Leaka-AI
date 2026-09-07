@@ -553,6 +553,9 @@ export const api = {
       flake_rate: number;
       quarantined_tests: number;
       failure_categories: Array<{ category: string; count: number }>;
+      total_runs: number;
+      passed_runs: number;
+      failed_runs: number;
     }>("/api/dashboard/kpis"),
   dashboardHealth: (limit = 14) =>
     request<Array<{
