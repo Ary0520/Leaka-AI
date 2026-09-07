@@ -1,0 +1,50 @@
+// ── Self-healing analysis ─────────────────────────────────────────────────────
+// Reads the step list and surfaces evidence of adaptive behaviour —
+// things Cypress would have broken on but the agent handled automatically.
+interface SelfHealingInsight {
+  icon: string;
+  text: string;
+}
+
+function analyzeSelfHealing(steps: StepAction[], isSuccessful: boolean | null): SelfHealingInsight[] {
+  const insights: SelfHealingInsight[] = [];
+  if (!steps.length) return insights;
+
+  // Count scroll actions — agent had to explore to find content
+  const scrollCount = steps.filter((s) => {
+    const key = Object.keys(s.action || {})[0] || "";
+    return key === "scroll";
+  }).length;
+  if (scrollCount > 0) {
+    insights.push({
+      icon: "↕️",
+      text: `Scrolled ${scrollCount} time${scrollCount > 1 ? "s" : ""} to locate content not visible in the initial viewport. Cypress would have thrown "element not found".`,
+    });
+  }
+
+  // Detected retry/fallback in result text
+  const retryStep = steps.find((s) =>
+    typeof s.result === "string" &&
+    (s.result.toLowerCase().includes("retry") ||
+      s.result.toLowerCase().includes("trying") ||
+      s.result.toLowerCase().includes("alternative"))
+  );
+  if (retryStep) {
+    insights.push({
+      icon: "🔄",
+      text: "Agent detected an obstacle and tried an alternative approach automatically.",
+    });
+  }
+
+  // Multiple URLs visited — agent navigated across pages
+  const urls = new Set(steps.map((s) => s.url).filter(Boolean));
+  if (urls.size > 1) {
+    insights.push({
+      icon: "🌐",
+      text: `Navigated across ${urls.size} different pages to complete the task — no hard-coded URL paths needed.`,
+    });
+  }
+
+  // Task completed despite having errors in intermediate steps
+  const hasErrors = steps.some((s) => s.error);
+  if (hasErrors && isSuccessful) {

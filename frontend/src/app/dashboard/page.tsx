@@ -131,7 +131,7 @@ export default function DashboardPage() {
         />
         <StatCard 
           label="Auto-healed Runs" 
-          value="0" 
+          value={kpis?.auto_healed ?? 0} 
           tone="default"
           description="Failed runs healed by AI"
           icon={Zap}
