@@ -483,6 +483,14 @@ def dashboard_kpis(
     # Quarantined Tests
     quarantined_tests = db.query(TestCase).filter(TestCase.owner_id == owner, TestCase.is_quarantined == True).count()
 
+    # Auto-healed Runs
+    # Dynamic LLM agents self-heal by scrolling, retrying, and falling back automatically.
+    auto_healed = db.query(TestRun).filter(
+        TestRun.owner_id == owner, 
+        TestRun.is_successful == True,
+        (TestRun.live_steps.ilike('%"scroll"%')) | (TestRun.live_steps.ilike('%retry%'))
+    ).count()
+
     # Failure Categories
     from sqlalchemy import func
     failures = db.query(TestRun.rca_category, func.count(TestRun.id)).filter(
@@ -497,7 +505,8 @@ def dashboard_kpis(
         "failure_categories": failure_categories,
         "total_runs": total_runs,
         "passed_runs": passed_runs,
-        "failed_runs": total_runs - passed_runs
+        "failed_runs": total_runs - passed_runs,
+        "auto_healed": auto_healed
     }
 
 

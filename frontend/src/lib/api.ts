@@ -556,6 +556,7 @@ export const api = {
       total_runs: number;
       passed_runs: number;
       failed_runs: number;
+      auto_healed: number;
     }>("/api/dashboard/kpis"),
   dashboardHealth: (limit = 14) =>
     request<Array<{
