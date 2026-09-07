@@ -873,12 +873,14 @@ def run_suite(
     if not cases:
         raise HTTPException(400, "Suite has no test cases — add test cases first.")
 
+    run_group_id = str(uuid.uuid4())
     job_ids: list[str] = []
     for tc in cases:
         job_id = uuid.uuid4().hex
         run_name = f"[Suite] {suite.name} — {tc.name}"
         run = TestRun(
             job_id=job_id,
+            run_group_id=run_group_id,
             owner_id=user["sub"],
             test_case_id=tc.id,
             name=run_name,
@@ -2984,3 +2986,44 @@ def run_diff_recommendation(
         message=f"Enqueued {len(job_ids)} recommended test run(s) for diff {diff.id}.",
         diff_id=diff.id, job_ids=job_ids,
     )
+
+
+@app.get("/api/quarantine", response_model=list[TestCaseOut])
+def list_quarantined_tests(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    return db.query(TestCase).filter(TestCase.owner_id == user["sub"], TestCase.is_quarantined == True).order_by(TestCase.updated_at.desc()).all()
+
+@app.post("/api/tests/{id}/toggle-quarantine")
+def toggle_quarantine(id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    tc = db.query(TestCase).filter(TestCase.id == id, TestCase.owner_id == user["sub"]).first()
+    if not tc:
+        raise HTTPException(404, "Test case not found")
+    tc.is_quarantined = not tc.is_quarantined
+    db.commit()
+    return {"success": True, "is_quarantined": tc.is_quarantined}
+
+@app.get("/api/run-groups")
+def list_run_groups(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    # Group runs by run_group_id
+    from sqlalchemy import func
+    
+    rows = db.query(
+        TestRun.run_group_id,
+        func.count(TestRun.id).label("total"),
+        func.sum(func.cast(TestRun.is_successful, Integer)).label("passed"),
+        func.max(TestRun.created_at).label("created_at")
+    ).filter(
+        TestRun.owner_id == user["sub"],
+        TestRun.run_group_id != None
+    ).group_by(TestRun.run_group_id).order_by(func.max(TestRun.created_at).desc()).limit(50).all()
+    
+    results = []
+    for r in rows:
+        results.append({
+            "id": r[0],
+            "total_runs": r[1],
+            "passed_runs": r[2] or 0,
+            "failed_runs": r[1] - (r[2] or 0),
+            "created_at": r[3]
+        })
+    return results
+

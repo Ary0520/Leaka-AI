@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { api, type TestCaseOut, type RunListEntry } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { MoreHorizontal, ShieldAlert, ShieldCheck } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -53,7 +55,15 @@ export default function TestCasesPage() {
     queryFn: () => api.listTestCases({ limit: 200 }),
   });
 
+  
+  const queryClient = useQueryClient();
+  const toggleMut = useMutation({
+    mutationFn: (id: number) => api.toggleQuarantine(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["cases"] }),
+  });
+  
   const runMut = useMutation({
+
     mutationFn: (c: TestCaseOut) => api.enqueueRun({
       name: c.name,
       prompt: c.prompt,
@@ -158,16 +168,37 @@ export default function TestCasesPage() {
                       {formatDate(c.updated_at)}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        disabled={runMut.isPending && runMut.variables?.id === c.id}
-                        onClick={() => runMut.mutate(c)}
-                      >
-                        {runMut.isPending && runMut.variables?.id === c.id
-                          ? <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                          : <Play className="w-3 h-3 mr-1" />}
-                        Run
-                      </Button>
+                      <div className="flex items-center justify-end gap-2">
+                        <Button
+                          size="sm"
+                          disabled={runMut.isPending && runMut.variables?.id === c.id}
+                          onClick={() => runMut.mutate(c)}
+                        >
+                          {runMut.isPending && runMut.variables?.id === c.id
+                            ? <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                            : <Play className="w-3 h-3 mr-1" />}
+                          Run
+                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem 
+                              onClick={() => toggleMut.mutate(c.id)}
+                              className={c.is_quarantined ? "text-success" : "text-destructive"}
+                            >
+                              {c.is_quarantined ? (
+                                <><ShieldCheck className="h-4 w-4 mr-2" /> Unquarantine</>
+                              ) : (
+                                <><ShieldAlert className="h-4 w-4 mr-2" /> Quarantine</>
+                              )}
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

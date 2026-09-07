@@ -537,6 +537,28 @@ export interface DiffRunResponse {
 
 // ---------- API ----------
 export const api = {
+  toggleQuarantine: (id: number) =>
+    request<{ success: boolean; is_quarantined: boolean }>(
+      `/api/tests/${id}/toggle-quarantine`,
+      { method: "POST" }
+    ),
+  listQuarantined: () =>
+    request<Array<{
+      id: number;
+      name: string;
+      target_url: string;
+      is_quarantined: boolean;
+      updated_at: string;
+    }>>("/api/quarantine"),
+  listRunGroups: () =>
+    request<Array<{
+      id: string;
+      total_runs: number;
+      passed_runs: number;
+      failed_runs: number;
+      created_at: string;
+    }>>("/api/run-groups"),
+
   health: () => request<{ status: string; llm_provider: string; llm_model: string }>("/api/health"),
 
   // LLM connection test

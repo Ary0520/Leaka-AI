@@ -63,7 +63,7 @@ def categorize_failure_bg(run_id: int):
             
         llm = get_llm_for_provider()
         
-        prompt = f"You are an expert QA engineer. Analyze the following end-to-end test failure and categorize the root cause.
+        prompt = f"""You are an expert QA engineer. Analyze the following end-to-end test failure and categorize the root cause.
 Return ONLY ONE of the following exact strings as your entire response. Do not add any markdown, punctuation, or explanation.
 
 Categories:
@@ -79,7 +79,7 @@ Test Final Result:
 
 Error Message:
 {run.error_message}
-"
+"""
         response = llm.invoke(prompt)
         category = response.content.strip()
         
