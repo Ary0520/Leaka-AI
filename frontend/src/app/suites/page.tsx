@@ -1,414 +1,154 @@
 "use client";
 
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Plus, Play, Layers, Clock } from "lucide-react";
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import {
-  api,
-  type TestSuiteOut,
-  type TestCaseOut,
-  type TestSuiteCreate,
-} from "@/lib/api";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { formatDistanceToNow } from "date-fns";
+
+import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Separator } from "@/components/ui/separator";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Loader2,
-  Plus,
-  Play,
-  Trash2,
-  MoreHorizontal,
-  Layers,
-  FileText,
-  ChevronRight,
-  CheckCircle2,
-  AlertCircle,
-} from "lucide-react";
-import { toast } from "@/components/ui/use-toast";
-import { formatDate, truncate } from "@/lib/utils";
 
 export default function SuitesPage() {
-  const router = useRouter();
-  const qc = useQueryClient();
-  const [createOpen, setCreateOpen] = useState(false);
-  const [suiteName, setSuiteName] = useState("");
-  const [suiteDesc, setSuiteDesc] = useState("");
+  const queryClient = useQueryClient();
+  const [isCreating, setIsCreating] = useState(false);
+  const [newSuite, setNewSuite] = useState({ name: "", description: "" });
 
   const { data: suites, isLoading } = useQuery({
     queryKey: ["suites"],
-    queryFn: () => api.listSuites({ limit: 100 }),
+    queryFn: () => api.listSuites(),
   });
 
-  const createMut = useMutation({
-    mutationFn: (body: TestSuiteCreate) => api.createSuite(body),
-    onSuccess: (s) => {
-      qc.invalidateQueries({ queryKey: ["suites"] });
-      toast({ title: "Suite created", description: s.name });
-      setSuiteName("");
-      setSuiteDesc("");
-      setCreateOpen(false);
-    },
-    onError: (e: Error) =>
-      toast({
-        title: "Failed to create suite",
-        description: e.message,
-        variant: "destructive",
-      }),
-  });
-
-  const deleteMut = useMutation({
-    mutationFn: (id: number) => api.deleteSuite(id),
+  const createMutation = useMutation({
+    mutationFn: () => api.createSuite(newSuite),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["suites"] });
-      toast({ title: "Suite deleted" });
+      queryClient.invalidateQueries({ queryKey: ["suites"] });
+      setIsCreating(false);
+      setNewSuite({ name: "", description: "" });
     },
-    onError: (e: Error) =>
-      toast({
-        title: "Delete failed",
-        description: e.message,
-        variant: "destructive",
-      }),
   });
 
-  const runMut = useMutation({
-    mutationFn: (id: number) => api.runSuite(id, { use_vision: true, max_steps: 50 }),
-    onSuccess: (res) => {
-      toast({
-        title: `Suite enqueued — ${res.count} run(s)`,
-        description: `Job IDs: ${res.job_ids.slice(0, 3).map((j) => j.slice(0, 8)).join(", ")}…`,
-      });
-      // Navigate to first job
-      if (res.job_ids[0]) router.push(`/runs/${res.job_ids[0]}`);
+  const triggerMutation = useMutation({
+    mutationFn: (id: number) => api.runSuite(id),
+    onSuccess: () => {
+      alert("Suite triggered successfully! Check the Pipeline Runs page.");
     },
-    onError: (e: Error) =>
-      toast({
-        title: "Failed to run suite",
-        description: e.message,
-        variant: "destructive",
-      }),
+    onError: (err: any) => {
+      alert("Failed to trigger suite: " + err.message);
+    }
   });
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between flex-wrap gap-4">
+    <div className="space-y-6 max-w-5xl">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Test Suites</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Group related test cases and run them all with one click or from CI.
+            Group multiple tests together to trigger them as a single CI/CD pipeline execution.
           </p>
         </div>
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="w-4 h-4 mr-2" />
-              New suite
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Create test suite</DialogTitle>
-              <DialogDescription>
-                Give your suite a name and optional description. You can add test
-                cases to it afterwards.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 py-2">
-              <div>
-                <Label htmlFor="sname">Suite name</Label>
-                <Input
-                  id="sname"
-                  value={suiteName}
-                  onChange={(e) => setSuiteName(e.target.value)}
-                  placeholder="e.g. Checkout & Payments smoke suite"
-                  className="mt-1"
-                />
-              </div>
-              <div>
-                <Label htmlFor="sdesc">Description (optional)</Label>
-                <Textarea
-                  id="sdesc"
-                  rows={3}
-                  value={suiteDesc}
-                  onChange={(e) => setSuiteDesc(e.target.value)}
-                  placeholder="What revenue flows does this suite protect?"
-                  className="mt-1 text-sm"
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={() => setCreateOpen(false)}
-              >
-                Cancel
-              </Button>
-              <Button
-                disabled={!suiteName.trim() || createMut.isPending}
-                onClick={() =>
-                  createMut.mutate({
-                    name: suiteName.trim(),
-                    description: suiteDesc.trim() || undefined,
-                  })
-                }
-              >
-                {createMut.isPending ? (
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                ) : (
-                  <Plus className="w-4 h-4 mr-2" />
-                )}
-                Create
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <Button onClick={() => setIsCreating(true)} className="gap-2">
+          <Plus className="h-4 w-4" /> New suite
+        </Button>
       </div>
 
       {isLoading ? (
-        <div className="space-y-3">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <Skeleton key={i} className="h-24 w-full rounded-lg" />
+        <div className="space-y-4">
+          {[1, 2, 3].map((i) => (
+            <Skeleton key={i} className="h-24 w-full" />
           ))}
         </div>
-      ) : !suites?.length ? (
-        <EmptySuites onCreate={() => setCreateOpen(true)} />
+      ) : suites?.length === 0 ? (
+        <Card className="border-dashed bg-muted/30">
+          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+            <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+              <Layers className="h-6 w-6 text-primary" />
+            </div>
+            <h3 className="text-lg font-semibold mb-1">No test suites yet</h3>
+            <p className="text-sm text-muted-foreground max-w-sm mb-6">
+              Create a test suite to group related test cases and run them together in parallel.
+            </p>
+            <Button onClick={() => setIsCreating(true)}>Create your first suite</Button>
+          </CardContent>
+        </Card>
       ) : (
-        <div className="space-y-4">
-          {suites.map((suite) => (
-            <SuiteCard
-              key={suite.id}
-              suite={suite}
-              onRun={() => runMut.mutate(suite.id)}
-              onDelete={() => deleteMut.mutate(suite.id)}
-              isRunning={runMut.isPending && runMut.variables === suite.id}
-            />
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {suites?.map((suite) => (
+            <Card key={suite.id} className="hover:border-primary/50 transition-colors group">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-start justify-between">
+                  <span className="truncate pr-4">{suite.name}</span>
+                  <div className="h-8 w-8 rounded bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <Layers className="h-4 w-4 text-primary" />
+                  </div>
+                </CardTitle>
+                <CardDescription className="line-clamp-2 min-h-[40px]">
+                  {suite.description || "No description provided."}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center justify-between text-sm text-muted-foreground pt-4 border-t">
+                  <div className="flex items-center gap-1.5">
+                    <Clock className="h-3.5 w-3.5" />
+                    <span>{formatDistanceToNow(new Date(suite.created_at), { addSuffix: true })}</span>
+                  </div>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="h-8 px-2 text-primary opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={() => triggerMutation.mutate(suite.id)}
+                    disabled={triggerMutation.isPending}
+                  >
+                    <Play className="h-4 w-4 mr-1.5" fill="currentColor" /> Run Suite
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
           ))}
         </div>
       )}
-    </div>
-  );
-}
 
-function SuiteCard({
-  suite,
-  onRun,
-  onDelete,
-  isRunning,
-}: {
-  suite: TestSuiteOut;
-  onRun: () => void;
-  onDelete: () => void;
-  isRunning: boolean;
-}) {
-  const router = useRouter();
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <div className="flex-1 min-w-0">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Layers className="w-4 h-4 text-primary flex-shrink-0" />
-              {suite.name}
-            </CardTitle>
-            {suite.description && (
-              <CardDescription className="mt-1 text-sm">
-                {suite.description}
-              </CardDescription>
-            )}
-            <div className="text-xs text-muted-foreground mt-2 flex items-center gap-3">
-              <span>
-                {suite.tests.length} test case
-                {suite.tests.length !== 1 ? "s" : ""}
-              </span>
-              <span>Created {formatDate(suite.created_at)}</span>
+      <Dialog open={isCreating} onOpenChange={setIsCreating}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create a Test Suite</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="name">Suite Name</Label>
+              <Input 
+                id="name" 
+                placeholder="e.g., E2E Checkout Flow" 
+                value={newSuite.name}
+                onChange={(e) => setNewSuite({ ...newSuite, name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="description">Description (Optional)</Label>
+              <Textarea 
+                id="description" 
+                placeholder="What tests are grouped here?" 
+                value={newSuite.description}
+                onChange={(e) => setNewSuite({ ...newSuite, description: e.target.value })}
+              />
             </div>
           </div>
-
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              disabled={isRunning || suite.tests.length === 0}
-              onClick={onRun}
-              title={suite.tests.length === 0 ? "Add test cases first" : undefined}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsCreating(false)}>Cancel</Button>
+            <Button 
+              onClick={() => createMutation.mutate()} 
+              disabled={!newSuite.name || createMutation.isPending}
             >
-              {isRunning ? (
-                <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-              ) : (
-                <Play className="w-3 h-3 mr-1" />
-              )}
-              Run all
+              {createMutation.isPending ? "Creating..." : "Create Suite"}
             </Button>
-
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setExpanded((x) => !x)}
-            >
-              <ChevronRight
-                className={`w-3 h-3 transition-transform ${expanded ? "rotate-90" : ""}`}
-              />
-              {expanded ? "Hide" : "Cases"}
-            </Button>
-
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button size="sm" variant="ghost">
-                  <MoreHorizontal className="w-4 h-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  onClick={() =>
-                    router.push(`/new?suite_id=${suite.id}`)
-                  }
-                >
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add test case
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={onDelete}
-                  className="text-destructive focus:text-destructive"
-                >
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  Delete suite
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
-      </CardHeader>
-
-      {expanded && (
-        <>
-          <Separator />
-          <CardContent className="pt-4">
-            {suite.tests.length === 0 ? (
-              <div className="text-sm text-muted-foreground py-4 text-center">
-                No test cases yet.{" "}
-                <Link
-                  href={`/new?suite_id=${suite.id}`}
-                  className="underline"
-                >
-                  Add one from the Run page
-                </Link>
-                .
-              </div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Prompt</TableHead>
-                    <TableHead>Target URL</TableHead>
-                    <TableHead className="text-right">Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {suite.tests.map((tc: TestCaseOut) => (
-                    <TableRow key={tc.id}>
-                      <TableCell className="font-medium text-sm">
-                        {tc.name}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground max-w-xs truncate">
-                        {truncate(tc.prompt, 80)}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground max-w-[180px] truncate">
-                        {tc.target_url ? (
-                          <a
-                            href={tc.target_url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="underline"
-                          >
-                            {truncate(tc.target_url, 40)}
-                          </a>
-                        ) : (
-                          "—"
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={async () => {
-                            const r = await api.enqueueRun({
-                              name: tc.name,
-                              prompt: tc.prompt,
-                              target_url: tc.target_url,
-                              success_criteria: tc.success_criteria,
-                              test_case_id: tc.id,
-                              use_vision: true,
-                              max_steps: 50,
-                            });
-                            router.push(`/runs/${r.job_id}`);
-                          }}
-                        >
-                          <Play className="w-3 h-3 mr-1" />
-                          Run
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </>
-      )}
-    </Card>
-  );
-}
-
-function EmptySuites({ onCreate }: { onCreate: () => void }) {
-  return (
-    <div className="text-center py-12 space-y-3">
-      <div className="w-12 h-12 rounded-full bg-muted mx-auto grid place-items-center">
-        <Layers className="w-6 h-6 text-muted-foreground" />
-      </div>
-      <div className="font-medium">No suites yet</div>
-      <p className="text-sm text-muted-foreground max-w-md mx-auto">
-        Group test cases into suites to run your full checkout, onboarding, or
-        pricing flow in one click — or trigger from GitHub Actions.
-      </p>
-      <Button onClick={onCreate} className="mt-2">
-        <Plus className="w-4 h-4 mr-2" />
-        Create your first suite
-      </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
