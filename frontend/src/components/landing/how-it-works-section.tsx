@@ -5,38 +5,18 @@ import { useEffect, useRef, useState } from "react";
 const steps = [
   {
     number: "I",
-    title: "Connect your tools",
-    description: "Integrate with your existing stack in minutes. We support 200+ data sources out of the box.",
-    code: `import { Leaka AI } from '@Leaka AI/core'
-
-Leaka AI.connect({
-  source: 'your-database',
-  sync: true
-})`,
+    title: "Describe the flow",
+    description: "Write what should happen, in a sentence. \"Test checkout with a signed-in user.\"",
   },
   {
     number: "II",
-    title: "Build your workflow",
-    description: "Design powerful automations with our visual builder or write code directly.",
-    code: `Leaka AI.workflow('process', {
-  trigger: 'event',
-  actions: [
-    'validate',
-    'transform', 
-    'deliver'
-  ]
-})`,
+    title: "Agent runs it",
+    description: "Leaka's browser agent executes the flow visually and checks it against what you described.",
   },
   {
     number: "III",
-    title: "Ship to production",
-    description: "Deploy globally with zero configuration. Your app goes live in under 30 seconds.",
-    code: `Leaka AI.deploy({
-  target: 'production',
-  regions: 'auto'
-})
-
-// Deployed to 12 regions`,
+    title: "Get the verdict",
+    description: "Pass, fail, or root-cause trace — pushed straight into Jira, Linear, or Slack.",
   },
 ];
 
@@ -95,9 +75,9 @@ export function HowItWorksSection() {
               isVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
             }`}
           >
-            Three steps.
+            From English sentence
             <br />
-            <span className="text-background/50">Infinite possibilities.</span>
+            <span className="text-background/50">to verdict.</span>
           </h2>
         </div>
 
@@ -141,53 +121,43 @@ export function HowItWorksSection() {
             ))}
           </div>
 
-          {/* Code display */}
+          {/* Video Placeholder */}
           <div className="lg:sticky lg:top-32 self-start">
-            <div className="border border-background/10 overflow-hidden">
+            <div className="border border-background/10 overflow-hidden rounded-lg">
               {/* Window header */}
-              <div className="px-6 py-4 border-b border-background/10 flex items-center justify-between">
+              <div className="px-6 py-4 border-b border-background/10 flex items-center justify-between bg-background/5">
                 <div className="flex gap-2">
                   <div className="w-3 h-3 rounded-full bg-background/20" />
                   <div className="w-3 h-3 rounded-full bg-background/20" />
                   <div className="w-3 h-3 rounded-full bg-background/20" />
                 </div>
-                <span className="text-xs font-mono text-background/40">workflow.ts</span>
+                <span className="text-xs font-mono text-background/40">demo.mp4</span>
               </div>
 
-              {/* Code content */}
-              <div className="p-8 font-mono text-sm min-h-[280px]">
-                <pre className="text-background/70">
-                  {steps[activeStep].code.split('\n').map((line, lineIndex) => (
-                    <div 
-                      key={`${activeStep}-${lineIndex}`} 
-                      className="leading-loose code-line-reveal"
-                      style={{ 
-                        animationDelay: `${lineIndex * 80}ms`,
-                      }}
-                    >
-                      <span className="text-background/20 select-none w-8 inline-block">{lineIndex + 1}</span>
-                      <span className="inline-flex">
-                        {line.split('').map((char, charIndex) => (
-                          <span
-                            key={`${activeStep}-${lineIndex}-${charIndex}`}
-                            className="code-char-reveal"
-                            style={{
-                              animationDelay: `${lineIndex * 80 + charIndex * 15}ms`,
-                            }}
-                          >
-                            {char === ' ' ? '\u00A0' : char}
-                          </span>
-                        ))}
-                      </span>
-                    </div>
-                  ))}
-                </pre>
-              </div>
-
-              {/* Status */}
-              <div className="px-6 py-4 border-t border-background/10 flex items-center gap-3">
-                <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-                <span className="text-xs font-mono text-background/40">Ready</span>
+              {/* Video container */}
+              <div className="aspect-video relative flex items-center justify-center bg-background/10">
+                <div className="flex flex-col items-center gap-4 text-background/40">
+                  <svg 
+                    className="w-16 h-16 opacity-80" 
+                    fill="none" 
+                    viewBox="0 0 24 24" 
+                    stroke="currentColor"
+                  >
+                    <path 
+                      strokeLinecap="round" 
+                      strokeLinejoin="round" 
+                      strokeWidth={1.5} 
+                      d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" 
+                    />
+                    <path 
+                      strokeLinecap="round" 
+                      strokeLinejoin="round" 
+                      strokeWidth={1.5} 
+                      d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" 
+                    />
+                  </svg>
+                  <span className="font-mono text-sm tracking-wide">Product Demo Video Placeholder</span>
+                </div>
               </div>
             </div>
           </div>
@@ -198,32 +168,6 @@ export function HowItWorksSection() {
         @keyframes progress {
           from { width: 0%; }
           to { width: 100%; }
-        }
-        
-        .code-line-reveal {
-          opacity: 0;
-          transform: translateX(-8px);
-          animation: lineReveal 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-        }
-        
-        @keyframes lineReveal {
-          to {
-            opacity: 1;
-            transform: translateX(0);
-          }
-        }
-        
-        .code-char-reveal {
-          opacity: 0;
-          filter: blur(8px);
-          animation: charReveal 0.3s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-        }
-        
-        @keyframes charReveal {
-          to {
-            opacity: 1;
-            filter: blur(0);
-          }
         }
       `}</style>
     </section>
