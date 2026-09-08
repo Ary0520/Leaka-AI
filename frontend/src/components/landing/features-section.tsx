@@ -5,26 +5,26 @@ import { useEffect, useRef, useState } from "react";
 const features = [
   {
     number: "01",
-    title: "Instant Deployment",
-    description: "Push to production in seconds. Our edge network ensures your applications load instantly, anywhere in the world.",
+    title: "Plain-English authoring",
+    description: "Describe a test the way you'd explain it to a teammate. No Selenium scripts, no XPath, no CSS selectors to maintain.",
     visual: "deploy",
   },
   {
     number: "02",
-    title: "AI-Native Workflows",
-    description: "Build intelligent applications with built-in AI capabilities. From inference to training, everything scales automatically.",
+    title: "Visual, selector-free execution",
+    description: "The agent sees your app the way a user does — it reads the rendered screen and acts on it, so a class-name refactor doesn't break the suite.",
     visual: "ai",
   },
   {
     number: "03",
-    title: "Real-time Collaboration",
-    description: "Work together seamlessly. Live preview, instant feedback, and version control that actually makes sense.",
+    title: "Root cause, not just red/green",
+    description: "Every failure ships with a reproducible trace and a proposed fix, not just a stack trace to triage manually.",
     visual: "collab",
   },
   {
     number: "04",
-    title: "Enterprise Security",
-    description: "Bank-grade encryption, SOC 2 compliance, and granular access controls. Your data stays yours.",
+    title: "Zero data egress",
+    description: "The runner executes inside your VPC or CI. Your DOM, screenshots, and staging data never reach our servers.",
     visual: "security",
   },
 ];

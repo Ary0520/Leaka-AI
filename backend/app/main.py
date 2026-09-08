@@ -3004,7 +3004,7 @@ def toggle_quarantine(id: int, db: Session = Depends(get_db), user: dict = Depen
 @app.get("/api/run-groups")
 def list_run_groups(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     # Group runs by run_group_id
-    from sqlalchemy import func
+    from sqlalchemy import func, Integer
     
     rows = db.query(
         TestRun.run_group_id,
