@@ -246,6 +246,7 @@ class ApplicationCreate(BaseModel):
     base_url: str = Field(..., min_length=3)
     description: Optional[str] = None
     login_hint: Optional[str] = None
+    openapi_spec: Optional[str] = None
 
 
 class ApplicationUpdate(BaseModel):
@@ -253,6 +254,7 @@ class ApplicationUpdate(BaseModel):
     base_url: Optional[str] = None
     description: Optional[str] = None
     login_hint: Optional[str] = None
+    openapi_spec: Optional[str] = None
 
 
 class ApplicationOut(BaseModel):
@@ -261,6 +263,7 @@ class ApplicationOut(BaseModel):
     base_url: str
     description: Optional[str] = None
     login_hint: Optional[str] = None
+    openapi_spec: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

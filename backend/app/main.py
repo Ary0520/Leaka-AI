@@ -1644,6 +1644,7 @@ def create_application(
         base_url=body.base_url,
         description=body.description,
         login_hint=body.login_hint,
+        openapi_spec=body.openapi_spec,
     )
     db.add(app_row)
     db.commit()
