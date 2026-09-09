@@ -215,6 +215,7 @@ class Application(Base):
     # "Log in with standard_user / secret_sauce"). NOT a secrets store — v1
     # keeps this simple; real credential vaulting is a later enterprise phase.
     login_hint = Column(Text, nullable=True)
+    openapi_spec = Column(Text, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
