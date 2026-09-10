@@ -837,11 +837,14 @@ export const api = {
     }),
   deleteApplication: (id: number) =>
     request<void>(`/api/applications/${id}`, { method: "DELETE" }),
-  exploreApplication: (id: number, maxSteps = 40) =>
-    request<{ job_id: string; task_id: string; status: string }>(
-      `/api/applications/${id}/explore?max_steps=${maxSteps}`,
+  exploreApplication: (id: number, maxSteps = 40, environmentId?: number) => {
+    const params = new URLSearchParams({ max_steps: String(maxSteps) });
+    if (environmentId != null) params.set("environment_id", String(environmentId));
+    return request<{ job_id: string; task_id: string; status: string }>(
+      `/api/applications/${id}/explore?${params.toString()}`,
       { method: "POST" },
-    ),
+    );
+  },
   getExploreStatus: (jobId: string) =>
     request<ExploreRunStatusResponse>(`/api/explore/status/${jobId}`),
   getApplicationMap: (id: number) =>

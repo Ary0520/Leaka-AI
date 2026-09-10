@@ -365,6 +365,124 @@ def _extract_trajectory(history) -> list:
 
 
 # ---------------------------------------------------------------------------
+# Auth resolution helper — mirrors worker.py exactly, enterprise-grade.
+# ---------------------------------------------------------------------------
+
+def _resolve_auth_storage_state(environment_id: Optional[int]) -> Optional[str]:
+    """
+    Resolve a Playwright storageState file path from an Environment's auth
+    settings. Returns the absolute path to a temporary JSON file, or None if
+    the environment has no auth configured (strategy == "none" or no env row).
+
+    Strategies supported (matching worker.py 1:1):
+      - api_injection / ephemeral_users:
+          POST env.auth_api_url with env.auth_payload
+          Extract token via dot-notation env.auth_token_path
+          Replace {{token}} in env.auth_state_template
+          Write to temp file → return path
+      - state_cache:
+          Write env.auth_state_template as-is to temp file → return path
+
+    Windows note: BrowserSession(storage_state=<dict>) crashes with WinError 123
+    because StorageStateWatchdog calls os.path.exists() on a dict. We ALWAYS
+    write to a temp file and pass the filepath string, never a dict.
+
+    Returns None on any failure so the caller degrades gracefully to an
+    unauthenticated browser session (never raises).
+    """
+    if not environment_id:
+        return None
+
+    db = SessionLocal()
+    try:
+        from .models import Environment
+        env = db.query(Environment).filter(Environment.id == environment_id).first()
+        if not env or not env.auth_strategy or env.auth_strategy == "none":
+            return None
+
+        import json as _json
+        import os as _os
+        import requests as _requests
+        import tempfile as _tempfile
+
+        if env.auth_strategy == "state_cache":
+            # Pre-baked Playwright storage state — write directly to temp file.
+            if not env.auth_state_template:
+                logger.warning(
+                    "explore_auth: state_cache strategy but auth_state_template is empty "
+                    "(environment_id=%s)", environment_id,
+                )
+                return None
+            fd, path = _tempfile.mkstemp(suffix=".json", prefix="explore_auth_state_")
+            with _os.fdopen(fd, "w") as f:
+                f.write(env.auth_state_template)
+            logger.info(
+                "explore_auth: state_cache injected (environment_id=%s)", environment_id
+            )
+            return path
+
+        if env.auth_strategy in ("api_injection", "ephemeral_users"):
+            if not env.auth_api_url:
+                logger.warning(
+                    "explore_auth: %s strategy but auth_api_url is empty "
+                    "(environment_id=%s)", env.auth_strategy, environment_id,
+                )
+                return None
+
+            # 1. Hit the customer's auth API with the configured payload.
+            payload = _json.loads(env.auth_payload) if env.auth_payload else {}
+            resp = _requests.post(env.auth_api_url, json=payload, timeout=15)
+            resp.raise_for_status()
+            auth_data = resp.json()
+
+            # 2. Extract the token via dot-notation path (e.g. "data.access_token").
+            token: Any = auth_data
+            if env.auth_token_path:
+                for key in env.auth_token_path.split("."):
+                    if isinstance(token, dict):
+                        token = token.get(key)
+
+            # 3. Slot the token into the Playwright storageState template.
+            if not env.auth_state_template or token is None:
+                logger.warning(
+                    "explore_auth: token or template missing after API call "
+                    "(environment_id=%s token_present=%s template_present=%s)",
+                    environment_id, token is not None, bool(env.auth_state_template),
+                )
+                return None
+
+            templated = env.auth_state_template.replace("{{token}}", str(token))
+
+            # 4. Write to temp file — never pass dict to BrowserSession (Windows bug).
+            fd, path = _tempfile.mkstemp(suffix=".json", prefix="explore_auth_state_")
+            with _os.fdopen(fd, "w") as f:
+                f.write(templated)
+
+            logger.info(
+                "explore_auth: %s injected successfully (environment_id=%s)",
+                env.auth_strategy, environment_id,
+            )
+            return path
+
+        logger.warning(
+            "explore_auth: unknown auth_strategy '%s' (environment_id=%s) — "
+            "running unauthenticated",
+            env.auth_strategy, environment_id,
+        )
+        return None
+
+    except Exception as exc:
+        logger.error(
+            "explore_auth: failed to resolve storage state "
+            "(environment_id=%s): %s — running unauthenticated",
+            environment_id, exc,
+        )
+        return None
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
 # The explore task
 # ---------------------------------------------------------------------------
 @celery_app.task(
@@ -379,15 +497,25 @@ def explore_application(
     base_url: str,
     login_hint: Optional[str] = None,
     max_steps: int = 40,
+    environment_id: Optional[int] = None,
 ) -> dict[str, Any]:
     """
     Explore an application and persist its map.
 
+    Args:
+        environment_id: If supplied, the Environment record's auth credentials
+            are used to inject a session into the browser before exploration
+            begins. This allows the agent to map authenticated areas of the
+            application (e.g. dashboards, account pages) that are gated behind
+            a login. When None the browser starts unauthenticated (suitable
+            for mapping public-facing pages during initial onboarding).
+
     Lifecycle:
       1. ExploreRun → RUNNING
-      2. Build LLM, run an exploration Agent with structured output
-      3. Persist discovered nodes to AppMapNode
-      4. ExploreRun → COMPLETED / FAILED
+      2. Resolve auth storage state (if environment_id given)
+      3. Build LLM, run an exploration Agent with structured output
+      4. Persist discovered nodes to AppMapNode
+      5. ExploreRun → COMPLETED / FAILED
     """
     import traceback
 
@@ -409,6 +537,22 @@ def explore_application(
             },
         )
         raise RuntimeError(f"LLM init failed: {exc}") from exc
+
+    # ── Enterprise Auth Resolution ─────────────────────────────────────────
+    # Resolve a Playwright storageState file before starting the browser so
+    # the agent wakes up already authenticated. Gracefully degrades to an
+    # unauthenticated session if no environment / auth strategy is configured.
+    storage_state_path: Optional[str] = _resolve_auth_storage_state(environment_id)
+    if storage_state_path:
+        logger.info(
+            "explore: auth storage state resolved (job_id=%s env_id=%s)",
+            job_id, environment_id,
+        )
+    else:
+        logger.info(
+            "explore: no auth configured, running unauthenticated (job_id=%s)",
+            job_id,
+        )
 
     # ── Build the exploration task prompt ──────────────────────────────────
     task_parts = [
@@ -475,7 +619,10 @@ def explore_application(
         from browser_use.browser.session import BrowserSession
         from browser_use import Controller
 
-        browser_session = BrowserSession(headless=True)
+        browser_session = BrowserSession(
+            headless=True,
+            storage_state=storage_state_path,  # None = unauthenticated (no-op)
+        )
         controller = Controller()
 
         @controller.action("Recover missing element locator using semantic search. Call this ONLY if you fail to find an element you need.")
@@ -605,6 +752,14 @@ def explore_application(
                 pass
             loop.close()
             asyncio.set_event_loop(None)
+            # Clean up the auth temp file — best-effort, never raises.
+            if storage_state_path:
+                try:
+                    import os as _os
+                    if _os.path.isfile(storage_state_path):
+                        _os.remove(storage_state_path)
+                except Exception:
+                    pass
     except Exception as exc:
         tb = traceback.format_exc()
         _update_explore_status(
