@@ -1,4 +1,7 @@
-"use client";
+import sys
+
+# We'll write the full page.tsx
+content = '''"use client";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -26,13 +29,7 @@ function StepDots({ current }: { current: number }) {
       {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
         <span
           key={i}
-          className={`rounded-full transition-all duration-300 ${
-            i === current
-              ? "w-4 h-1.5 bg-[#57f1db]"
-              : i < current
-              ? "w-1.5 h-1.5 bg-[#57f1db]/50"
-              : "w-1.5 h-1.5 bg-[#bacac5]/20"
-          }`}
+          className={ounded-full transition-all duration-300 }
         />
       ))}
     </div>
@@ -153,7 +150,7 @@ function StepKickoff({ onNext, onSkip, setAppId, setEnvId }: { onNext: () => voi
 // -- STEP 3: Auth Wallet --
 function StepAuthWallet({ onNext, onSkip, appId, envId }: { onNext: () => void; onSkip: () => void; appId: number | null; envId: number | null; }) {
   const [apiUrl, setApiUrl] = useState("");
-  const [payload, setPayload] = useState("{\n  \"email\": \"test@acme.com\",\n  \"password\": \"password123\"\n}");
+  const [payload, setPayload] = useState("{\\n  \\"email\\": \\"test@acme.com\\",\\n  \\"password\\": \\"password123\\"\\n}");
   const [tokenPath, setTokenPath] = useState("data.access_token");
   const [isLoading, setIsLoading] = useState(false);
 
@@ -234,7 +231,7 @@ function StepCompanyBrain({ onNext, onSkip, appId }: { onNext: () => void; onSki
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
           <Label className="text-xs text-[#bacac5] uppercase tracking-wider">OpenAPI JSON Spec</Label>
-          <Textarea className="bg-[#111415] border-[rgba(186,202,197,0.12)] text-[#e1e2e4] font-mono text-xs h-32" placeholder={"{ \"openapi\": \"3.0.0\", ... }"} value={spec} onChange={(e) => setSpec(e.target.value)} />
+          <Textarea className="bg-[#111415] border-[rgba(186,202,197,0.12)] text-[#e1e2e4] font-mono text-xs h-32" placeholder="{ \\"openapi\\": \\"3.0.0\\", ... }" value={spec} onChange={(e) => setSpec(e.target.value)} />
         </div>
       </div>
       <div className="flex items-center justify-between mt-2">
@@ -249,11 +246,11 @@ function StepCompanyBrain({ onNext, onSkip, appId }: { onNext: () => void; onSki
 
 // -- STEP 5: Aha! Moment --
 function StepAhaMoment({ onFinish, appId }: { onFinish: () => void; appId: number | null; }) {
-  const { data: graphData } = useQuery({
+  const { data: graphData, isLoading } = useQuery({
     queryKey: ["app-graph", appId],
     queryFn: () => appId ? api.getApplicationGraph(appId) : null,
     enabled: !!appId,
-    refetchInterval: 3000,
+    refetchInterval: 3000, // Poll to see nodes mapping live!
   });
 
   const nodeCount = graphData?.nodes?.length || 0;
@@ -344,3 +341,8 @@ export default function OnboardPage() {
     </div>
   );
 }
+'''
+
+with open('frontend/src/app/onboard/page.tsx', 'w', encoding='utf-8') as f:
+    f.write(content)
+print('Updated onboard/page.tsx')

@@ -473,14 +473,13 @@ def explore_application(
     async def _run_explore():
         from browser_use import Agent
         from browser_use.browser.session import BrowserSession
-        from browser_use.controller.service import Controller
-        from browser_use.browser.context import BrowserContext
+        from browser_use import Controller
 
         browser_session = BrowserSession(headless=True)
         controller = Controller()
 
         @controller.action("Recover missing element locator using semantic search. Call this ONLY if you fail to find an element you need.")
-        async def recover_missing_element(intent: str, browser: BrowserContext) -> str:
+        async def recover_missing_element(intent: str, browser_session: BrowserSession) -> str:
             """
             Use this action if a button or element is missing from the page.
             Provide a descriptive 'intent' of what you are looking for (e.g. 'Submit Order button').
@@ -491,7 +490,7 @@ def explore_application(
                 # For explorer, we don't have a specific test_case_id/node_id to filter by,
                 # but we can still search app-level memory for the intent.
                 
-                page = await browser.get_current_page()
+                page = await browser_session.get_current_page()
                 js_script = '''
                 () => {
                     const elements = Array.from(document.querySelectorAll('a, button, input, select, textarea, [role="button"], [role="link"], [role="menuitem"], [tabindex]:not([tabindex="-1"])'));

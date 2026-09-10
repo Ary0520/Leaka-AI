@@ -244,6 +244,7 @@ export interface ApplicationCreate {
   base_url: string;
   description?: string | null;
   login_hint?: string | null;
+  openapi_spec?: string | null;
 }
 
 export interface EnvironmentOut {
@@ -709,6 +710,11 @@ export const api = {
   // Environments & Fixtures
   listEnvironments: (appId: number) =>
     request<EnvironmentOut[]>(`/api/applications/${appId}/environments`),
+  updateEnvironment: (appId: number, envId: number, body: Partial<EnvironmentCreate>) =>
+    request<EnvironmentOut>(`/api/applications/${appId}/environments/${envId}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
   createEnvironment: (appId: number, body: EnvironmentCreate) =>
     request<EnvironmentOut>(`/api/applications/${appId}/environments`, {
       method: "POST",
