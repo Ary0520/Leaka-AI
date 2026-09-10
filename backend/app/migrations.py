@@ -35,6 +35,33 @@ def _is_postgres() -> bool:
     return settings.DATABASE_URL.startswith("postgres")
 
 
+def _safe_add_column(table: str, column: str, col_def: str) -> None:
+    """
+    Add a column to a table, idempotently, using a fresh transaction each time.
+
+    On Postgres we use `ADD COLUMN IF NOT EXISTS` which is a single atomic no-op
+    when the column exists — no error, no failed transaction state.
+    On SQLite there is no IF NOT EXISTS for ALTER TABLE, so we catch the
+    duplicate-column error by message string (SQLite-specific).
+
+    Each call gets its own `engine.begin()` so a prior failure in the same
+    migration step can never poison this statement.
+    """
+    if _is_postgres():
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {col_def}"))
+        except Exception as exc:
+            logger.error("Failed to add column %s.%s: %s", table, column, exc)
+    else:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}"))
+        except Exception as exc:
+            if "duplicate column name" not in str(exc).lower() and "already exists" not in str(exc).lower():
+                logger.error("Failed to add column %s.%s: %s", table, column, exc)
+
+
 # ---------------------------------------------------------------------------
 # M1 — pgvector extension + embeddings table
 # ---------------------------------------------------------------------------
@@ -299,21 +326,14 @@ def _b1_backfill_graph() -> None:
 
 def _m7_test_run_forensics() -> None:
     """Add forensic evidence and RCA columns to test_runs."""
-    with engine.begin() as conn:
-        for col, col_def in [
-            ("console_logs", "TEXT"),
-            ("har_data", "TEXT"),
-            ("rca_category", "VARCHAR(64)")
-        ]:
-            try:
-                conn.execute(text(f"ALTER TABLE test_runs ADD COLUMN {col} {col_def}"))
-            except Exception as e:
-                if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
-                    logger.error("Failed to add column %s: %s", col, e)
-    logger.info("M7 applied: test_run forensics columns added.")
+    _safe_add_column("test_runs", "console_logs", "TEXT")
+    _safe_add_column("test_runs", "har_data", "TEXT")
+    _safe_add_column("test_runs", "rca_category", "VARCHAR(64)")
+    logger.info("M7 applied: test_run forensics columns ready.")
 
 def _m8_test_data_management() -> None:
-    """Add environments and test_fixtures tables."""
+    """Add environments and test_fixtures tables, plus foreign key columns."""
+    # CREATE TABLE IF NOT EXISTS is safe in one transaction block
     with engine.begin() as conn:
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS environments (
@@ -339,65 +359,40 @@ def _m8_test_data_management() -> None:
                 FOREIGN KEY(application_id) REFERENCES applications(id) ON DELETE CASCADE
             )
         """))
-        for tbl in ["test_runs", "test_cases"]:
-            for col in ["environment_id", "fixture_id"]:
-                try:
-                    conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN {col} INTEGER"))
-                except Exception as e:
-                    if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
-                        logger.error("Failed to add column %s to %s: %s", col, tbl, e)
-    logger.info("M8 applied: test data management tables created.")
+    # Each ALTER TABLE in its own transaction to avoid poisoning on duplicate column
+    for tbl in ["test_runs", "test_cases"]:
+        for col in ["environment_id", "fixture_id"]:
+            _safe_add_column(tbl, col, "INTEGER")
+    logger.info("M8 applied: test data management tables ready.")
 
 
 def _m9_flakiness_intelligence() -> None:
     """Add quarantine and validation tracking columns."""
-    with engine.begin() as conn:
-        try:
-            conn.execute(text("ALTER TABLE test_cases ADD COLUMN is_quarantined BOOLEAN DEFAULT FALSE"))
-        except Exception as e:
-            if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
-                logger.error("Failed to add column is_quarantined: %s", e)
-        try:
-            conn.execute(text("ALTER TABLE test_runs ADD COLUMN validation_for_job_id VARCHAR(64)"))
-        except Exception as e:
-            if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
-                logger.error("Failed to add column validation_for_job_id: %s", e)
-    logger.info("M9 applied: flakiness intelligence columns added.")
+    _safe_add_column("test_cases", "is_quarantined", "BOOLEAN DEFAULT FALSE")
+    _safe_add_column("test_runs", "validation_for_job_id", "VARCHAR(64)")
+    logger.info("M9 applied: flakiness intelligence columns ready.")
 
 def _m10_ci_commit_status() -> None:
     """Add commit_sha and repo_full_name tracking columns."""
-    with engine.begin() as conn:
-        try:
-            conn.execute(text("ALTER TABLE test_runs ADD COLUMN commit_sha VARCHAR(64)"))
-        except Exception as e:
-            if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
-                logger.error("Failed to add column commit_sha: %s", e)
-        try:
-            conn.execute(text("ALTER TABLE test_runs ADD COLUMN repo_full_name VARCHAR(255)"))
-        except Exception as e:
-            if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
-                logger.error("Failed to add column repo_full_name: %s", e)
-    logger.info("M10 applied: ci commit status columns added.")
+    _safe_add_column("test_runs", "commit_sha", "VARCHAR(64)")
+    _safe_add_column("test_runs", "repo_full_name", "VARCHAR(255)")
+    logger.info("M10 applied: ci commit status columns ready.")
 
 def _m11_governable_ai() -> None:
     """Add policies column to environments."""
-    with engine.begin() as conn:
-        try:
-            conn.execute(text("ALTER TABLE environments ADD COLUMN policies TEXT"))
-        except Exception as e:
-            if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
-                logger.error("Failed to add column policies: %s", e)
-    logger.info("M11 applied: governable AI policies added.")
+    _safe_add_column("environments", "policies", "TEXT")
+    logger.info("M11 applied: governable AI policies ready.")
 
 def _m12_user_settings_onboarding() -> None:
     """Add onboarding_completed to user_settings."""
-    with engine.begin() as conn:
-        try:
-            conn.execute(text("ALTER TABLE user_settings ADD COLUMN onboarding_completed BOOLEAN NOT NULL DEFAULT FALSE"))
-        except Exception as e:
-            if "duplicate column name" not in str(e).lower() and "already exists" not in str(e).lower():
-                logger.error("Failed to add column onboarding_completed: %s", e)
-    logger.info("M12 applied: onboarding_completed added.")
+    _safe_add_column("user_settings", "onboarding_completed", "BOOLEAN NOT NULL DEFAULT FALSE")
+    logger.info("M12 applied: onboarding_completed ready.")
+
+def _m13_application_openapi_spec() -> None:
+    """Add openapi_spec column to applications for Company Brain onboarding step."""
+    _safe_add_column("applications", "openapi_spec", "TEXT")
+    logger.info("M13 applied: applications.openapi_spec ready.")
+
 
 # ---------------------------------------------------------------------------
 # Public runner
@@ -415,6 +410,7 @@ _MIGRATIONS = [
     ("M10_ci_commit_status", _m10_ci_commit_status),
     ("M11_governable_ai", _m11_governable_ai),
     ("M12_user_settings_onboarding", _m12_user_settings_onboarding),
+    ("M13_application_openapi_spec", _m13_application_openapi_spec),
     ("B1_backfill_graph", _b1_backfill_graph),
 ]
 
