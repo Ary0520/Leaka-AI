@@ -201,6 +201,7 @@ def _dispatch_explore_task(
     base_url: str,
     login_hint: Optional[str],
     max_steps: int,
+    environment_id: Optional[int] = None,
 ) -> str:
     """Dispatch an application explore run — mirrors _dispatch_run_task.
 
@@ -214,6 +215,7 @@ def _dispatch_explore_task(
         base_url=base_url,
         login_hint=login_hint,
         max_steps=max_steps,
+        environment_id=environment_id,
     )
 
     if settings.RUN_MODE == "sync_demo":
@@ -230,6 +232,8 @@ def _dispatch_explore_task(
 
     task = explore_application.delay(**kwargs)
     return task.id
+
+
 
 
 
@@ -1755,11 +1759,38 @@ def create_fixture(app_id: int, body: TestFixtureCreate, db: Session = Depends(g
 def explore_application_endpoint(
     app_id: int,
     max_steps: int = 40,
+    environment_id: Optional[int] = None,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    """Kick off an autonomous exploration run for an application."""
+    """
+    Kick off an autonomous exploration run for an application.
+
+    - environment_id (optional): when supplied, the explore agent is pre-authenticated
+      using the Environment's configured auth strategy (api_injection, state_cache, or
+      ephemeral_users). The Environment must belong to this application.
+      When omitted, the agent runs unauthenticated (suitable for public-facing apps
+      or the initial onboarding Step 2 where auth hasn't been configured yet).
+    """
     app_row = _get_owned_application(db, app_id, user)
+
+    # Validate the environment belongs to this application (ownership + app scoping).
+    # This prevents a user from injecting an environment from a different application.
+    if environment_id is not None:
+        from .models import Environment
+        env_row = (
+            db.query(Environment)
+            .filter(
+                Environment.id == environment_id,
+                Environment.application_id == app_row.id,
+            )
+            .first()
+        )
+        if not env_row:
+            raise HTTPException(
+                404,
+                f"Environment {environment_id} not found or does not belong to application {app_id}",
+            )
 
     job_id = uuid.uuid4().hex
     run = ExploreRun(
@@ -1780,6 +1811,7 @@ def explore_application_endpoint(
         base_url=app_row.base_url,
         login_hint=app_row.login_hint,
         max_steps=max_steps,
+        environment_id=environment_id,
     )
     run.task_id = task_id
     db.commit()

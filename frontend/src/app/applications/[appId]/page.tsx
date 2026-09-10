@@ -49,8 +49,22 @@ export default function ApplicationDetailPage() {
     },
   });
 
+  // Load environments to pick the auth-configured one for re-explore.
+  const { data: envs } = useQuery({
+    queryKey: ["environments", appId],
+    queryFn: () => api.listEnvironments(appId),
+    enabled: !!appId,
+  });
+
+  // Pick the first environment that has a real auth strategy configured.
+  // This is what the Re-explore button will pass so the agent wakes up
+  // already authenticated instead of hitting a login gate.
+  const authEnvId = envs?.find(
+    (e) => e.auth_strategy && e.auth_strategy !== "none"
+  )?.id;
+
   const exploreMut = useMutation({
-    mutationFn: () => api.exploreApplication(appId, 40),
+    mutationFn: () => api.exploreApplication(appId, 40, authEnvId),
     onSuccess: () => {
       toast({ title: "Exploration started", description: "Leaka is mapping your application…" });
       qc.invalidateQueries({ queryKey: ["app-map", appId] });
