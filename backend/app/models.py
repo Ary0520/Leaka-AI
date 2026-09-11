@@ -255,6 +255,7 @@ class Environment(Base):
     # --- Enterprise State & Authentication Architecture ---
     auth_strategy = Column(String(32), nullable=False, default="none")  # none | api_injection | state_cache | ephemeral_users
     auth_api_url = Column(String(2048), nullable=True)  # The API endpoint to provision the session or ephemeral user
+    auth_api_headers = Column(Text, nullable=True)      # JSON payload for the auth API headers (e.g. apikey)
     auth_payload = Column(Text, nullable=True)          # JSON payload for the auth API
     auth_token_path = Column(String(128), nullable=True) # JSON key containing the token in the API response (e.g., "access_token")
     auth_state_template = Column(Text, nullable=True)    # The Playwright storageState JSON. For api_injection, supports {{token}} replacement. For state_cache, contains the raw Golden State.

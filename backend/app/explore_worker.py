@@ -429,9 +429,10 @@ def _resolve_auth_storage_state(environment_id: Optional[int]) -> Optional[str]:
                 )
                 return None
 
-            # 1. Hit the customer's auth API with the configured payload.
+            # 1. Hit the customer's auth API with the configured payload and headers.
             payload = _json.loads(env.auth_payload) if env.auth_payload else {}
-            resp = _requests.post(env.auth_api_url, json=payload, timeout=15)
+            headers = _json.loads(env.auth_api_headers) if getattr(env, 'auth_api_headers', None) else {}
+            resp = _requests.post(env.auth_api_url, json=payload, headers=headers, timeout=15)
             resp.raise_for_status()
             auth_data = resp.json()
 

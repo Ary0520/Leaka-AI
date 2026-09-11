@@ -277,6 +277,7 @@ class EnvironmentCreate(BaseModel):
     policies: Optional[str] = None
     auth_strategy: Optional[str] = None
     auth_api_url: Optional[str] = None
+    auth_api_headers: Optional[str] = None
     auth_payload: Optional[str] = None
     auth_token_path: Optional[str] = None
     auth_state_template: Optional[str] = None
@@ -289,6 +290,7 @@ class EnvironmentUpdate(BaseModel):
     policies: Optional[str] = None
     auth_strategy: Optional[str] = None
     auth_api_url: Optional[str] = None
+    auth_api_headers: Optional[str] = None
     auth_payload: Optional[str] = None
     auth_token_path: Optional[str] = None
     auth_state_template: Optional[str] = None
