@@ -62,7 +62,32 @@ function SkipLink({ onSkip }: { onSkip: () => void }) {
 function StepConnectAI({ onNext, onSkip }: { onNext: () => void; onSkip: () => void }) {
   const [provider, setProvider] = useState("openrouter");
   const [apiKey, setApiKey] = useState("");
-  
+  const [model, setModel] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+
+  const handleNext = async () => {
+    if (!apiKey) {
+      onNext();
+      return;
+    }
+    setIsSaving(true);
+    try {
+      await api.updateIntegrationSettings({
+        llm_provider: provider,
+        openrouter_api_key: provider === "openrouter" ? apiKey : undefined,
+        openai_api_key: provider === "openai" ? apiKey : undefined,
+        anthropic_api_key: provider === "anthropic" ? apiKey : undefined,
+        llm_model_openrouter: provider === "openrouter" && model ? model : undefined,
+      });
+      onNext();
+    } catch (e) {
+      console.error("Failed to save LLM settings:", e);
+      onNext(); // Proceed anyway, they can set it in Settings later
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <OnboardCard>
       <div className="flex flex-col gap-1">
@@ -88,11 +113,15 @@ function StepConnectAI({ onNext, onSkip }: { onNext: () => void; onSkip: () => v
           <Label className="text-xs text-[#bacac5] uppercase tracking-wider">API Key</Label>
           <Input className="bg-[#111415] border-[rgba(186,202,197,0.12)] text-[#e1e2e4]" type="password" placeholder="sk-or-v1-..." value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
         </div>
+        <div className="flex flex-col gap-2">
+          <Label className="text-xs text-[#bacac5] uppercase tracking-wider">Model Override (Optional)</Label>
+          <Input className="bg-[#111415] border-[rgba(186,202,197,0.12)] text-[#e1e2e4]" placeholder={provider === "openrouter" ? "e.g. openai/gpt-4o" : "Leave blank for default"} value={model} onChange={(e) => setModel(e.target.value)} />
+        </div>
       </div>
-      <div className="flex items-center justify-between mt-2">
+      <div className="flex items-center justify-between mt-4">
         <SkipLink onSkip={onSkip} />
-        <Button onClick={onNext} className="gap-2 bg-[#e1e2e4] text-[#111415] hover:bg-white font-semibold">
-          Next <ArrowRight className="w-4 h-4" />
+        <Button onClick={handleNext} disabled={isSaving} className="gap-2 bg-[#e1e2e4] text-[#111415] hover:bg-white font-semibold">
+          {isSaving ? "Saving..." : "Next"} <ArrowRight className="w-4 h-4" />
         </Button>
       </div>
     </OnboardCard>

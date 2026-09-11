@@ -165,6 +165,11 @@ class UserSettings(Base):
     # Onboarding
     onboarding_completed = Column(Boolean, default=False, nullable=False)
 
+    # LLM Settings (Bring Your Own Key)
+    llm_provider = Column(String(32), nullable=True)
+    llm_api_key = Column(Text, nullable=True)
+    llm_model = Column(String(128), nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

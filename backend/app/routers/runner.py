@@ -51,7 +51,7 @@ def pull_job(job_id: str, db: Session = Depends(get_db), runner_user: dict = Dep
 
 def categorize_failure_bg(run_id: int):
     from app.database import SessionLocal
-    from app.llm import get_llm_for_provider
+    from app.llm import get_llm
     from app.models import TestRun
     import json
     
@@ -61,7 +61,7 @@ def categorize_failure_bg(run_id: int):
         if not run or run.status != "FAILED" or run.rca_category:
             return
             
-        llm = get_llm_for_provider()
+        llm = get_llm(owner_id=run.owner_id)
         
         prompt = f"""You are an expert QA engineer. Analyze the following end-to-end test failure and categorize the root cause.
 Return ONLY ONE of the following exact strings as your entire response. Do not add any markdown, punctuation, or explanation.

@@ -394,6 +394,14 @@ def _m13_application_openapi_spec() -> None:
     logger.info("M13 applied: applications.openapi_spec ready.")
 
 
+def _m14_byok_llm_settings() -> None:
+    """Add LLM Bring Your Own Key columns to user_settings."""
+    _safe_add_column("user_settings", "llm_provider", "VARCHAR(32)")
+    _safe_add_column("user_settings", "llm_api_key", "TEXT")
+    _safe_add_column("user_settings", "llm_model", "VARCHAR(128)")
+    logger.info("M14 applied: user_settings.llm_* ready.")
+
+
 # ---------------------------------------------------------------------------
 # Public runner
 # ---------------------------------------------------------------------------
@@ -411,6 +419,7 @@ _MIGRATIONS = [
     ("M11_governable_ai", _m11_governable_ai),
     ("M12_user_settings_onboarding", _m12_user_settings_onboarding),
     ("M13_application_openapi_spec", _m13_application_openapi_spec),
+    ("M14_byok_llm_settings", _m14_byok_llm_settings),
     ("B1_backfill_graph", _b1_backfill_graph),
 ]
 
