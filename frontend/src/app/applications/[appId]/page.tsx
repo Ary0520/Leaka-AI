@@ -14,6 +14,7 @@ import {
   ArrowLeft, Compass, Loader2, Play, Globe, FileText,
   ClipboardList, GitBranch, CheckCircle2, CircleDashed, Sparkles, XCircle,
   List, Network, TestTube2, History, Brain, GitPullRequest, Settings,
+  Lock, LockOpen,
 } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 import { GraphTab } from "@/components/intelligence/graph-tab";
@@ -98,7 +99,26 @@ export default function ApplicationDetailPage() {
           {exploreMut.isPending || isExploring ? (
             <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Exploring…</>
           ) : (
-            <><Play className="w-4 h-4 mr-2" />{data?.total_nodes ? "Re-explore" : "Explore app"}</>
+            <>
+              <Play className="w-4 h-4 mr-2" />
+              {data?.total_nodes ? "Re-explore" : "Explore app"}
+              {/* Auth mode indicator — shown once environments have loaded */}
+              {envs !== undefined && (
+                <span
+                  className={`ml-2 flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                    authEnvId
+                      ? "bg-emerald-500/15 text-emerald-400"
+                      : "bg-zinc-700/60 text-zinc-400"
+                  }`}
+                >
+                  {authEnvId ? (
+                    <><Lock className="w-2.5 h-2.5" />Auth</>
+                  ) : (
+                    <><LockOpen className="w-2.5 h-2.5" />Public</>
+                  )}
+                </span>
+              )}
+            </>
           )}
         </Button>
       </div>
