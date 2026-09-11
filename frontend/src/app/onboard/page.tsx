@@ -142,8 +142,6 @@ function StepKickoff({ onNext, onSkip, setAppId, setEnvId }: { onNext: () => voi
       setAppId(app.id);
       const env = await api.createEnvironment(app.id, { name: "Staging", base_url: url });
       setEnvId(env.id);
-      // Kickoff the background crawler!
-      await api.exploreApplication(app.id, 40);
       onNext();
     } catch (e) {
       toast({ title: "Error", description: "Could not create application." });
@@ -157,7 +155,7 @@ function StepKickoff({ onNext, onSkip, setAppId, setEnvId }: { onNext: () => voi
       <div className="flex flex-col gap-1">
         <span className="text-[#57f1db] text-[11px] tracking-[2px] uppercase" style={{ fontFamily: "Georgia, serif" }}>Step 2 of 5</span>
         <h2 className="text-[28px] leading-[1.3] text-[#e1e2e4]" style={{ fontFamily: "Georgia, serif" }}>Connect your Product</h2>
-        <p className="text-[#bacac5] text-sm">We'll immediately spin up an autonomous agent to map your application in the background while you finish onboarding.</p>
+        <p className="text-[#bacac5] text-sm">Create your application profile before we connect the AI to it.</p>
       </div>
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
@@ -171,8 +169,8 @@ function StepKickoff({ onNext, onSkip, setAppId, setEnvId }: { onNext: () => voi
       </div>
       <div className="flex items-center justify-between mt-2">
         <SkipLink onSkip={onSkip} />
-        <Button disabled={!name || !url || isLoading} onClick={handleNext} className="gap-2 bg-[#57f1db] text-[#111415] hover:bg-[#57f1db]/90 font-semibold">
-          {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <>Start Mapping <Zap className="w-4 h-4" /></>}
+        <Button disabled={!name || !url || isLoading} onClick={handleNext} className="gap-2 bg-[#e1e2e4] text-[#111415] hover:bg-white font-semibold">
+          {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <>Next <ArrowRight className="w-4 h-4" /></>}
         </Button>
       </div>
     </OnboardCard>
@@ -191,7 +189,7 @@ function StepAuthWallet({ onNext, onSkip, appId, envId }: { onNext: () => void; 
   const [isLoading, setIsLoading] = useState(false);
 
   const handleNext = async () => {
-    if (!apiUrl || !appId || !envId) return onSkip();
+    if (!apiUrl || !appId || !envId) return handleSkip();
     setIsLoading(true);
 
     let stateTemplate = "";
@@ -231,12 +229,22 @@ function StepAuthWallet({ onNext, onSkip, appId, envId }: { onNext: () => void; 
         auth_token_path: tokenPath,
         auth_state_template: stateTemplate,
       });
+      // Kickoff the background crawler authenticated!
+      await api.exploreApplication(appId, 40, envId);
       onNext();
     } catch (e) {
       toast({ title: "Error saving Auth Wallet" });
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleSkip = async () => {
+    if (appId) {
+      // Kickoff the background crawler unauthenticated
+      await api.exploreApplication(appId, 40);
+    }
+    onSkip();
   };
 
   return (
@@ -303,9 +311,9 @@ function StepAuthWallet({ onNext, onSkip, appId, envId }: { onNext: () => void; 
       </div>
 
       <div className="flex items-center justify-between mt-4">
-        <SkipLink onSkip={onSkip} />
-        <Button disabled={isLoading} onClick={handleNext} className="gap-2 bg-[#e1e2e4] text-[#111415] hover:bg-white font-semibold">
-          {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <>Save & Next <ShieldCheck className="w-4 h-4" /></>}
+        <SkipLink onSkip={handleSkip} />
+        <Button disabled={isLoading} onClick={handleNext} className="gap-2 bg-[#57f1db] text-[#111415] hover:bg-[#57f1db]/90 font-semibold">
+          {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <>Start Mapping <Zap className="w-4 h-4" /></>}
         </Button>
       </div>
     </OnboardCard>
