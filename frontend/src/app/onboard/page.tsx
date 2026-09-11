@@ -182,19 +182,54 @@ function StepKickoff({ onNext, onSkip, setAppId, setEnvId }: { onNext: () => voi
 // -- STEP 3: Auth Wallet --
 function StepAuthWallet({ onNext, onSkip, appId, envId }: { onNext: () => void; onSkip: () => void; appId: number | null; envId: number | null; }) {
   const [apiUrl, setApiUrl] = useState("");
+  const [headers, setHeaders] = useState("");
   const [payload, setPayload] = useState("{\n  \"email\": \"test@acme.com\",\n  \"password\": \"password123\"\n}");
-  const [tokenPath, setTokenPath] = useState("data.access_token");
+  const [tokenPath, setTokenPath] = useState("access_token");
+  const [injectionTarget, setInjectionTarget] = useState("localStorage");
+  const [injectionKey, setInjectionKey] = useState("sb-xxxx-auth-token");
+  const [injectionDomain, setInjectionDomain] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
   const handleNext = async () => {
     if (!apiUrl || !appId || !envId) return onSkip();
     setIsLoading(true);
+
+    let stateTemplate = "";
+    const cleanDomain = injectionDomain.replace(/^(https?:\/\/)/, "").replace(/\/$/, "");
+    if (injectionTarget === "localStorage") {
+      stateTemplate = JSON.stringify({
+        cookies: [],
+        origins: [{
+          origin: `https://${cleanDomain}`,
+          localStorage: [{
+            name: injectionKey,
+            value: "{{token}}"
+          }]
+        }]
+      }, null, 2);
+    } else {
+      stateTemplate = JSON.stringify({
+        cookies: [{
+          name: injectionKey,
+          value: "{{token}}",
+          domain: cleanDomain,
+          path: "/",
+          httpOnly: false,
+          secure: true,
+          sameSite: "Lax"
+        }],
+        origins: []
+      }, null, 2);
+    }
+
     try {
       await api.updateEnvironment(appId, envId, {
         auth_strategy: "api_injection",
         auth_api_url: apiUrl,
+        auth_api_headers: headers || undefined,
         auth_payload: payload,
         auth_token_path: tokenPath,
+        auth_state_template: stateTemplate,
       });
       onNext();
     } catch (e) {
@@ -209,23 +244,65 @@ function StepAuthWallet({ onNext, onSkip, appId, envId }: { onNext: () => void; 
       <div className="flex flex-col gap-1">
         <span className="text-[#57f1db] text-[11px] tracking-[2px] uppercase" style={{ fontFamily: "Georgia, serif" }}>Step 3 of 5</span>
         <h2 className="text-[28px] leading-[1.3] text-[#e1e2e4]" style={{ fontFamily: "Georgia, serif" }}>The Auth Wallet</h2>
-        <p className="text-[#bacac5] text-sm">Leaka injects authentication directly into the browser memory. No flakiness with UI logins or 2FA.</p>
+        <p className="text-[#bacac5] text-sm mb-2">Leaka injects authentication directly into the browser memory. No flakiness with UI logins.</p>
       </div>
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-2">
-          <Label className="text-xs text-[#bacac5] uppercase tracking-wider">Auth API Endpoint</Label>
-          <Input className="bg-[#111415] border-[rgba(186,202,197,0.12)] text-[#e1e2e4]" placeholder="https://api.acme.com/v1/login" value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} />
+      
+      <div className="flex flex-col gap-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+        {/* Request Setup */}
+        <div className="p-3 border border-[rgba(186,202,197,0.12)] rounded-md bg-[#16191a] flex flex-col gap-3">
+          <Label className="text-xs text-[#57f1db] uppercase tracking-wider font-semibold">1. Auth Request</Label>
+          <div className="flex flex-col gap-2">
+            <Label className="text-[10px] text-[#bacac5] uppercase">API Endpoint</Label>
+            <Input className="bg-[#111415] border-[rgba(186,202,197,0.12)] text-[#e1e2e4] h-8 text-xs" placeholder="https://api.acme.com/v1/login" value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label className="text-[10px] text-[#bacac5] uppercase">Headers (JSON)</Label>
+            <Textarea className="bg-[#111415] border-[rgba(186,202,197,0.12)] text-[#e1e2e4] font-mono text-[10px] min-h-[60px]" placeholder='{"apikey": "..."}' value={headers} onChange={(e) => setHeaders(e.target.value)} />
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label className="text-[10px] text-[#bacac5] uppercase">JSON Payload</Label>
+            <Textarea className="bg-[#111415] border-[rgba(186,202,197,0.12)] text-[#e1e2e4] font-mono text-[10px] min-h-[80px]" value={payload} onChange={(e) => setPayload(e.target.value)} />
+          </div>
         </div>
-        <div className="flex flex-col gap-2">
-          <Label className="text-xs text-[#bacac5] uppercase tracking-wider">JSON Payload</Label>
-          <Textarea className="bg-[#111415] border-[rgba(186,202,197,0.12)] text-[#e1e2e4] font-mono text-xs h-24" value={payload} onChange={(e) => setPayload(e.target.value)} />
+
+        {/* Extraction Setup */}
+        <div className="p-3 border border-[rgba(186,202,197,0.12)] rounded-md bg-[#16191a] flex flex-col gap-3">
+          <Label className="text-xs text-[#57f1db] uppercase tracking-wider font-semibold">2. Token Extraction</Label>
+          <div className="flex flex-col gap-2">
+            <Label className="text-[10px] text-[#bacac5] uppercase">JSON Path to Token</Label>
+            <Input className="bg-[#111415] border-[rgba(186,202,197,0.12)] text-[#e1e2e4] font-mono h-8 text-xs" placeholder="data.access_token" value={tokenPath} onChange={(e) => setTokenPath(e.target.value)} />
+          </div>
         </div>
-        <div className="flex flex-col gap-2">
-          <Label className="text-xs text-[#bacac5] uppercase tracking-wider">Token Path</Label>
-          <Input className="bg-[#111415] border-[rgba(186,202,197,0.12)] text-[#e1e2e4] font-mono" placeholder="data.access_token" value={tokenPath} onChange={(e) => setTokenPath(e.target.value)} />
+
+        {/* Injection Setup */}
+        <div className="p-3 border border-[rgba(186,202,197,0.12)] rounded-md bg-[#16191a] flex flex-col gap-3">
+          <Label className="text-xs text-[#57f1db] uppercase tracking-wider font-semibold">3. Browser Injection</Label>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-2">
+              <Label className="text-[10px] text-[#bacac5] uppercase">Target</Label>
+              <Select value={injectionTarget} onValueChange={setInjectionTarget}>
+                <SelectTrigger className="bg-[#111415] border-[rgba(186,202,197,0.12)] text-[#e1e2e4] h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-[#1d2021] border-[rgba(186,202,197,0.12)] text-[#e1e2e4]">
+                  <SelectItem value="localStorage">LocalStorage</SelectItem>
+                  <SelectItem value="cookie">Cookie</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label className="text-[10px] text-[#bacac5] uppercase">Key Name</Label>
+              <Input className="bg-[#111415] border-[rgba(186,202,197,0.12)] text-[#e1e2e4] font-mono h-8 text-xs" placeholder="sb-...-auth-token" value={injectionKey} onChange={(e) => setInjectionKey(e.target.value)} />
+            </div>
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label className="text-[10px] text-[#bacac5] uppercase">Domain</Label>
+            <Input className="bg-[#111415] border-[rgba(186,202,197,0.12)] text-[#e1e2e4] h-8 text-xs" placeholder="app.acme.com" value={injectionDomain} onChange={(e) => setInjectionDomain(e.target.value)} />
+          </div>
         </div>
       </div>
-      <div className="flex items-center justify-between mt-2">
+
+      <div className="flex items-center justify-between mt-4">
         <SkipLink onSkip={onSkip} />
         <Button disabled={isLoading} onClick={handleNext} className="gap-2 bg-[#e1e2e4] text-[#111415] hover:bg-white font-semibold">
           {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <>Save & Next <ShieldCheck className="w-4 h-4" /></>}
@@ -234,6 +311,7 @@ function StepAuthWallet({ onNext, onSkip, appId, envId }: { onNext: () => void; 
     </OnboardCard>
   );
 }
+
 
 // -- STEP 4: Company Brain --
 function StepCompanyBrain({ onNext, onSkip, appId }: { onNext: () => void; onSkip: () => void; appId: number | null; }) {

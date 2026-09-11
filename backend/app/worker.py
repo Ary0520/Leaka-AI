@@ -701,7 +701,8 @@ def run_browser_test(
                     storage_state_dict = temp_state_path
             elif env.auth_strategy in ("api_injection", "ephemeral_users"):
                 payload = json.loads(env.auth_payload) if env.auth_payload else {}
-                resp = requests.post(env.auth_api_url, json=payload, timeout=15)
+                headers = json.loads(env.auth_api_headers) if getattr(env, 'auth_api_headers', None) else {}
+                resp = requests.post(env.auth_api_url, json=payload, headers=headers, timeout=15)
                 resp.raise_for_status()
                 auth_data = resp.json()
                 

@@ -402,6 +402,11 @@ def _m14_byok_llm_settings() -> None:
     logger.info("M14 applied: user_settings.llm_* ready.")
 
 
+def _m15_environment_auth_headers() -> None:
+    """Add auth_api_headers column to environments table."""
+    _safe_add_column("environments", "auth_api_headers", "TEXT")
+    logger.info("M15 applied: environments.auth_api_headers ready.")
+
 # ---------------------------------------------------------------------------
 # Public runner
 # ---------------------------------------------------------------------------
@@ -420,6 +425,7 @@ _MIGRATIONS = [
     ("M12_user_settings_onboarding", _m12_user_settings_onboarding),
     ("M13_application_openapi_spec", _m13_application_openapi_spec),
     ("M14_byok_llm_settings", _m14_byok_llm_settings),
+    ("M15_environment_auth_headers", _m15_environment_auth_headers),
     ("B1_backfill_graph", _b1_backfill_graph),
 ]
 
