@@ -593,6 +593,7 @@ def explore_application(
         "labels of the pages/forms that compose it (e.g. a 'Checkout' flow → "
         "['Cart', 'Shipping', 'Payment']). Use exact labels of nodes in the map.",
         "9. When finished, call done() and return the structured application map.",
+        "10. CRITICAL: You must output ONLY raw, valid JSON. Do not wrap your response in markdown (```json). Do not add any conversational text.",
     ]
     if login_hint:
         task_parts += [
