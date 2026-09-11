@@ -582,13 +582,14 @@ def run_browser_test(
     test_case_id: Optional[int] = None,
     environment_id: Optional[int] = None,
     fixture_id: Optional[int] = None,
+    owner_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     Run a browser-use Agent against a natural-language QA prompt.
 
     Lifecycle:
       1. Update TestRun → RUNNING, set started_at
-      2. Build the LLM (honours LLM_PROVIDER env)
+      2. Build the LLM (honours LLM_PROVIDER env and BYOK per-user config)
       3. Run Agent async via asyncio.run()
       4. Persist screenshots, result, DOM, steps
       5. Update TestRun → COMPLETED / FAILED
@@ -603,7 +604,7 @@ def run_browser_test(
     )
 
     try:
-        llm = get_llm()
+        llm = get_llm(owner_id)
     except Exception as exc:
         _update_db_status(
             job_id,

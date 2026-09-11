@@ -5,72 +5,95 @@ from typing import Any
 from .config import settings
 
 
-def get_llm() -> Any:
+def get_llm(owner_id: str | None = None) -> Any:
     """
-    Build the browser-use LLM client based on settings.LLM_PROVIDER.
-
-    Correct imports verified against browser-use==0.13.7 installed package.
-    All Chat* classes live under browser_use.llm, not the top-level package.
-
-    Supports:
-      - openai      : ChatOpenAI (official OpenAI API)
-      - anthropic   : ChatAnthropic (official Anthropic API)
-      - openrouter  : ChatOpenRouter (OpenRouter multi-provider gateway)
-      - ollama      : ChatOllama (100% free, local LLM via Ollama server)
+    Build the browser-use LLM client.
+    First tries the user's BYOK settings (if owner_id is provided),
+    then falls back to the global settings in .env.
     """
-    provider = (settings.LLM_PROVIDER or "openai").lower().strip()
+    provider = None
+    model = None
+    api_key = None
+
+    if owner_id:
+        from .database import SessionLocal
+        from .models import UserSettings
+        db = SessionLocal()
+        try:
+            cfg = db.query(UserSettings).filter(UserSettings.owner_id == owner_id).first()
+            if cfg and cfg.llm_provider and (cfg.llm_api_key or cfg.llm_provider == "ollama"):
+                provider = cfg.llm_provider.lower().strip()
+                api_key = cfg.llm_api_key
+                model = cfg.llm_model
+        finally:
+            db.close()
+
+    if not provider:
+        provider = (settings.LLM_PROVIDER or "openai").lower().strip()
 
     if provider == "openai":
         from browser_use.llm import ChatOpenAI  # type: ignore[import]
+        key = api_key or os.getenv("OPENAI_API_KEY")
+        if not key:
+            raise RuntimeError("OPENAI_API_KEY is not set for user or in .env")
+        mod = model or settings.LLM_MODEL_OPENAI
 
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise RuntimeError(
-                "LLM_PROVIDER=openai but OPENAI_API_KEY is not set in .env"
-            )
-        return ChatOpenAI(model=settings.LLM_MODEL_OPENAI, temperature=0.0)
+        class SafeChatOpenAI(ChatOpenAI):
+            async def _agenerate(self, *args, **kwargs):
+                result = await super()._agenerate(*args, **kwargs)
+                for gen in result.generations:
+                    msg = gen.message
+                    if isinstance(msg.content, str):
+                        content = msg.content.strip()
+                        if not content.endswith("```"):
+                            last_brace = content.rfind("}")
+                            if last_brace != -1 and "{" in content[:last_brace]:
+                                msg.content = content[:last_brace+1]
+                return result
+
+        return SafeChatOpenAI(model=mod, api_key=key, temperature=0.0)
 
     if provider == "anthropic":
         from browser_use.llm import ChatAnthropic  # type: ignore[import]
-
-        api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise RuntimeError(
-                "LLM_PROVIDER=anthropic but ANTHROPIC_API_KEY is not set in .env"
-            )
-        return ChatAnthropic(model=settings.LLM_MODEL_ANTHROPIC, temperature=0.0)
+        key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        if not key:
+            raise RuntimeError("ANTHROPIC_API_KEY is not set for user or in .env")
+        mod = model or settings.LLM_MODEL_ANTHROPIC
+        return ChatAnthropic(model=mod, api_key=key, temperature=0.0)
 
     if provider == "openrouter":
         from browser_use.llm import ChatOpenRouter  # type: ignore[import]
+        key = api_key or settings.OPENROUTER_API_KEY or os.getenv("OPENROUTER_API_KEY")
+        if not key:
+            raise RuntimeError("OPENROUTER_API_KEY is not set for user or in .env")
+        mod = model or settings.LLM_MODEL_OPENROUTER
 
-        api_key = settings.OPENROUTER_API_KEY or os.getenv("OPENROUTER_API_KEY")
-        if not api_key:
-            raise RuntimeError(
-                "LLM_PROVIDER=openrouter but OPENROUTER_API_KEY is not set."
-            )
-        return ChatOpenRouter(
-            model=settings.LLM_MODEL_OPENROUTER,
-            api_key=api_key,
-            temperature=0.0,
-        )
+        class SafeChatOpenRouter(ChatOpenRouter):
+            """Wraps OpenRouter to automatically strip trailing conversational garbage
+            that models like gpt-5.6-luna append after the JSON block."""
+            async def _agenerate(self, *args, **kwargs):
+                result = await super()._agenerate(*args, **kwargs)
+                for gen in result.generations:
+                    msg = gen.message
+                    if isinstance(msg.content, str):
+                        content = msg.content.strip()
+                        if not content.endswith("```"):
+                            last_brace = content.rfind("}")
+                            if last_brace != -1 and "{" in content[:last_brace]:
+                                msg.content = content[:last_brace+1]
+                return result
+                
+        return SafeChatOpenRouter(model=mod, api_key=key, temperature=0.0)
 
     if provider == "ollama":
         from browser_use.llm import ChatOllama  # type: ignore[import]
+        mod = model or settings.OLLAMA_MODEL
+        return ChatOllama(model=mod, host=settings.OLLAMA_BASE_URL)
 
-        # ChatOllama in browser-use 0.13.7 uses `host` (not `base_url`)
-        # Verified from: browser_use.llm.ollama.chat.__init__ signature
-        return ChatOllama(
-            model=settings.OLLAMA_MODEL,
-            host=settings.OLLAMA_BASE_URL,
-        )
-
-    raise ValueError(
-        f"Unknown LLM_PROVIDER '{provider}'. "
-        "Choose one of: openai, anthropic, openrouter, ollama."
-    )
+    raise ValueError(f"Unknown LLM_PROVIDER '{provider}'.")
 
 
-async def _test_llm_connection() -> dict[str, Any]:
+async def _test_llm_connection(owner_id: str | None = None) -> dict[str, Any]:
     """
     Validate the current LLM configuration by making a lightweight live API call.
 
@@ -81,39 +104,56 @@ async def _test_llm_connection() -> dict[str, Any]:
 
     Returns {"ok": bool, "provider": str, "model": str, "detail": str}
     """
-    provider = (settings.LLM_PROVIDER or "openai").lower().strip()
+    provider = None
+    model = None
+    api_key = None
+
+    if owner_id:
+        from .database import SessionLocal
+        from .models import UserSettings
+        db = SessionLocal()
+        try:
+            cfg = db.query(UserSettings).filter(UserSettings.owner_id == owner_id).first()
+            if cfg and cfg.llm_provider and (cfg.llm_api_key or cfg.llm_provider == "ollama"):
+                provider = cfg.llm_provider.lower().strip()
+                api_key = cfg.llm_api_key
+                model = cfg.llm_model
+        finally:
+            db.close()
+
+    if not provider:
+        provider = (settings.LLM_PROVIDER or "openai").lower().strip()
 
     # ── OpenAI ────────────────────────────────────────────────────────────────
     if provider == "openai":
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            return {"ok": False, "provider": provider, "model": settings.LLM_MODEL_OPENAI,
+        key = api_key or os.getenv("OPENAI_API_KEY")
+        mod = model or settings.LLM_MODEL_OPENAI
+        if not key:
+            return {"ok": False, "provider": provider, "model": mod,
                     "detail": "OPENAI_API_KEY is not set. Add it in Settings."}
         try:
             from openai import AsyncOpenAI
-            client = AsyncOpenAI(api_key=api_key)
+            client = AsyncOpenAI(api_key=key)
             await client.models.list()
-            return {"ok": True, "provider": provider, "model": settings.LLM_MODEL_OPENAI,
+            return {"ok": True, "provider": provider, "model": mod,
                     "detail": "API key is valid and active."}
         except Exception as exc:
-            return {"ok": False, "provider": provider, "model": settings.LLM_MODEL_OPENAI,
+            return {"ok": False, "provider": provider, "model": mod,
                     "detail": _classify_api_error(str(exc))}
 
     # ── OpenRouter ────────────────────────────────────────────────────────────
     if provider == "openrouter":
-        api_key = settings.OPENROUTER_API_KEY or os.getenv("OPENROUTER_API_KEY")
-        if not api_key:
-            return {"ok": False, "provider": provider, "model": settings.LLM_MODEL_OPENROUTER,
+        key = api_key or settings.OPENROUTER_API_KEY or os.getenv("OPENROUTER_API_KEY")
+        mod = model or settings.LLM_MODEL_OPENROUTER
+        if not key:
+            return {"ok": False, "provider": provider, "model": mod,
                     "detail": "OPENROUTER_API_KEY is not set. Add it in Settings."}
         try:
             import httpx
-            # OpenRouter's /auth/key endpoint validates the key and returns
-            # account metadata. It returns 401 for invalid/missing keys.
-            # Do NOT use /models — that endpoint is public and accepts any key.
             async with httpx.AsyncClient(timeout=8.0) as client:
                 resp = await client.get(
                     "https://openrouter.ai/api/v1/auth/key",
-                    headers={"Authorization": f"Bearer {api_key}"},
+                    headers={"Authorization": f"Bearer {key}"},
                 )
             if resp.status_code == 200:
                 data = resp.json().get("data", {})
@@ -121,36 +161,36 @@ async def _test_llm_connection() -> dict[str, Any]:
                 limit = data.get("limit")
                 usage = data.get("usage", 0)
                 remaining = f" · ${round(limit - usage, 4)} remaining" if limit else ""
-                return {"ok": True, "provider": provider, "model": settings.LLM_MODEL_OPENROUTER,
+                return {"ok": True, "provider": provider, "model": mod,
                         "detail": f"API key is valid ({label}){remaining}."}
             elif resp.status_code in (401, 403):
-                return {"ok": False, "provider": provider, "model": settings.LLM_MODEL_OPENROUTER,
+                return {"ok": False, "provider": provider, "model": mod,
                         "detail": _classify_api_error(resp.text[:200])}
             else:
-                return {"ok": False, "provider": provider, "model": settings.LLM_MODEL_OPENROUTER,
+                return {"ok": False, "provider": provider, "model": mod,
                         "detail": f"OpenRouter returned HTTP {resp.status_code}."}
         except Exception as exc:
-            return {"ok": False, "provider": provider, "model": settings.LLM_MODEL_OPENROUTER,
+            return {"ok": False, "provider": provider, "model": mod,
                     "detail": _classify_api_error(str(exc))}
 
     # ── Anthropic ─────────────────────────────────────────────────────────────
     if provider == "anthropic":
-        api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not api_key:
-            return {"ok": False, "provider": provider, "model": settings.LLM_MODEL_ANTHROPIC,
+        key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        mod = model or settings.LLM_MODEL_ANTHROPIC
+        if not key:
+            return {"ok": False, "provider": provider, "model": mod,
                     "detail": "ANTHROPIC_API_KEY is not set. Add it in Settings."}
         try:
             import anthropic
-            client = anthropic.AsyncAnthropic(api_key=api_key)
-            # count_tokens is a free endpoint — no tokens consumed
+            client = anthropic.AsyncAnthropic(api_key=key)
             await client.messages.count_tokens(
-                model=settings.LLM_MODEL_ANTHROPIC,
+                model=mod,
                 messages=[{"role": "user", "content": "ping"}],
             )
-            return {"ok": True, "provider": provider, "model": settings.LLM_MODEL_ANTHROPIC,
+            return {"ok": True, "provider": provider, "model": mod,
                     "detail": "API key is valid and active."}
         except Exception as exc:
-            return {"ok": False, "provider": provider, "model": settings.LLM_MODEL_ANTHROPIC,
+            return {"ok": False, "provider": provider, "model": mod,
                     "detail": _classify_api_error(str(exc))}
 
     # ── Ollama ────────────────────────────────────────────────────────────────

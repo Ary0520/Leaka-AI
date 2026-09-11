@@ -526,7 +526,7 @@ def explore_application(
     )
 
     try:
-        llm = get_llm()
+        llm = get_llm(owner_id)
     except Exception as exc:
         _update_explore_status(
             job_id,

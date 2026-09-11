@@ -139,6 +139,7 @@ def _dispatch_run_task(
     test_case_id: Optional[int],
     environment_id: Optional[int] = None,
     fixture_id: Optional[int] = None,
+    owner_id: Optional[str] = None,
 ) -> str:
     """Dispatch a test run.
 
@@ -171,6 +172,7 @@ def _dispatch_run_task(
         test_case_id=test_case_id,
         environment_id=environment_id,
         fixture_id=fixture_id,
+        owner_id=owner_id,
     )
 
     if settings.RUN_MODE == "sync_demo":
@@ -348,9 +350,39 @@ def _mask(val: str | None) -> str:
 
 
 @app.get("/api/settings/integrations")
-def get_integration_settings(user: dict = Depends(get_current_user)):
-    """Return current integration config, secrets masked."""
+def get_integration_settings(user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Return current integration config, combining global and user-specific settings."""
     env = _read_env_file()
+    
+    # Defaults from global env
+    llm_provider = env.get("LLM_PROVIDER", "openai")
+    openrouter_model = env.get("LLM_MODEL_OPENROUTER", "")
+    openai_model = env.get("LLM_MODEL_OPENAI", "")
+    anthropic_model = env.get("LLM_MODEL_ANTHROPIC", "")
+    ollama_model = env.get("OLLAMA_MODEL", "")
+    
+    or_set = bool(env.get("OPENROUTER_API_KEY"))
+    oa_set = bool(env.get("OPENAI_API_KEY"))
+    an_set = bool(env.get("ANTHROPIC_API_KEY"))
+
+    # Override with per-user DB settings
+    user_settings = db.query(UserSettings).filter(UserSettings.owner_id == user["sub"]).first()
+    if user_settings and user_settings.llm_provider:
+        llm_provider = user_settings.llm_provider
+        # Only the active provider's key is known to be set from user_settings
+        has_key = bool(user_settings.llm_api_key)
+        if llm_provider == "openrouter":
+            or_set = has_key
+            if user_settings.llm_model: openrouter_model = user_settings.llm_model
+        elif llm_provider == "openai":
+            oa_set = has_key
+            if user_settings.llm_model: openai_model = user_settings.llm_model
+        elif llm_provider == "anthropic":
+            an_set = has_key
+            if user_settings.llm_model: anthropic_model = user_settings.llm_model
+        elif llm_provider == "ollama":
+            if user_settings.llm_model: ollama_model = user_settings.llm_model
+
     return {
         "linear": {
             "api_key": _mask(env.get("LINEAR_API_KEY")),
@@ -368,14 +400,14 @@ def get_integration_settings(user: dict = Depends(get_current_user)):
             "webhook_url_set": bool(env.get("SLACK_WEBHOOK_URL")),
         },
         "llm": {
-            "provider": env.get("LLM_PROVIDER", ""),
-            "openrouter_model": env.get("LLM_MODEL_OPENROUTER", ""),
-            "openai_model": env.get("LLM_MODEL_OPENAI", ""),
-            "anthropic_model": env.get("LLM_MODEL_ANTHROPIC", ""),
-            "ollama_model": env.get("OLLAMA_MODEL", ""),
-            "openrouter_key_set": bool(env.get("OPENROUTER_API_KEY")),
-            "openai_key_set": bool(env.get("OPENAI_API_KEY")),
-            "anthropic_key_set": bool(env.get("ANTHROPIC_API_KEY")),
+            "provider": llm_provider,
+            "openrouter_model": openrouter_model,
+            "openai_model": openai_model,
+            "anthropic_model": anthropic_model,
+            "ollama_model": ollama_model,
+            "openrouter_key_set": or_set,
+            "openai_key_set": oa_set,
+            "anthropic_key_set": an_set,
         },
         "ci": {
             "webhook_token": env.get("CI_WEBHOOK_TOKEN", ""),
@@ -404,15 +436,11 @@ class IntegrationSettingsUpdate(BaseModel):
 
 
 @app.patch("/api/settings/integrations")
-def update_integration_settings(body: IntegrationSettingsUpdate, user: dict = Depends(get_current_user)):
+def update_integration_settings(body: IntegrationSettingsUpdate, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     """
-    Persist integration settings to backend/.env AND into os.environ in-process.
-
-    All changes take effect immediately for the next test run — no restart needed.
-    get_llm() reads os.environ fresh on every run, so LLM key/provider switches
-    are live as soon as this endpoint returns.
-
-    Empty string = clear the value. None = leave unchanged.
+    Persist integration settings.
+    Global integrations (Linear, Resend, Slack, CI) go to .env and os.environ.
+    LLM settings (BYOK) go to UserSettings in DB.
     """
     field_map = {
         "linear_api_key": "LINEAR_API_KEY",
@@ -421,11 +449,6 @@ def update_integration_settings(body: IntegrationSettingsUpdate, user: dict = De
         "email_from": "EMAIL_FROM",
         "email_alert_to": "EMAIL_ALERT_TO",
         "slack_webhook_url": "SLACK_WEBHOOK_URL",
-        "llm_provider": "LLM_PROVIDER",
-        "llm_model_openrouter": "LLM_MODEL_OPENROUTER",
-        "openrouter_api_key": "OPENROUTER_API_KEY",
-        "openai_api_key": "OPENAI_API_KEY",
-        "anthropic_api_key": "ANTHROPIC_API_KEY",
         "ci_webhook_token": "CI_WEBHOOK_TOKEN",
     }
 
@@ -435,29 +458,57 @@ def update_integration_settings(body: IntegrationSettingsUpdate, user: dict = De
         if val is not None:  # None = skip; "" = clear
             updates[env_key] = val
 
-    if not updates:
+    updated_fields = list(updates.keys())
+    
+    if updates:
+        # 1. Persist to .env so changes survive a restart
+        _write_env_file(updates)
+
+        # 2. Apply immediately to os.environ so the running process picks them up
+        for env_key, val in updates.items():
+            if val:
+                os.environ[env_key] = val
+            elif env_key in os.environ:
+                del os.environ[env_key]
+
+    # Handle per-user LLM BYOK settings
+    if any(v is not None for v in [body.llm_provider, body.openrouter_api_key, body.openai_api_key, body.anthropic_api_key, body.llm_model_openrouter]):
+        owner = user["sub"]
+        us = db.query(UserSettings).filter(UserSettings.owner_id == owner).first()
+        if not us:
+            us = UserSettings(owner_id=owner)
+            db.add(us)
+            
+        if body.llm_provider is not None:
+            us.llm_provider = body.llm_provider
+            
+        # Only update the api key for the provider being saved.
+        # This matches how the frontend submits the form.
+        provider_to_save = body.llm_provider or us.llm_provider
+        if provider_to_save == "openrouter" and body.openrouter_api_key is not None:
+            us.llm_api_key = body.openrouter_api_key if body.openrouter_api_key else None
+        elif provider_to_save == "openai" and body.openai_api_key is not None:
+            us.llm_api_key = body.openai_api_key if body.openai_api_key else None
+        elif provider_to_save == "anthropic" and body.anthropic_api_key is not None:
+            us.llm_api_key = body.anthropic_api_key if body.anthropic_api_key else None
+
+        if body.llm_model_openrouter is not None and provider_to_save == "openrouter":
+            us.llm_model = body.llm_model_openrouter
+
+        db.commit()
+        updated_fields.append("llm_settings")
+
+    if not updated_fields:
         return {"message": "Nothing to update", "updated": []}
 
-    # 1. Persist to .env so changes survive a restart
-    _write_env_file(updates)
-
-    # 2. Apply immediately to os.environ so the running process picks them up
-    #    right now — no restart needed. get_llm(), slack_client, linear_client,
-    #    and all integrations read settings via os.getenv() at call time.
-    for env_key, val in updates.items():
-        if val:
-            os.environ[env_key] = val
-        elif env_key in os.environ:
-            del os.environ[env_key]
-
     logger.info(
-        "Integration settings updated live (no restart needed): %s",
-        list(updates.keys()),
+        "Integration settings updated live: %s",
+        updated_fields,
     )
 
     return {
         "message": "Settings saved and active immediately.",
-        "updated": list(updates.keys()),
+        "updated": updated_fields,
     }
 
 
@@ -635,7 +686,7 @@ async def test_llm_connection(user: dict = Depends(get_current_user)):
         {"ok": bool, "provider": str, "model": str, "detail": str}
     """
     from .llm import _test_llm_connection
-    result = await _test_llm_connection()
+    result = await _test_llm_connection(owner_id=user["sub"])
     return result
 
 
@@ -906,6 +957,7 @@ def run_suite(
             use_vision=use_vision,
             max_steps=max_steps,
             test_case_id=tc.id,
+            owner_id=user["sub"],
         )
         run.task_id = task_id
         job_ids.append(job_id)
@@ -984,6 +1036,7 @@ def enqueue_test(body: TestRunRequest, db: Session = Depends(get_db), user: dict
         test_case_id=test_case_id,
         environment_id=environment_id,
         fixture_id=fixture_id,
+        owner_id=user["sub"],
     )
     run.task_id = task_id
     db.commit()
@@ -1322,6 +1375,7 @@ def ci_webhook(
             use_vision=True,
             max_steps=50,
             test_case_id=tc.id,
+            owner_id=run.owner_id,
         )
         run.task_id = task_id
         job_ids.append(job_id)
@@ -3023,6 +3077,7 @@ def run_diff_recommendation(
             job_id=job_id, name=run.name, prompt=tc.prompt,
             target_url=tc.target_url or "", success_criteria=tc.success_criteria,
             use_vision=True, max_steps=50, test_case_id=tc.id,
+            owner_id=owner_id,
         )
         run.task_id = task_id
         job_ids.append(job_id)
