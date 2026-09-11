@@ -5,6 +5,57 @@ from typing import Any
 from .config import settings
 
 
+def _extract_clean_json(text: str) -> str:
+    if not isinstance(text, str):
+        return text
+    start_idx = -1
+    for i, char in enumerate(text):
+        if char in ('{', '['):
+            start_idx = i
+            break
+    if start_idx == -1:
+        return text
+        
+    start_char = text[start_idx]
+    end_char = '}' if start_char == '{' else ']'
+    stack = 0
+    in_string = False
+    escape = False
+    
+    for i in range(start_idx, len(text)):
+        char = text[i]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == '\\':
+                escape = True
+            elif char == '"':
+                in_string = False
+        else:
+            if char == '"':
+                in_string = True
+            elif char == start_char:
+                stack += 1
+            elif char == end_char:
+                stack -= 1
+                if stack == 0:
+                    return text[start_idx:i+1]
+    return text
+
+def _clean_message_payloads(msg: Any) -> None:
+    if hasattr(msg, "content") and isinstance(msg.content, str):
+        msg.content = _extract_clean_json(msg.content)
+    if hasattr(msg, "tool_calls") and isinstance(msg.tool_calls, list):
+        for tc in msg.tool_calls:
+            if "args" in tc and isinstance(tc["args"], str):
+                tc["args"] = _extract_clean_json(tc["args"])
+            elif "function" in tc and "arguments" in tc["function"] and isinstance(tc["function"]["arguments"], str):
+                tc["function"]["arguments"] = _extract_clean_json(tc["function"]["arguments"])
+    if hasattr(msg, "additional_kwargs") and "tool_calls" in msg.additional_kwargs:
+        for tc in msg.additional_kwargs["tool_calls"]:
+            if "function" in tc and "arguments" in tc["function"] and isinstance(tc["function"]["arguments"], str):
+                tc["function"]["arguments"] = _extract_clean_json(tc["function"]["arguments"])
+
 def get_llm(owner_id: str | None = None) -> Any:
     """
     Build the browser-use LLM client.
@@ -42,13 +93,7 @@ def get_llm(owner_id: str | None = None) -> Any:
             async def _agenerate(self, *args, **kwargs):
                 result = await super()._agenerate(*args, **kwargs)
                 for gen in result.generations:
-                    msg = gen.message
-                    if isinstance(msg.content, str):
-                        content = msg.content.strip()
-                        if not content.endswith("```"):
-                            last_brace = content.rfind("}")
-                            if last_brace != -1 and "{" in content[:last_brace]:
-                                msg.content = content[:last_brace+1]
+                    _clean_message_payloads(gen.message)
                 return result
 
         return SafeChatOpenAI(model=mod, api_key=key, temperature=0.0)
@@ -74,13 +119,7 @@ def get_llm(owner_id: str | None = None) -> Any:
             async def _agenerate(self, *args, **kwargs):
                 result = await super()._agenerate(*args, **kwargs)
                 for gen in result.generations:
-                    msg = gen.message
-                    if isinstance(msg.content, str):
-                        content = msg.content.strip()
-                        if not content.endswith("```"):
-                            last_brace = content.rfind("}")
-                            if last_brace != -1 and "{" in content[:last_brace]:
-                                msg.content = content[:last_brace+1]
+                    _clean_message_payloads(gen.message)
                 return result
                 
         return SafeChatOpenRouter(model=mod, api_key=key, temperature=0.0)
