@@ -10,9 +10,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 
+import { useWorkspace } from "@/app/providers";
+
 export default function RunGroupsPage() {
+  const { activeWorkspaceId } = useWorkspace();
   const { data: groups, isLoading } = useQuery({
-    queryKey: ["run-groups"],
+    queryKey: ["run-groups", activeWorkspaceId],
     queryFn: () => api.listRunGroups(),
     refetchInterval: 10000,
   });

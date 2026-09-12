@@ -10,9 +10,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 
+import { useWorkspace } from "@/app/providers";
+
 export default function QuarantinePage() {
   const queryClient = useQueryClient();
 
+  const { activeWorkspaceId } = useWorkspace();
   const { data: tests, isLoading } = useQuery({
     queryKey: ["quarantine"],
     queryFn: () => api.listQuarantined(),
