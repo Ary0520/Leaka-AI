@@ -714,8 +714,16 @@ def run_browser_test(
                             token = token.get(key)
                             
                 if env.auth_state_template and token:
-                    templated = env.auth_state_template.replace("{{token}}", str(token))
+                    if isinstance(token, (dict, list)):
+                        token_str = json.dumps(token)
+                    else:
+                        token_str = str(token)
                     
+                    escaped_token = json.dumps(token_str)
+                    if '"{{token}}"' in env.auth_state_template:
+                        templated = env.auth_state_template.replace('"{{token}}"', escaped_token)
+                    else:
+                        templated = env.auth_state_template.replace("{{token}}", token_str)
                     # ── BROWSER-USE WINDOWS BUGFIX ─────────────────────────────────────
                     # browser-use 0.13.7 StorageStateWatchdog crashes on Windows with WinError 123
                     # if storage_state is passed as a dict because os.path.exists() fails.

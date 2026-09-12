@@ -256,6 +256,7 @@ export interface EnvironmentOut {
   policies?: string | null;
   auth_strategy?: string | null;
   auth_api_url?: string | null;
+  auth_api_headers?: string | null;
   auth_payload?: string | null;
   auth_token_path?: string | null;
   auth_state_template?: string | null;
@@ -270,6 +271,7 @@ export interface EnvironmentCreate {
   policies?: string | null;
   auth_strategy?: string | null;
   auth_api_url?: string | null;
+  auth_api_headers?: string | null;
   auth_payload?: string | null;
   auth_token_path?: string | null;
   auth_state_template?: string | null;

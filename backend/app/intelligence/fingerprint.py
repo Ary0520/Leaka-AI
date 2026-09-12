@@ -158,19 +158,20 @@ def compute_canonical_key(discovery: Discovery) -> str:
     The stable identity of a node within its application.
 
     Rule (design 1.2):
-      - PRIMARY: node_type + normalized url_signature (when a URL exists).
-        So the same page keeps one identity regardless of query params / ids.
-      - FALLBACK (URL-less nodes like modals/forms): node_type + text_signature.
+      - PRIMARY: node_type + normalized url_signature + text_signature.
+        In modern SPAs, the URL alone is insufficient to distinguish states 
+        (e.g. modals, tabs). The label (text) acts as the differentiator.
+      - FALLBACK (URL-less nodes): node_type + text_signature.
 
-    Deterministic: same discovery → same key, always (Property 2).
+    Deterministic: same discovery -> same key, always (Property 2).
     """
     fp = compute_fingerprint(discovery)
     node_type = (discovery.node_type or "page").strip().lower()
 
     if fp.url_signature:
-        basis = f"{node_type}|url|{fp.url_signature}"
+        basis = f"{node_type}|url|{fp.url_signature}|text|{fp.text_signature}"
     else:
-        # No URL — identity falls back to the (stable) text signature.
+        # No URL -> identity falls back to the (stable) text signature.
         basis = f"{node_type}|text|{fp.text_signature}"
 
     return _sha16(basis)
@@ -180,12 +181,12 @@ def compute_canonical_key(discovery: Discovery) -> str:
 # Identity match score (discovery vs an existing node's stored signatures)
 # ---------------------------------------------------------------------------
 # Weights sum to 1.0. url dominates; the rest break ties / handle URL-less nodes.
-_W_URL = 0.60
-_W_TEXT = 0.20
+_W_URL = 0.40
+_W_TEXT = 0.40
 _W_DOM = 0.12
 _W_ARIA = 0.08
 
-MATCH_THRESHOLD = 0.72  # >= this ⇒ treat as the same node
+MATCH_THRESHOLD = 0.72  # >= this -> treat as the same node
 
 
 @dataclass(frozen=True)

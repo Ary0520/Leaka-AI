@@ -452,8 +452,16 @@ def _resolve_auth_storage_state(environment_id: Optional[int]) -> Optional[str]:
                 )
                 return None
 
-            templated = env.auth_state_template.replace("{{token}}", str(token))
-
+            if isinstance(token, (dict, list)):
+                token_str = _json.dumps(token)
+            else:
+                token_str = str(token)
+            
+            escaped_token = _json.dumps(token_str)
+            if '"{{token}}"' in env.auth_state_template:
+                templated = env.auth_state_template.replace('"{{token}}"', escaped_token)
+            else:
+                templated = env.auth_state_template.replace("{{token}}", token_str)
             # 4. Write to temp file — never pass dict to BrowserSession (Windows bug).
             fd, path = _tempfile.mkstemp(suffix=".json", prefix="explore_auth_state_")
             with _os.fdopen(fd, "w") as f:

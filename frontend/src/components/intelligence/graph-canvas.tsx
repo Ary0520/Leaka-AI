@@ -52,15 +52,11 @@ const elk = new ELK();
 const NODE_W = 244;
 const NODE_H = 108;
 
-// ELK layered layout, left→right — the n8n / workflow look.
 const ELK_OPTIONS = {
-  "elk.algorithm": "layered",
-  "elk.direction": "RIGHT",
-  "elk.layered.spacing.nodeNodeBetweenLayers": "110",
-  "elk.spacing.nodeNode": "60",
-  "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
-  "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
-  "elk.edgeRouting": "SPLINES",
+  "elk.algorithm": "force",
+  "elk.spacing.nodeNode": "120",
+  "elk.force.repulsion": "2.5",
+  "elk.edgeRouting": "BEZIER",
 };
 
 // ---------------------------------------------------------------------------
@@ -283,7 +279,7 @@ function Flow({
           id: String(e.id),
           source: String(e.source_node_id),
           target: String(e.target_node_id),
-          type: "smoothstep",
+          type: "bezier",
           animated: st.animated,
           style: st.style,
           // Directional arrowhead — the signature that makes the canvas read as
@@ -426,7 +422,7 @@ function Flow({
       nodesDraggable
       nodesConnectable={false}
       elementsSelectable
-      defaultEdgeOptions={{ type: "smoothstep" }}
+      defaultEdgeOptions={{ type: "bezier" }}
     >
       <Background variant={BackgroundVariant.Dots} gap={22} size={1.5} color="hsl(var(--border))" />
 
