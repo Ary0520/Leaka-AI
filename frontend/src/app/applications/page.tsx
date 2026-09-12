@@ -17,8 +17,10 @@ import {
 import { Compass, Plus, Loader2, ArrowRight, Globe } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 import { formatDate } from "@/lib/utils";
+import { useWorkspace } from "@/app/providers";
 
 export default function ApplicationsPage() {
+  const { activeWorkspaceId } = useWorkspace();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<ApplicationCreate>({
@@ -29,8 +31,8 @@ export default function ApplicationsPage() {
   });
 
   const { data: apps, isLoading } = useQuery({
-    queryKey: ["applications"],
-    queryFn: () => api.listApplications(),
+    queryKey: ["applications", activeWorkspaceId],
+    queryFn: () => api.listApplications(activeWorkspaceId),
   });
 
   const createMut = useMutation({
@@ -40,6 +42,7 @@ export default function ApplicationsPage() {
         base_url: form.base_url.trim(),
         description: form.description?.trim() || undefined,
         login_hint: form.login_hint?.trim() || undefined,
+        workspace_id: activeWorkspaceId === "personal" ? undefined : parseInt(activeWorkspaceId),
       }),
     onSuccess: (app) => {
       toast({ title: "Application connected", description: app.name });

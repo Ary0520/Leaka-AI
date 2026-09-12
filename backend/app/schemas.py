@@ -247,6 +247,7 @@ class ApplicationCreate(BaseModel):
     description: Optional[str] = None
     login_hint: Optional[str] = None
     openapi_spec: Optional[str] = None
+    workspace_id: Optional[int] = None
 
 
 class ApplicationUpdate(BaseModel):

@@ -245,6 +245,7 @@ export interface ApplicationCreate {
   description?: string | null;
   login_hint?: string | null;
   openapi_spec?: string | null;
+  workspace_id?: number | null;
 }
 
 export interface EnvironmentOut {
@@ -825,7 +826,7 @@ export const api = {
     }),
 
   // Application Intelligence (Explore Mode)
-  listApplications: () => request<ApplicationOut[]>("/api/applications"),
+  listApplications: (workspaceId?: string) => request<ApplicationOut[]>(workspaceId && workspaceId !== 'personal' ? `/api/applications?workspace_id=${workspaceId}` : "/api/applications"),
   getApplication: (id: number) => request<ApplicationOut>(`/api/applications/${id}`),
   createApplication: (body: ApplicationCreate) =>
     request<ApplicationOut>("/api/applications", {
