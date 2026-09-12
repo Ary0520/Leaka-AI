@@ -517,40 +517,52 @@ def update_integration_settings(body: IntegrationSettingsUpdate, user: dict = De
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # Dashboard health overview — test cases with run history
-# ---------------------------------------------------------------------------
 @app.get("/api/dashboard/health")
 
 @app.get("/api/dashboard/kpis")
 def dashboard_kpis(
+    workspace_id: Optional[int] = None,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     owner = user["sub"]
     
+    # Query builder
+    def apply_filters(query, model):
+        if workspace_id:
+            return query.join(TestCase, TestCase.id == model.test_case_id).join(Application, Application.id == TestCase.application_id).filter(Application.workspace_id == workspace_id)
+        else:
+            return query.filter(model.owner_id == owner)
+
+    def apply_testcase_filters(query):
+        if workspace_id:
+            return query.join(Application, Application.id == TestCase.application_id).filter(Application.workspace_id == workspace_id)
+        else:
+            return query.filter(TestCase.owner_id == owner)
+
     # All-time stats
-    total_runs = db.query(TestRun).filter(TestRun.owner_id == owner, TestRun.status != TestRunStatus.PENDING).count()
-    passed_runs = db.query(TestRun).filter(TestRun.owner_id == owner, TestRun.is_successful == True).count()
+    total_runs = apply_filters(db.query(TestRun), TestRun).filter(TestRun.status != TestRunStatus.PENDING).count()
+    passed_runs = apply_filters(db.query(TestRun), TestRun).filter(TestRun.is_successful == True).count()
     pass_rate = round((passed_runs / total_runs) * 100, 1) if total_runs > 0 else None
 
     # Flake Rate
-    flaky_runs = db.query(TestRun).filter(TestRun.owner_id == owner, TestRun.is_flaky == True).count()
+    flaky_runs = apply_filters(db.query(TestRun), TestRun).filter(TestRun.is_flaky == True).count()
     flake_rate = round((flaky_runs / total_runs) * 100, 1) if total_runs > 0 else 0
 
     # Quarantined Tests
-    quarantined_tests = db.query(TestCase).filter(TestCase.owner_id == owner, TestCase.is_quarantined == True).count()
+    quarantined_tests = apply_testcase_filters(db.query(TestCase)).filter(TestCase.is_quarantined == True).count()
 
     # Auto-healed Runs
     # Dynamic LLM agents self-heal by scrolling, retrying, and falling back automatically.
-    auto_healed = db.query(TestRun).filter(
-        TestRun.owner_id == owner, 
+    auto_healed = apply_filters(db.query(TestRun), TestRun).filter(
         TestRun.is_successful == True,
         (TestRun.live_steps.ilike('%"scroll"%')) | (TestRun.live_steps.ilike('%retry%'))
     ).count()
 
     # Failure Categories
     from sqlalchemy import func
-    failures = db.query(TestRun.rca_category, func.count(TestRun.id)).filter(
-        TestRun.owner_id == owner, TestRun.is_successful == False, TestRun.rca_category != None
+    failures = apply_filters(db.query(TestRun.rca_category, func.count(TestRun.id)), TestRun).filter(
+        TestRun.is_successful == False, TestRun.rca_category != None
     ).group_by(TestRun.rca_category).all()
     failure_categories = [{"category": str(f[0]), "count": f[1]} for f in failures]
 
