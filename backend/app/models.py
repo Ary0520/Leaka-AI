@@ -7,6 +7,35 @@ import enum
 
 from .database import Base
 
+# ===========================================================================
+# INSTITUTIONAL IDENTITY & WORKSPACES
+# ===========================================================================
+
+class Organization(Base):
+    __tablename__ = "organizations"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class Workspace(Base):
+    __tablename__ = "workspaces"
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class RoleEnum(str, enum.Enum):
+    ADMIN = "admin"
+    EDITOR = "editor"
+    VIEWER = "viewer"
+
+class WorkspaceMember(Base):
+    __tablename__ = "workspace_members"
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False, index=True)
+    user_id = Column(String(64), nullable=False, index=True)  # Supabase user UUID
+    role = Column(SAEnum(RoleEnum), nullable=False, default=RoleEnum.VIEWER)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 class TestRunStatus(str, enum.Enum):
     PENDING = "pending"
@@ -213,6 +242,10 @@ class Application(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     owner_id = Column(String(64), nullable=True, index=True)  # Supabase user UUID
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=True, index=True)
+    
+    workspace = relationship("Workspace")
+
     name = Column(String(255), nullable=False)
     base_url = Column(String(2048), nullable=False)
     description = Column(Text, nullable=True)
