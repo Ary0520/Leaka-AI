@@ -573,7 +573,7 @@ export const api = {
     ),
 
   // Dashboard health grid
-  dashboardKpis: () =>
+  dashboardKpis: (workspaceId?: string) =>
     request<{
       pass_rate: number | null;
       flake_rate: number;
@@ -583,7 +583,7 @@ export const api = {
       passed_runs: number;
       failed_runs: number;
       auto_healed: number;
-    }>("/api/dashboard/kpis"),
+    }>(workspaceId && workspaceId !== 'personal' ? `/api/dashboard/kpis?workspace_id=${workspaceId}` : "/api/dashboard/kpis"),
   dashboardHealth: (limit = 14) =>
     request<Array<{
       id: number;

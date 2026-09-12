@@ -46,10 +46,13 @@ function StatCard({
   );
 }
 
+import { useWorkspace } from "@/app/providers";
+
 export default function DashboardPage() {
+  const { activeWorkspaceId } = useWorkspace();
   const { data: kpis, isLoading: kpisLoading } = useQuery({
-    queryKey: ["dashboard-kpis"],
-    queryFn: () => api.dashboardKpis(),
+    queryKey: ["dashboard-kpis", activeWorkspaceId],
+    queryFn: () => api.dashboardKpis(activeWorkspaceId),
     refetchInterval: 15_000,
   });
 

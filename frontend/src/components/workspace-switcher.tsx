@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { getWorkspaces, createWorkspace, WorkspaceOut } from "@/lib/api";
 import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
-import { useWorkspace } from "@/app/providers";
+import { useWorkspace, useAuth } from "@/app/providers";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,6 +14,7 @@ import { Loader2, PlusCircle } from "lucide-react";
 export function WorkspaceSwitcher() {
   const [workspaces, setWorkspaces] = useState<WorkspaceOut[]>([]);
   const { activeWorkspaceId, setActiveWorkspaceId } = useWorkspace();
+  const { session } = useAuth();
   const { toast } = useToast();
   
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -21,15 +22,12 @@ export function WorkspaceSwitcher() {
   const [newWsName, setNewWsName] = useState("");
   const [isCreating, setIsCreating] = useState(false);
 
-  const fetchWorkspaces = () => {
+  useEffect(() => {
+    if (!session) return; // Wait until auth token is set
     getWorkspaces()
       .then((data) => setWorkspaces(data))
       .catch((err) => console.error("Failed to load workspaces", err));
-  };
-
-  useEffect(() => {
-    fetchWorkspaces();
-  }, []);
+  }, [session]);
 
   const handleValueChange = (val: string) => {
     if (val === "create_new") {
