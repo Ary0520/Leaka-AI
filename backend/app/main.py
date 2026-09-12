@@ -3144,8 +3144,11 @@ def run_diff_recommendation(
 
 
 @app.get("/api/quarantine", response_model=list[TestCaseOut])
-def list_quarantined_tests(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    return db.query(TestCase).filter(TestCase.owner_id == user["sub"], TestCase.is_quarantined == True).order_by(TestCase.updated_at.desc()).all()
+def list_quarantined_tests(workspace_id: Optional[int] = None, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    if workspace_id:
+        return db.query(TestCase).join(Application, Application.id == TestCase.application_id).filter(Application.workspace_id == workspace_id, TestCase.is_quarantined == True).order_by(TestCase.updated_at.desc()).all()
+    else:
+        return db.query(TestCase).filter(TestCase.owner_id == user["sub"], TestCase.is_quarantined == True).order_by(TestCase.updated_at.desc()).all()
 
 @app.post("/api/tests/{id}/toggle-quarantine")
 def toggle_quarantine(id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):

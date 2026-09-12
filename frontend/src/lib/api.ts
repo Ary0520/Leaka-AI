@@ -642,16 +642,19 @@ export const api = {
     test_case_id?: number;
     skip?: number;
     limit?: number;
+    workspace_id?: string;
   }) => {
-    const qs = new URLSearchParams();
-    if (params?.status) qs.set("status", params.status);
-    if (params?.test_case_id) qs.set("test_case_id", String(params.test_case_id));
-    if (params?.skip) qs.set("skip", String(params.skip));
-    if (params?.limit) qs.set("limit", String(params.limit));
-    const q = qs.toString();
-    return request<RunListEntry[]>(
-      `/api/tests${q ? `?${q}` : ""}`,
-    );
+    let url = "/api/runs";
+    const searchParams = new URLSearchParams();
+    if (params) {
+      if (params.status) searchParams.append("status", params.status);
+      if (params.test_case_id) searchParams.append("test_case_id", params.test_case_id.toString());
+      if (params.skip) searchParams.append("skip", params.skip.toString());
+      if (params.limit) searchParams.append("limit", params.limit.toString());
+      if (params.workspace_id && params.workspace_id !== "personal") searchParams.append("workspace_id", params.workspace_id);
+    }
+    if (searchParams.toString()) url += `?${searchParams.toString()}`;
+    return request<RunListEntry[]>(url);
   },
   // Test cases
   listTestCases: (params?: { suite_id?: number; skip?: number; limit?: number }) => {

@@ -41,14 +41,18 @@ const STATUS_OPTIONS: { label: string; value: RunStatus | "all" }[] = [
   { label: "Cancelled", value: "cancelled" },
 ];
 
+import { useWorkspace } from "@/app/providers";
+
 export default function RunsPage() {
   const [statusFilter, setStatusFilter] = useState<RunStatus | "all">("all");
+  const { activeWorkspaceId } = useWorkspace();
 
   const { data, isLoading } = useQuery({
-    queryKey: ["runs", statusFilter],
+    queryKey: ["runs", statusFilter, activeWorkspaceId],
     queryFn: () =>
       api.listRuns({
         status: statusFilter === "all" ? undefined : statusFilter,
+        workspace_id: activeWorkspaceId,
         limit: 100,
       }),
     refetchInterval: 5000, // keep refreshing so live runs update
@@ -117,7 +121,7 @@ export default function RunsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.map((r) => (
+                {data.map((r: RunListEntry) => (
                   <TableRow key={r.job_id}>
                     <TableCell>
                       <div>
