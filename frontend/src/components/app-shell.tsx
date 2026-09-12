@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { LayoutDashboard, FileText, Sparkles, Layers, History, Webhook, Settings2, LogOut, Compass, ShieldAlert, Activity } from "lucide-react";
+import { LayoutDashboard, FileText, Sparkles, Layers, History, Webhook, Settings2, LogOut, Compass, ShieldAlert, Activity, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePathname } from "next/navigation";
 import React from "react";
@@ -45,6 +45,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     title: "Management",
     items: [
+      { href: "/team", label: "Team & Workspaces", icon: Users },
       { href: "/ci", label: "CI / CD integrations", icon: Webhook },
       { href: "/settings", label: "Settings", icon: Settings2 },
     ],

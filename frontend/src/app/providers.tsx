@@ -23,6 +23,21 @@ export function useAuth() {
   return useContext(AuthContext);
 }
 
+// ── Workspace context ─────────────────────────────────────────────────────────
+interface WorkspaceContextValue {
+  activeWorkspaceId: string;
+  setActiveWorkspaceId: (id: string) => void;
+}
+
+const WorkspaceContext = createContext<WorkspaceContextValue>({
+  activeWorkspaceId: "personal",
+  setActiveWorkspaceId: () => {},
+});
+
+export function useWorkspace() {
+  return useContext(WorkspaceContext);
+}
+
 // ── Providers ─────────────────────────────────────────────────────────────────
 export function ReactQueryProvider({ children }: { children: React.ReactNode }) {
   const [qc] = useState(
@@ -64,9 +79,28 @@ export function ReactQueryProvider({ children }: { children: React.ReactNode }) 
     return () => subscription.unsubscribe();
   }, []);
 
+  const [activeWorkspaceId, setActiveWorkspaceIdState] = useState<string>("personal");
+
+  useEffect(() => {
+    const saved = localStorage.getItem("leaka_workspace_id");
+    if (saved) {
+      setActiveWorkspaceIdState(saved);
+    }
+  }, []);
+
+  const setActiveWorkspaceId = (id: string) => {
+    setActiveWorkspaceIdState(id);
+    localStorage.setItem("leaka_workspace_id", id);
+    // Note: To force React Query to refetch on workspace change, you'd ideally invalidate queries here.
+    // For now, reloading the page ensures a clean state switch for the dashboard.
+    // window.location.reload(); 
+  };
+
   return (
     <AuthContext.Provider value={authState}>
-      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+      <WorkspaceContext.Provider value={{ activeWorkspaceId, setActiveWorkspaceId }}>
+        <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+      </WorkspaceContext.Provider>
     </AuthContext.Provider>
   );
 }

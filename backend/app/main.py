@@ -1718,6 +1718,7 @@ def create_application(
 ):
     app_row = Application(
         owner_id=user["sub"],
+        workspace_id=body.workspace_id,
         name=body.name,
         base_url=body.base_url,
         description=body.description,
@@ -1730,19 +1731,40 @@ def create_application(
     return app_row
 
 
+from typing import Optional
+
 @app.get("/api/applications", response_model=list[ApplicationOut])
 def list_applications(
     skip: int = 0,
     limit: int = 100,
+    workspace_id: Optional[int] = None,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    return (
-        db.query(Application)
-        .filter(Application.owner_id == user["sub"])
-        .order_by(Application.created_at.desc())
-        .offset(skip).limit(limit).all()
-    )
+    if workspace_id:
+        from .models import WorkspaceMember
+        # Verify user is in workspace
+        member = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == workspace_id,
+            WorkspaceMember.user_id == user["sub"]
+        ).first()
+        if not member:
+            return []
+            
+        return (
+            db.query(Application)
+            .filter(Application.workspace_id == workspace_id)
+            .order_by(Application.created_at.desc())
+            .offset(skip).limit(limit).all()
+        )
+    else:
+        # Legacy fallback: only show unassigned (personal) apps where user is owner
+        return (
+            db.query(Application)
+            .filter(Application.owner_id == user["sub"], Application.workspace_id == None)
+            .order_by(Application.created_at.desc())
+            .offset(skip).limit(limit).all()
+        )
 
 
 @app.get("/api/applications/{app_id}", response_model=ApplicationOut)
