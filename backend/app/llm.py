@@ -90,11 +90,21 @@ def get_llm(owner_id: str | None = None) -> Any:
         mod = model or settings.LLM_MODEL_OPENAI
 
         class SafeChatOpenAI(ChatOpenAI):
-            async def _agenerate(self, *args, **kwargs):
-                result = await super()._agenerate(*args, **kwargs)
-                for gen in result.generations:
-                    _clean_message_payloads(gen.message)
-                return result
+            async def ainvoke(self, messages: Any, output_format: Any | None = None, **kwargs: Any) -> Any:
+                if output_format is not None:
+                    orig = output_format.model_validate_json
+                    def safe_validate(json_data, *a, **kw):
+                        return orig(_extract_clean_json(json_data), *a, **kw)
+                    output_format.model_validate_json = safe_validate
+                    try:
+                        return await super().ainvoke(messages, output_format=output_format, **kwargs)
+                    finally:
+                        output_format.model_validate_json = orig
+                else:
+                    res = await super().ainvoke(messages, output_format=output_format, **kwargs)
+                    if hasattr(res, "completion") and isinstance(res.completion, str):
+                        res.completion = _extract_clean_json(res.completion)
+                    return res
 
         return SafeChatOpenAI(model=mod, api_key=key, temperature=0.0)
 
@@ -116,11 +126,21 @@ def get_llm(owner_id: str | None = None) -> Any:
         class SafeChatOpenRouter(ChatOpenRouter):
             """Wraps OpenRouter to automatically strip trailing conversational garbage
             that models like gpt-5.6-luna append after the JSON block."""
-            async def _agenerate(self, *args, **kwargs):
-                result = await super()._agenerate(*args, **kwargs)
-                for gen in result.generations:
-                    _clean_message_payloads(gen.message)
-                return result
+            async def ainvoke(self, messages: Any, output_format: Any | None = None, **kwargs: Any) -> Any:
+                if output_format is not None:
+                    orig = output_format.model_validate_json
+                    def safe_validate(json_data, *a, **kw):
+                        return orig(_extract_clean_json(json_data), *a, **kw)
+                    output_format.model_validate_json = safe_validate
+                    try:
+                        return await super().ainvoke(messages, output_format=output_format, **kwargs)
+                    finally:
+                        output_format.model_validate_json = orig
+                else:
+                    res = await super().ainvoke(messages, output_format=output_format, **kwargs)
+                    if hasattr(res, "completion") and isinstance(res.completion, str):
+                        res.completion = _extract_clean_json(res.completion)
+                    return res
                 
         return SafeChatOpenRouter(model=mod, api_key=key, temperature=0.0)
 

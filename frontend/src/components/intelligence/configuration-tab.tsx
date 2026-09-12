@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Database, Server, Key, RefreshCw, Shield, Trash2 } from "lucide-react";
+import { Plus, Database, Server, Key, RefreshCw, Shield, Trash2, Edit2 } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 import {
   Dialog,
@@ -36,6 +36,7 @@ export function ConfigurationTab({ appId }: { appId: number }) {
 
   // Environment form state
   const [envOpen, setEnvOpen] = useState(false);
+  const [editingEnvId, setEditingEnvId] = useState<number | null>(null);
   const [envName, setEnvName] = useState("");
   const [envBaseUrl, setEnvBaseUrl] = useState("");
   const [envExecutionLocation, setEnvExecutionLocation] = useState("cloud");
@@ -43,31 +44,111 @@ export function ConfigurationTab({ appId }: { appId: number }) {
   const [envPolicies, setEnvPolicies] = useState("");
   const [envAuthStrategy, setEnvAuthStrategy] = useState("none");
   const [envAuthApiUrl, setEnvAuthApiUrl] = useState("");
+  const [envAuthHeaders, setEnvAuthHeaders] = useState("");
   const [envAuthPayload, setEnvAuthPayload] = useState("");
   const [envAuthTokenPath, setEnvAuthTokenPath] = useState("");
+  const [envAuthTarget, setEnvAuthTarget] = useState("localStorage");
+  const [envAuthKey, setEnvAuthKey] = useState("");
+  const [envAuthDomain, setEnvAuthDomain] = useState("");
   const [envAuthStateTemplate, setEnvAuthStateTemplate] = useState("");
 
   const envMut = useMutation({
-    mutationFn: () => api.createEnvironment(appId, {
-      name: envName,
-      base_url: envBaseUrl,
-      execution_location: envExecutionLocation,
-      variables: envVars || undefined,
-      policies: envPolicies || undefined,
-      auth_strategy: envAuthStrategy !== "none" ? envAuthStrategy : undefined,
-      auth_api_url: envAuthApiUrl || undefined,
-      auth_payload: envAuthPayload || undefined,
-      auth_token_path: envAuthTokenPath || undefined,
-      auth_state_template: envAuthStateTemplate || undefined,
-    }),
+    mutationFn: () => {
+      let stateTemplate = envAuthStateTemplate || undefined;
+      
+      if (envAuthStrategy === "api_injection") {
+        const cleanDomain = envAuthDomain.replace(/^(https?:\/\/)/, "").replace(/\/$/, "");
+        if (envAuthTarget === "localStorage") {
+          stateTemplate = JSON.stringify({
+            cookies: [],
+            origins: [{
+              origin: `https://${cleanDomain}`,
+              localStorage: [{
+                name: envAuthKey,
+                value: "{{token}}"
+              }]
+            }]
+          }, null, 2);
+        } else {
+          stateTemplate = JSON.stringify({
+            cookies: [{
+              name: envAuthKey,
+              value: "{{token}}",
+              domain: cleanDomain,
+              path: "/",
+              secure: true
+            }],
+            origins: []
+          }, null, 2);
+        }
+      }
+
+      const payload = {
+        name: envName,
+        base_url: envBaseUrl,
+        execution_location: envExecutionLocation,
+        variables: envVars || undefined,
+        policies: envPolicies || undefined,
+        auth_strategy: envAuthStrategy !== "none" ? envAuthStrategy : undefined,
+        auth_api_url: envAuthApiUrl || undefined,
+        auth_api_headers: envAuthHeaders || undefined,
+        auth_payload: envAuthPayload || undefined,
+        auth_token_path: envAuthTokenPath || undefined,
+        auth_state_template: stateTemplate,
+      };
+
+      if (editingEnvId) {
+        return api.updateEnvironment(appId, editingEnvId, payload);
+      }
+      return api.createEnvironment(appId, payload);
+    },
     onSuccess: () => {
-      toast({ title: "Environment created" });
+      toast({ title: editingEnvId ? "Environment updated" : "Environment created" });
       setEnvOpen(false);
-      setEnvName(""); setEnvBaseUrl(""); setEnvVars(""); setEnvPolicies("");
-      setEnvAuthStrategy("none"); setEnvAuthApiUrl(""); setEnvAuthPayload(""); setEnvAuthTokenPath(""); setEnvAuthStateTemplate("");
       qc.invalidateQueries({ queryKey: ["environments", appId] });
     },
   });
+
+  const handleOpenNewEnv = () => {
+    setEditingEnvId(null);
+    setEnvName(""); setEnvBaseUrl(""); setEnvVars(""); setEnvPolicies("");
+    setEnvAuthStrategy("none"); setEnvAuthApiUrl(""); setEnvAuthHeaders(""); setEnvAuthPayload(""); setEnvAuthTokenPath(""); setEnvAuthStateTemplate("");
+    setEnvAuthTarget("localStorage"); setEnvAuthKey(""); setEnvAuthDomain("");
+    setEnvOpen(true);
+  };
+
+  const handleEditEnv = (env: EnvironmentOut) => {
+    setEditingEnvId(env.id);
+    setEnvName(env.name);
+    setEnvBaseUrl(env.base_url);
+    setEnvExecutionLocation(env.execution_location || "cloud");
+    setEnvVars(env.variables || "");
+    setEnvPolicies(env.policies || "");
+    setEnvAuthStrategy(env.auth_strategy || "none");
+    setEnvAuthApiUrl(env.auth_api_url || "");
+    setEnvAuthHeaders(env.auth_api_headers || "");
+    setEnvAuthPayload(env.auth_payload || "");
+    setEnvAuthTokenPath(env.auth_token_path || "");
+    setEnvAuthStateTemplate(env.auth_state_template || "");
+    
+    if (env.auth_state_template && env.auth_strategy === "api_injection") {
+      try {
+        const parsed = JSON.parse(env.auth_state_template);
+        if (parsed.cookies && parsed.cookies.length > 0) {
+          setEnvAuthTarget("cookie");
+          setEnvAuthKey(parsed.cookies[0].name);
+          setEnvAuthDomain(parsed.cookies[0].domain);
+        } else if (parsed.origins && parsed.origins.length > 0 && parsed.origins[0].localStorage?.length > 0) {
+          setEnvAuthTarget("localStorage");
+          setEnvAuthKey(parsed.origins[0].localStorage[0].name);
+          setEnvAuthDomain(parsed.origins[0].origin.replace("https://", ""));
+        }
+      } catch (e) {}
+    } else {
+      setEnvAuthTarget("localStorage"); setEnvAuthKey(""); setEnvAuthDomain("");
+    }
+    setEnvOpen(true);
+  };
 
   const envDeleteMut = useMutation({
     mutationFn: (envId: number) => api.deleteEnvironment(appId, envId),
@@ -122,11 +203,11 @@ export function ConfigurationTab({ appId }: { appId: number }) {
           </div>
           <Dialog open={envOpen} onOpenChange={setEnvOpen}>
             <DialogTrigger asChild>
-              <Button size="sm"><Plus className="w-4 h-4 mr-2" />New Environment</Button>
+              <Button size="sm" onClick={handleOpenNewEnv}><Plus className="w-4 h-4 mr-2" />New Environment</Button>
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>New Environment</DialogTitle>
+                <DialogTitle>{editingEnvId ? "Edit Environment" : "New Environment"}</DialogTitle>
                 <DialogDescription>Define a reusable target environment.</DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto px-2">
@@ -186,24 +267,55 @@ export function ConfigurationTab({ appId }: { appId: number }) {
                     </div>
 
                     {envAuthStrategy === "api_injection" && (
-                      <div className="space-y-4 p-4 border rounded-md bg-muted/10">
-                        <div className="space-y-2">
-                          <Label className="text-xs">Auth API URL (POST)</Label>
-                          <Input placeholder="https://api.myapp.com/login" value={envAuthApiUrl} onChange={e => setEnvAuthApiUrl(e.target.value)} />
+                      <div className="space-y-6 pt-2">
+                        <div className="space-y-4 p-4 border rounded-md bg-muted/10 border-primary/20">
+                          <h4 className="font-semibold text-sm text-primary">1. Auth Request</h4>
+                          <div className="space-y-2">
+                            <Label className="text-xs">API Endpoint</Label>
+                            <Input placeholder="https://api.app.com/v1/auth/login" value={envAuthApiUrl} onChange={e => setEnvAuthApiUrl(e.target.value)} />
+                          </div>
+                          <div className="space-y-2">
+                            <Label className="text-xs">Headers (JSON)</Label>
+                            <Textarea placeholder={'{"apikey": "...", "Content-Type": "application/json"}'} value={envAuthHeaders} onChange={e => setEnvAuthHeaders(e.target.value)} className="font-mono text-xs h-20" />
+                          </div>
+                          <div className="space-y-2">
+                            <Label className="text-xs">JSON Payload</Label>
+                            <Textarea placeholder={'{"email": "...", "password": "..."}'} value={envAuthPayload} onChange={e => setEnvAuthPayload(e.target.value)} className="font-mono text-xs h-24" />
+                          </div>
                         </div>
-                        <div className="space-y-2">
-                          <Label className="text-xs">Auth Payload (JSON)</Label>
-                          <Textarea placeholder={'{"username": "admin", "password": "xxx"}'} value={envAuthPayload} onChange={e => setEnvAuthPayload(e.target.value)} className="font-mono text-xs h-20" />
+
+                        <div className="space-y-4 p-4 border rounded-md bg-muted/10 border-primary/20">
+                          <h4 className="font-semibold text-sm text-primary">2. Token Extraction</h4>
+                          <div className="space-y-2">
+                            <Label className="text-xs">JSON Path to Token</Label>
+                            <Input placeholder="data.access_token" value={envAuthTokenPath} onChange={e => setEnvAuthTokenPath(e.target.value)} />
+                            <p className="text-[10px] text-muted-foreground">Leave empty to inject the entire JSON response object.</p>
+                          </div>
                         </div>
-                        <div className="space-y-2">
-                          <Label className="text-xs">Auth Token Path</Label>
-                          <Input placeholder="data.token" value={envAuthTokenPath} onChange={e => setEnvAuthTokenPath(e.target.value)} />
-                          <p className="text-[10px] text-muted-foreground">Dot notation path to extract token from response.</p>
-                        </div>
-                        <div className="space-y-2">
-                          <Label className="text-xs">Auth State Template (Playwright JSON)</Label>
-                          <Textarea placeholder={'{"origins": [{"origin": "...", "localStorage": [{"name": "token", "value": "{{token}}"}]}]}'} value={envAuthStateTemplate} onChange={e => setEnvAuthStateTemplate(e.target.value)} className="font-mono text-xs h-32" />
-                          <p className="text-[10px] text-muted-foreground">Use {'{{token}}'} to inject the extracted token.</p>
+                        
+                        <div className="space-y-4 p-4 border rounded-md bg-muted/10 border-primary/20">
+                          <h4 className="font-semibold text-sm text-primary">3. Browser Injection</h4>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <Label className="text-xs">Target</Label>
+                              <select 
+                                value={envAuthTarget} 
+                                onChange={e => setEnvAuthTarget(e.target.value)}
+                                className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                              >
+                                <option value="localStorage">LocalStorage</option>
+                                <option value="cookie">Cookie</option>
+                              </select>
+                            </div>
+                            <div className="space-y-2">
+                              <Label className="text-xs">Key Name</Label>
+                              <Input placeholder="e.g. auth-token" value={envAuthKey} onChange={e => setEnvAuthKey(e.target.value)} />
+                            </div>
+                            <div className="col-span-2 space-y-2">
+                              <Label className="text-xs">Domain</Label>
+                              <Input placeholder="app.acme.com" value={envAuthDomain} onChange={e => setEnvAuthDomain(e.target.value)} />
+                            </div>
+                          </div>
                         </div>
                       </div>
                     )}
@@ -239,9 +351,14 @@ export function ConfigurationTab({ appId }: { appId: number }) {
                   <CardHeader className="p-4 bg-muted/30 pb-2">
                     <CardTitle className="text-base flex justify-between items-center">
                       {env.name}
-                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteEnv(env.id, env.name)}>
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
+                      <div className="flex gap-1">
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-primary" onClick={() => handleEditEnv(env)}>
+                          <Edit2 className="w-4 h-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteEnv(env.id, env.name)}>
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="p-4 pt-3 space-y-3">
