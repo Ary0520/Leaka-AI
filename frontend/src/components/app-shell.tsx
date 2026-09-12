@@ -8,6 +8,7 @@ import React from "react";
 import { useAuth } from "@/app/providers";
 import { signOut } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 
 type NavItem = { href: string; label: string; icon: React.ElementType };
 type NavGroup = { title: string; items: NavItem[] };
@@ -58,7 +59,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex h-screen overflow-hidden">
       {/* Sidebar */}
       <aside className="hidden md:flex md:w-64 flex-col border-r bg-card/50">
-        <div className="px-6 py-5 border-b flex items-center gap-3">
+        <div className="px-6 py-5 flex items-center gap-3">
           <div className="w-10 h-10 rounded-lg overflow-hidden bg-transparent grid place-items-center shadow-sm shrink-0">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/leaka-logo.png" alt="Leaka AI" className="w-full h-full object-contain" />
@@ -67,6 +68,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className="font-semibold text-sm">Leaka AI</div>
           </div>
         </div>
+
+        <WorkspaceSwitcher />
+        <div className="border-b mb-2" />
         <nav className="p-4 space-y-6 flex-1 overflow-y-auto">
           {NAV_GROUPS.map((group) => (
             <div key={group.title}>
