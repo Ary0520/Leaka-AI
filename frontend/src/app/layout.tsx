@@ -5,7 +5,7 @@ import { ConditionalShell } from "@/components/conditional-shell";
 import { Toaster } from "@/components/ui/toaster";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://leaka.live"),
+  metadataBase: new URL("https://www.leaka.live"),
   alternates: {
     canonical: "/",
   },
@@ -20,7 +20,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     locale: "en_US",
-    url: "https://leaka.live",
+    url: "https://www.leaka.live",
     title: "Leaka AI – Autonomous QA Agent Platform",
     description: "Leaka AI is an enterprise-grade autonomous QA agent that executes natural language test flows. Secure, visual, and zero data egress.",
     siteName: "Leaka AI",

@@ -18,30 +18,30 @@ export default function Home() {
     "@graph": [
       {
         "@type": "WebSite",
-        "@id": "https://leaka.live/#website",
+        "@id": "https://www.leaka.live/#website",
         "name": "Leaka AI",
         "alternateName": "Leaka",
-        "url": "https://leaka.live/",
+        "url": "https://www.leaka.live/",
         "publisher": {
-          "@id": "https://leaka.live/#organization"
+          "@id": "https://www.leaka.live/#organization"
         }
       },
       {
         "@type": "Organization",
-        "@id": "https://leaka.live/#organization",
+        "@id": "https://www.leaka.live/#organization",
         "name": "Leaka AI",
-        "url": "https://leaka.live/"
+        "url": "https://www.leaka.live/"
       },
       {
         "@type": "SoftwareApplication",
-        "@id": "https://leaka.live/#software",
+        "@id": "https://www.leaka.live/#software",
         "name": "Leaka AI",
-        "url": "https://leaka.live/",
+        "url": "https://www.leaka.live/",
         "applicationCategory": "DeveloperApplication",
         "operatingSystem": "Web",
         "description": "Leaka AI is an autonomous QA agent for modern software teams that executes natural-language test flows visually, helps diagnose failures, and supports secure enterprise deployments.",
         "publisher": {
-          "@id": "https://leaka.live/#organization"
+          "@id": "https://www.leaka.live/#organization"
         }
       }
     ]
