@@ -5,9 +5,39 @@ import { ConditionalShell } from "@/components/conditional-shell";
 import { Toaster } from "@/components/ui/toaster";
 
 export const metadata: Metadata = {
-  title: "Leaka AI",
-  description:
-    "Autonomous QA agent for e-commerce and SaaS revenue flows using natural language.",
+  metadataBase: new URL("https://leaka.live"),
+  title: {
+    default: "Leaka AI – Autonomous QA Agent Platform",
+    template: "%s | Leaka AI"
+  },
+  description: "Leaka AI is an enterprise-grade autonomous QA agent that executes natural language test flows. Secure, visual, and zero data egress.",
+  keywords: ["Autonomous QA", "AI QA Agent", "Software Testing", "Leaka AI", "Test Automation"],
+  authors: [{ name: "Leaka AI" }],
+  creator: "Leaka AI",
+  openGraph: {
+    type: "website",
+    locale: "en_US",
+    url: "https://leaka.live",
+    title: "Leaka AI – Autonomous QA Agent Platform",
+    description: "Leaka AI is an enterprise-grade autonomous QA agent that executes natural language test flows. Secure, visual, and zero data egress.",
+    siteName: "Leaka AI",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Leaka AI – Autonomous QA Agent Platform",
+    description: "Leaka AI is an enterprise-grade autonomous QA agent that executes natural language test flows. Secure, visual, and zero data egress.",
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      'max-video-preview': -1,
+      'max-image-preview': 'large',
+      'max-snippet': -1,
+    },
+  },
 };
 
 import { JetBrains_Mono, Instrument_Sans, Instrument_Serif } from "next/font/google";

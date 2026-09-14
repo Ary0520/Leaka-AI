@@ -948,6 +948,7 @@ def run_suite(
             run_group_id=run_group_id,
             owner_id=user["sub"],
             test_case_id=tc.id,
+            workspace_id=tc.workspace_id,
             name=run_name,
             prompt=tc.prompt,
             target_url=tc.target_url,
@@ -1021,6 +1022,7 @@ def enqueue_test(body: TestRunRequest, db: Session = Depends(get_db), user: dict
         task_id=None,
         owner_id=owner_id,
         test_case_id=test_case_id,
+        workspace_id=body.workspace_id if body.workspace_id else (tc.workspace_id if test_case_id and tc else None),
         environment_id=environment_id,
         fixture_id=fixture_id,
         name=run_name,
@@ -1377,6 +1379,7 @@ def ci_webhook(
             job_id=job_id,
             owner_id=caller_owner_id or tc.owner_id,
             test_case_id=tc.id,
+            workspace_id=tc.workspace_id,
             name=f"[CI] {tc.name}",
             prompt=tc.prompt,
             target_url=tc.target_url,
@@ -3153,6 +3156,7 @@ def run_diff_recommendation(
         job_id = uuid.uuid4().hex
         run = TestRun(
             job_id=job_id, owner_id=owner_id, test_case_id=tc.id,
+            workspace_id=tc.workspace_id,
             name=f"[PR] {tc.name}", prompt=tc.prompt, target_url=tc.target_url,
             success_criteria=tc.success_criteria, assertions=tc.assertions,
             status=TestRunStatus.PENDING,
