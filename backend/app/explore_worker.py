@@ -622,6 +622,15 @@ def explore_application(
         "It will use AI semantic search over past explorations to find the element's new location on the page."
     ]
 
+    
+    task_parts.append(
+        "\n--- INFINITE LOOP & DEBUGGING PREVENTION ---\n"
+        "If a UI action fails to produce the expected result after 2 attempts, "
+        "immediately stop trying that specific path. "
+        "Do NOT attempt to decompile JS bundles, extract tokens, write custom evaluate scripts, or debug the backend API. "
+        "You are an automated explorer, not a backend developer. If a page or form is broken, move on."
+    )
+
     task_text = "\n".join(task_parts)
 
     async def _run_explore():

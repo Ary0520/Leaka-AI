@@ -787,6 +787,14 @@ def run_browser_test(
         "It will use AI semantic search over past test runs to find the element's new location."
     )
 
+    task_parts.append(
+        "\n--- INFINITE LOOP & DEBUGGING PREVENTION ---\n"
+        "If a UI action fails to produce the expected result after 2 attempts, "
+        "immediately mark the test as FAILED using done(success=False, result='UI action failed after 2 attempts.'). "
+        "Do NOT attempt to decompile JS bundles, extract tokens, write custom evaluate scripts, or debug the backend API. "
+        "You are a UI test agent, not a backend developer. Your job is to report UI failures, not fix them."
+    )
+
     # ── Memory hints (additive, fully guarded) ─────────────────────────────
     # If this test is linked to a graph node (via a CoverageLink), inject any
     # learned locator/timing hints Leaka has for that node. NEVER fails the run.

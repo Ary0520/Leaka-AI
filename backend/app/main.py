@@ -1108,6 +1108,7 @@ def _get_owned_run(
     if user is not None:
         user_id = user.get("sub")
         if run.workspace_id:
+            from .models import WorkspaceMember
             member = db.query(WorkspaceMember).filter(
                 WorkspaceMember.workspace_id == run.workspace_id,
                 WorkspaceMember.user_id == user_id
