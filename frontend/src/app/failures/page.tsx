@@ -1,5 +1,4 @@
 "use client";
-
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Bug } from "lucide-react";
 import { api } from "@/lib/api";

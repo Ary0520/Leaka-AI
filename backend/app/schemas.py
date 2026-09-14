@@ -47,6 +47,7 @@ class TestCaseCreate(TestCaseBase):
     # NOT persisted on the TestCase itself.
     application_id: Optional[int] = None
     node_id: Optional[int] = None
+    workspace_id: Optional[int] = None
 
 
 class TestCaseUpdate(BaseModel):
@@ -108,7 +109,7 @@ class TestSuiteBase(BaseModel):
 
 
 class TestSuiteCreate(TestSuiteBase):
-    pass
+    workspace_id: Optional[int] = None
 
 
 class TestSuiteUpdate(BaseModel):
@@ -156,6 +157,7 @@ class TestRunRequest(BaseModel):
     test_case_id: Optional[int] = None
     environment_id: Optional[int] = None
     fixture_id: Optional[int] = None
+    workspace_id: Optional[int] = None
     use_vision: Optional[bool] = True
     max_steps: Optional[int] = 50
     assertions: Optional[List[Assertion]] = None

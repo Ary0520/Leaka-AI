@@ -1,50 +1,67 @@
-import os
 import re
 
-components = {
-    r"C:\Users\aryan\Desktop\WEB3 PROJECTS\Leaka AI\frontend\src\app\runs\page.tsx": [
-        (r'const { data: runs, isLoading } = useQuery\({', r'const { activeWorkspaceId } = useWorkspace();\n  const { data: runs, isLoading } = useQuery({'),
-        (r'queryKey: \["runs"\]', r'queryKey: ["runs", activeWorkspaceId]'),
-        (r'queryFn: \(\) => api\.getRuns\(\)', r'queryFn: () => api.getRuns(undefined, activeWorkspaceId)'),
-        (r'export default function RunsPage\(\) {', r'import { useWorkspace } from "@/app/providers";\n\nexport default function RunsPage() {')
-    ],
-    r"C:\Users\aryan\Desktop\WEB3 PROJECTS\Leaka AI\frontend\src\app\run-groups\page.tsx": [
-        (r'const { data: groups, isLoading } = useQuery\({', r'const { activeWorkspaceId } = useWorkspace();\n  const { data: groups, isLoading } = useQuery({'),
-        (r'queryKey: \["run-groups"\]', r'queryKey: ["run-groups", activeWorkspaceId]'),
-        (r'queryFn: \(\) => api\.getRunGroups\(\)', r'queryFn: () => api.getRunGroups(activeWorkspaceId)'),
-        (r'export default function RunGroupsPage\(\) {', r'import { useWorkspace } from "@/app/providers";\n\nexport default function RunGroupsPage() {')
-    ],
-    r"C:\Users\aryan\Desktop\WEB3 PROJECTS\Leaka AI\frontend\src\app\tests\page.tsx": [
-        (r'const { data: tests, isLoading: testsLoading } = useQuery\({', r'const { activeWorkspaceId } = useWorkspace();\n  const { data: tests, isLoading: testsLoading } = useQuery({'),
-        (r'queryKey: \["test-cases"\]', r'queryKey: ["test-cases", activeWorkspaceId]'),
-        (r'queryFn: \(\) => api\.listTestCases\(\)', r'queryFn: () => api.listTestCases(undefined, activeWorkspaceId)'),
-        (r'export default function TestsPage\(\) {', r'import { useWorkspace } from "@/app/providers";\n\nexport default function TestsPage() {')
-    ],
-    r"C:\Users\aryan\Desktop\WEB3 PROJECTS\Leaka AI\frontend\src\app\quarantine\page.tsx": [
-        (r'const { data: tests, isLoading } = useQuery\({', r'const { activeWorkspaceId } = useWorkspace();\n  const { data: tests, isLoading } = useQuery({'),
-        (r'queryKey: \["quarantine-tests"\]', r'queryKey: ["quarantine-tests", activeWorkspaceId]'),
-        (r'queryFn: \(\) => api\.getQuarantine\(\)', r'queryFn: () => api.getQuarantine(activeWorkspaceId)'),
-        (r'export default function QuarantinePage\(\) {', r'import { useWorkspace } from "@/app/providers";\n\nexport default function QuarantinePage() {')
-    ]
-}
+# 1. new/page.tsx
+with open(r'C:\Users\aryan\Desktop\WEB3 PROJECTS\Leaka AI\frontend\src\app\new\page.tsx', 'r', encoding='utf-8') as f:
+    content = f.read()
 
-for filepath, replacements in components.items():
-    if not os.path.exists(filepath):
-        print(f"Skipping {filepath}, does not exist")
-        continue
-        
-    with open(filepath, 'r') as f:
-        content = f.read()
-        
-    # Prevent double-import
-    if 'useWorkspace' in content and 'import { useWorkspace }' not in content:
-        pass
-        
-    for pattern, repl in replacements:
-        if repl in content:
-            continue
-        content = re.sub(pattern, repl, content)
-        
-    with open(filepath, 'w') as f:
-        f.write(content)
-    print(f"Patched {filepath}")
+content = content.replace(
+    'queryFn: () => api.listTestCases({ limit: 100 }),',
+    'queryFn: () => api.listTestCases({ limit: 100, workspace_id: activeWorkspaceId }),'
+)
+content = content.replace(
+    'queryFn: () => api.listSuites({ limit: 100 }),',
+    'queryFn: () => api.listSuites({ limit: 100, workspace_id: activeWorkspaceId }),'
+)
+content = content.replace(
+    'queryFn: () => api.listApplications(),',
+    'queryFn: () => api.listApplications(activeWorkspaceId),'
+)
+with open(r'C:\Users\aryan\Desktop\WEB3 PROJECTS\Leaka AI\frontend\src\app\new\page.tsx', 'w', encoding='utf-8') as f:
+    f.write(content)
+
+# 2. suites/page.tsx
+with open(r'C:\Users\aryan\Desktop\WEB3 PROJECTS\Leaka AI\frontend\src\app\suites\page.tsx', 'r', encoding='utf-8') as f:
+    content = f.read()
+
+content = content.replace(
+    'queryFn: () => api.listSuites(),',
+    'queryFn: () => api.listSuites({ workspace_id: activeWorkspaceId }),'
+)
+with open(r'C:\Users\aryan\Desktop\WEB3 PROJECTS\Leaka AI\frontend\src\app\suites\page.tsx', 'w', encoding='utf-8') as f:
+    f.write(content)
+
+# 3. tests/page.tsx
+with open(r'C:\Users\aryan\Desktop\WEB3 PROJECTS\Leaka AI\frontend\src\app\tests\page.tsx', 'r', encoding='utf-8') as f:
+    content = f.read()
+
+if 'activeWorkspaceId' not in content:
+    content = content.replace('import { useQuery } from "@tanstack/react-query";',
+                              'import { useQuery } from "@tanstack/react-query";\nimport { useWorkspace } from "@/app/providers";')
+    content = content.replace('export default function TestsPage() {',
+                              'export default function TestsPage() {\n  const { activeWorkspaceId } = useWorkspace();')
+
+content = content.replace(
+    'queryFn: () => api.listTestCases(),',
+    'queryFn: () => api.listTestCases({ workspace_id: activeWorkspaceId }),'
+)
+with open(r'C:\Users\aryan\Desktop\WEB3 PROJECTS\Leaka AI\frontend\src\app\tests\page.tsx', 'w', encoding='utf-8') as f:
+    f.write(content)
+
+# 4. ci/page.tsx
+with open(r'C:\Users\aryan\Desktop\WEB3 PROJECTS\Leaka AI\frontend\src\app\ci\page.tsx', 'r', encoding='utf-8') as f:
+    content = f.read()
+
+if 'activeWorkspaceId' not in content:
+    content = content.replace('import { useQuery } from "@tanstack/react-query";',
+                              'import { useQuery } from "@tanstack/react-query";\nimport { useWorkspace } from "@/app/providers";')
+    content = content.replace('export default function CIPage() {',
+                              'export default function CIPage() {\n  const { activeWorkspaceId } = useWorkspace();')
+
+content = content.replace(
+    'queryFn: () => api.listSuites(),',
+    'queryFn: () => api.listSuites({ workspace_id: activeWorkspaceId }),'
+)
+with open(r'C:\Users\aryan\Desktop\WEB3 PROJECTS\Leaka AI\frontend\src\app\ci\page.tsx', 'w', encoding='utf-8') as f:
+    f.write(content)
+
+print("Patched all page usages")

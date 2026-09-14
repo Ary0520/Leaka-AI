@@ -151,6 +151,7 @@ export interface TestRunRequest {
   assertions?: Assertion[] | null;
   environment_id?: number | null;
   fixture_id?: number | null;
+  workspace_id?: string | number | null;
 }
 
 export interface EnqueueResponse {
@@ -182,6 +183,7 @@ export interface TestCaseCreate {
   // Optional authoritative coverage linkage: when a test is generated from a
   // graph node, pass both so the backend records a CoverageLink (R4.3).
   application_id?: number | null;
+  workspace_id?: string | number | null;
   node_id?: number | null;
 }
 
@@ -207,6 +209,7 @@ export interface TestSuiteOut {
 export interface TestSuiteCreate {
   name: string;
   description?: string | null;
+  workspace_id?: string | number | null;
 }
 
 export interface TestSuiteUpdate {
@@ -657,11 +660,13 @@ export const api = {
     return request<RunListEntry[]>(url);
   },
   // Test cases
-  listTestCases: (params?: { suite_id?: number; skip?: number; limit?: number }) => {
+  listTestCases: (params?: { suite_id?: number; skip?: number; limit?: number; workspace_id?: string }) => {
     const qs = new URLSearchParams();
     if (params?.suite_id) qs.set("suite_id", String(params.suite_id));
     if (params?.skip) qs.set("skip", String(params.skip));
     if (params?.limit) qs.set("limit", String(params.limit));
+      if (params?.workspace_id && params.workspace_id !== "personal") qs.set("workspace_id", params.workspace_id);
+      if (params?.workspace_id && params.workspace_id !== "personal") qs.set("workspace_id", params.workspace_id);
     const q = qs.toString();
     return request<TestCaseOut[]>(
       `/api/test-cases${q ? `?${q}` : ""}`,
@@ -681,10 +686,12 @@ export const api = {
     request<void>(`/api/test-cases/${id}`, { method: "DELETE" }),
 
   // Test suites
-  listSuites: (params?: { skip?: number; limit?: number }) => {
+  listSuites: (params?: { skip?: number; limit?: number; workspace_id?: string }) => {
     const qs = new URLSearchParams();
     if (params?.skip) qs.set("skip", String(params.skip));
     if (params?.limit) qs.set("limit", String(params.limit));
+      if (params?.workspace_id && params.workspace_id !== "personal") qs.set("workspace_id", params.workspace_id);
+      if (params?.workspace_id && params.workspace_id !== "personal") qs.set("workspace_id", params.workspace_id);
     const q = qs.toString();
     return request<TestSuiteOut[]>(`/api/test-suites${q ? `?${q}` : ""}`);
   },

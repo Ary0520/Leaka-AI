@@ -841,10 +841,7 @@ def list_test_cases(
 
 @app.get("/api/test-cases/{id}", response_model=TestCaseOut)
 def get_test_case(id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    tc = db.query(TestCase).filter(TestCase.id == id, TestCase.owner_id == user["sub"]).first()
-    if not tc:
-        raise HTTPException(404, "Test case not found")
-    return tc
+    return _get_owned_test_case(db, id, user)
 
 
 @app.put("/api/test-cases/{id}", response_model=TestCaseOut)
@@ -854,9 +851,7 @@ def update_test_case(
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    tc = db.query(TestCase).filter(TestCase.id == id, TestCase.owner_id == user["sub"]).first()
-    if not tc:
-        raise HTTPException(404, "Test case not found")
+    tc = _get_owned_test_case(db, id, user)
     for field, value in body.model_dump(exclude_unset=True).items():
         if field == "assertions":
             # Serialize list → JSON string; empty list / None clears it
@@ -870,9 +865,7 @@ def update_test_case(
 
 @app.delete("/api/test-cases/{id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_test_case(id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    tc = db.query(TestCase).filter(TestCase.id == id, TestCase.owner_id == user["sub"]).first()
-    if not tc:
-        raise HTTPException(404, "Test case not found")
+    tc = _get_owned_test_case(db, id, user)
     db.delete(tc)
     db.commit()
     return None
@@ -891,27 +884,29 @@ def create_suite(body: TestSuiteCreate, db: Session = Depends(get_db), user: dic
 
 
 @app.get("/api/test-suites", response_model=list[TestSuiteOut])
-def list_suites(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    return (
-        db.query(TestSuite).filter(TestSuite.owner_id == user["sub"])
-        .order_by(TestSuite.created_at.desc())
-        .offset(skip).limit(limit).all()
-    )
+def list_suites(skip: int = 0, limit: int = 100, workspace_id: Optional[int] = None, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    if workspace_id:
+        return (
+            db.query(TestSuite).filter(TestSuite.workspace_id == workspace_id)
+            .order_by(TestSuite.created_at.desc())
+            .offset(skip).limit(limit).all()
+        )
+    else:
+        return (
+            db.query(TestSuite).filter(TestSuite.workspace_id == None, TestSuite.owner_id == user["sub"])
+            .order_by(TestSuite.created_at.desc())
+            .offset(skip).limit(limit).all()
+        )
 
 
 @app.get("/api/test-suites/{id}", response_model=TestSuiteOut)
 def get_suite(id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    s = db.query(TestSuite).filter(TestSuite.id == id, TestSuite.owner_id == user["sub"]).first()
-    if not s:
-        raise HTTPException(404, "Suite not found")
-    return s
+    return _get_owned_suite(db, id, user)
 
 
 @app.put("/api/test-suites/{id}", response_model=TestSuiteOut)
 def update_suite(id: int, body: TestSuiteUpdate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    s = db.query(TestSuite).filter(TestSuite.id == id, TestSuite.owner_id == user["sub"]).first()
-    if not s:
-        raise HTTPException(404, "Suite not found")
+    s = _get_owned_suite(db, id, user)
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(s, field, value)
     db.commit()
@@ -921,9 +916,7 @@ def update_suite(id: int, body: TestSuiteUpdate, db: Session = Depends(get_db), 
 
 @app.delete("/api/test-suites/{id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_suite(id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    s = db.query(TestSuite).filter(TestSuite.id == id, TestSuite.owner_id == user["sub"]).first()
-    if not s:
-        raise HTTPException(404, "Suite not found")
+    s = _get_owned_suite(db, id, user)
     db.delete(s)
     db.commit()
     return None
@@ -1063,6 +1056,46 @@ def enqueue_test(body: TestRunRequest, db: Session = Depends(get_db), user: dict
 # ---------------------------------------------------------------------------
 # Ownership helper — enforce tenant isolation on TestRun lookups
 # ---------------------------------------------------------------------------
+def _get_owned_test_case(db: Session, tc_id: int, user: dict) -> "TestCase":
+    tc = db.query(TestCase).filter(TestCase.id == tc_id).first()
+    if not tc:
+        raise HTTPException(404, "Test case not found")
+        
+    user_id = user.get("sub")
+    if tc.owner_id == user_id:
+        return tc
+        
+    if tc.workspace_id:
+        from .models import WorkspaceMember
+        member = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == tc.workspace_id,
+            WorkspaceMember.user_id == user_id
+        ).first()
+        if member:
+            return tc
+            
+    raise HTTPException(404, "Test case not found")
+
+def _get_owned_suite(db: Session, suite_id: int, user: dict) -> "TestSuite":
+    s = db.query(TestSuite).filter(TestSuite.id == suite_id).first()
+    if not s:
+        raise HTTPException(404, "Suite not found")
+        
+    user_id = user.get("sub")
+    if s.owner_id == user_id:
+        return s
+        
+    if s.workspace_id:
+        from .models import WorkspaceMember
+        member = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == s.workspace_id,
+            WorkspaceMember.user_id == user_id
+        ).first()
+        if member:
+            return s
+            
+    raise HTTPException(404, "Suite not found")
+
 def _get_owned_run(
     db: Session,
     job_id: str,
@@ -3151,9 +3184,7 @@ def list_quarantined_tests(workspace_id: Optional[int] = None, db: Session = Dep
 
 @app.post("/api/tests/{id}/toggle-quarantine")
 def toggle_quarantine(id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
-    tc = db.query(TestCase).filter(TestCase.id == id, TestCase.owner_id == user["sub"]).first()
-    if not tc:
-        raise HTTPException(404, "Test case not found")
+    tc = _get_owned_test_case(db, id, user)
     tc.is_quarantined = not tc.is_quarantined
     db.commit()
     return {"success": True, "is_quarantined": tc.is_quarantined}

@@ -1,5 +1,4 @@
 "use client";
-
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ShieldAlert, ShieldCheck, Clock } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";

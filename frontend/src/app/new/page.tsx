@@ -1,4 +1,5 @@
 "use client";
+import { useWorkspace } from "@/app/providers";
 
 import { type FormEvent, useState, useEffect, Suspense } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -45,6 +46,7 @@ const ASSERTION_TYPES: { value: AssertionType; label: string; placeholder: strin
 ];
 
 function NewTestContent() {
+  const { activeWorkspaceId } = useWorkspace();
   const router = useRouter();
   const searchParams = useSearchParams();
   const preselectedSuiteId = searchParams.get("suite_id")
@@ -85,18 +87,18 @@ function NewTestContent() {
   }, [preselectedSuiteId]);
 
   const { data: cases } = useQuery({
-    queryKey: ["testcases"],
-    queryFn: () => api.listTestCases({ limit: 100 }),
+    queryKey: ["testcases", activeWorkspaceId],
+    queryFn: () => api.listTestCases({ limit: 100, workspace_id: activeWorkspaceId }),
   });
 
   const { data: suites } = useQuery({
-    queryKey: ["suites"],
-    queryFn: () => api.listSuites({ limit: 100 }),
+    queryKey: ["suites", activeWorkspaceId],
+    queryFn: () => api.listSuites({ limit: 100, workspace_id: activeWorkspaceId }),
   });
 
   const { data: apps } = useQuery({
-    queryKey: ["applications"],
-    queryFn: () => api.listApplications(),
+    queryKey: ["applications", activeWorkspaceId],
+    queryFn: () => api.listApplications(activeWorkspaceId),
   });
 
   const { data: envs } = useQuery({
@@ -137,6 +139,7 @@ function NewTestContent() {
       let test_case_id: number | undefined = undefined;
       if (saveAsCase && caseName.trim()) {
         const saved = await api.createTestCase({
+          workspace_id: activeWorkspaceId === "personal" ? undefined : activeWorkspaceId,
           name: caseName.trim(),
           prompt: finalPrompt,
           success_criteria: finalSuccess,
@@ -152,6 +155,7 @@ function NewTestContent() {
       }
 
       return api.enqueueRun({
+        workspace_id: activeWorkspaceId === "personal" ? undefined : activeWorkspaceId,
         name: finalName,
         prompt: finalPrompt,
         target_url: finalUrl,
