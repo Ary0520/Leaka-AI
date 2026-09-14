@@ -530,15 +530,15 @@ def dashboard_kpis(
     # Query builder
     def apply_filters(query, model):
         if workspace_id:
-            return query.join(TestCase, TestCase.id == model.test_case_id).join(Application, Application.id == TestCase.application_id).filter(Application.workspace_id == workspace_id)
+            return query.filter(model.workspace_id == workspace_id)
         else:
-            return query.filter(model.owner_id == owner)
+            return query.filter(model.workspace_id == None, model.owner_id == owner)
 
     def apply_testcase_filters(query):
         if workspace_id:
-            return query.join(Application, Application.id == TestCase.application_id).filter(Application.workspace_id == workspace_id)
+            return query.filter(TestCase.workspace_id == workspace_id)
         else:
-            return query.filter(TestCase.owner_id == owner)
+            return query.filter(TestCase.workspace_id == None, TestCase.owner_id == owner)
 
     # All-time stats
     total_runs = apply_filters(db.query(TestRun), TestRun).filter(TestRun.status != TestRunStatus.PENDING).count()
@@ -824,12 +824,16 @@ def create_test_case(body: TestCaseCreate, db: Session = Depends(get_db), user: 
 @app.get("/api/test-cases", response_model=list[TestCaseOut])
 def list_test_cases(
     suite_id: Optional[int] = None,
+    workspace_id: Optional[int] = None,
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    q = db.query(TestCase).filter(TestCase.owner_id == user["sub"])
+    if workspace_id:
+        q = db.query(TestCase).filter(TestCase.workspace_id == workspace_id)
+    else:
+        q = db.query(TestCase).filter(TestCase.workspace_id == None, TestCase.owner_id == user["sub"])
     if suite_id:
         q = q.filter(TestCase.suite_id == suite_id)
     return q.order_by(TestCase.created_at.desc()).offset(skip).limit(limit).all()
@@ -1064,30 +1068,21 @@ def _get_owned_run(
     job_id: str,
     user: Optional[dict],
 ) -> "TestRun":
-    """
-    Fetch a TestRun by job_id and enforce ownership.
-
-    Authorization rule:
-      - If the run has an owner_id set, it MUST match the authenticated user's
-        `sub` claim. Otherwise → 404 (we return 404, not 403, so we don't leak
-        the existence of other tenants' runs).
-      - Legacy runs with owner_id = NULL (created before auth was introduced)
-        are accessible to any authenticated user — grandfathered so the fix
-        doesn't break existing data. These should be migrated/backfilled later.
-      - `user` may be None only for trusted internal calls (never from a route
-        that lacks the auth dependency).
-
-    Raises 404 if the run doesn't exist or the caller doesn't own it.
-    """
     run = db.query(TestRun).filter(TestRun.job_id == job_id).first()
     if not run:
         raise HTTPException(404, "Job not found")
 
-    # Enforce ownership only when we have both an authenticated user and an
-    # owner on the record. NULL-owner legacy rows remain accessible.
-    if user is not None and run.owner_id and run.owner_id != user.get("sub"):
-        # Return 404 (not 403) to avoid leaking that the run exists.
-        raise HTTPException(404, "Job not found")
+    if user is not None:
+        user_id = user.get("sub")
+        if run.workspace_id:
+            member = db.query(WorkspaceMember).filter(
+                WorkspaceMember.workspace_id == run.workspace_id,
+                WorkspaceMember.user_id == user_id
+            ).first()
+            if not member:
+                raise HTTPException(404, "Job not found")
+        elif run.owner_id and run.owner_id != user_id:
+            raise HTTPException(404, "Job not found")
 
     return run
 
@@ -1169,12 +1164,16 @@ def get_run_status(
 def list_runs(
     status: Optional[TestRunStatus] = None,
     test_case_id: Optional[int] = None,
+    workspace_id: Optional[int] = None,
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    q = db.query(TestRun).filter(TestRun.owner_id == user["sub"])
+    if workspace_id:
+        q = db.query(TestRun).filter(TestRun.workspace_id == workspace_id)
+    else:
+        q = db.query(TestRun).filter(TestRun.workspace_id == None, TestRun.owner_id == user["sub"])
     if status:
         q = q.filter(TestRun.status == status)
     if test_case_id:
@@ -3146,9 +3145,9 @@ def run_diff_recommendation(
 @app.get("/api/quarantine", response_model=list[TestCaseOut])
 def list_quarantined_tests(workspace_id: Optional[int] = None, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     if workspace_id:
-        return db.query(TestCase).join(Application, Application.id == TestCase.application_id).filter(Application.workspace_id == workspace_id, TestCase.is_quarantined == True).order_by(TestCase.updated_at.desc()).all()
+        return db.query(TestCase).filter(TestCase.workspace_id == workspace_id, TestCase.is_quarantined == True).order_by(TestCase.updated_at.desc()).all()
     else:
-        return db.query(TestCase).filter(TestCase.owner_id == user["sub"], TestCase.is_quarantined == True).order_by(TestCase.updated_at.desc()).all()
+        return db.query(TestCase).filter(TestCase.workspace_id == None, TestCase.owner_id == user["sub"], TestCase.is_quarantined == True).order_by(TestCase.updated_at.desc()).all()
 
 @app.post("/api/tests/{id}/toggle-quarantine")
 def toggle_quarantine(id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
@@ -3160,19 +3159,23 @@ def toggle_quarantine(id: int, db: Session = Depends(get_db), user: dict = Depen
     return {"success": True, "is_quarantined": tc.is_quarantined}
 
 @app.get("/api/run-groups")
-def list_run_groups(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+def list_run_groups(workspace_id: Optional[int] = None, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     # Group runs by run_group_id
     from sqlalchemy import func, Integer
     
-    rows = db.query(
+    base_q = db.query(
         TestRun.run_group_id,
         func.count(TestRun.id).label("total"),
         func.sum(func.cast(TestRun.is_successful, Integer)).label("passed"),
         func.max(TestRun.created_at).label("created_at")
-    ).filter(
-        TestRun.owner_id == user["sub"],
-        TestRun.run_group_id != None
-    ).group_by(TestRun.run_group_id).order_by(func.max(TestRun.created_at).desc()).limit(50).all()
+    ).filter(TestRun.run_group_id != None)
+    
+    if workspace_id:
+        base_q = base_q.filter(TestRun.workspace_id == workspace_id)
+    else:
+        base_q = base_q.filter(TestRun.workspace_id == None, TestRun.owner_id == user["sub"])
+    
+    rows = base_q.group_by(TestRun.run_group_id).order_by(func.max(TestRun.created_at).desc()).limit(50).all()
     
     results = []
     for r in rows:
