@@ -644,7 +644,7 @@ export const api = {
     limit?: number;
     workspace_id?: string;
   }) => {
-    let url = "/api/runs";
+    let url = "/api/tests";
     const searchParams = new URLSearchParams();
     if (params) {
       if (params.status) searchParams.append("status", params.status);

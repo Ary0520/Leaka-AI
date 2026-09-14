@@ -63,6 +63,7 @@ class TestCase(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     owner_id = Column(String(64), nullable=True, index=True)  # Supabase user UUID
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=True, index=True)
     suite_id = Column(Integer, ForeignKey("test_suites.id"), nullable=True)
     name = Column(String(255), nullable=False)
     prompt = Column(Text, nullable=False)
@@ -87,6 +88,7 @@ class TestRun(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     owner_id = Column(String(64), nullable=True, index=True)  # Supabase user UUID
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=True, index=True)
     job_id = Column(String(64), unique=True, index=True, nullable=False)
     task_id = Column(String(128), unique=True, index=True, nullable=True)
     run_group_id = Column(String(255), nullable=True, index=True) # Groups runs in CI pipelines
