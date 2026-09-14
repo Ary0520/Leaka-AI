@@ -6,6 +6,9 @@ import { Toaster } from "@/components/ui/toaster";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://leaka.live"),
+  alternates: {
+    canonical: "/",
+  },
   title: {
     default: "Leaka AI – Autonomous QA Agent Platform",
     template: "%s | Leaka AI"
