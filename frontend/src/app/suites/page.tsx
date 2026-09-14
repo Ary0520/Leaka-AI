@@ -1,6 +1,6 @@
 "use client";
-
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useWorkspace } from "@/app/providers";
 import { Plus, Play, Layers, Clock } from "lucide-react";
 import { useState } from "react";
 import { formatDistanceToNow } from "date-fns";
@@ -15,17 +15,18 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
 export default function SuitesPage() {
+  const { activeWorkspaceId } = useWorkspace();
   const queryClient = useQueryClient();
   const [isCreating, setIsCreating] = useState(false);
   const [newSuite, setNewSuite] = useState({ name: "", description: "" });
 
   const { data: suites, isLoading } = useQuery({
-    queryKey: ["suites"],
-    queryFn: () => api.listSuites(),
+    queryKey: ["suites", activeWorkspaceId],
+    queryFn: () => api.listSuites({ workspace_id: activeWorkspaceId }),
   });
 
   const createMutation = useMutation({
-    mutationFn: () => api.createSuite(newSuite),
+    mutationFn: () => api.createSuite({ ...newSuite, workspace_id: activeWorkspaceId === "personal" ? undefined : activeWorkspaceId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["suites"] });
       setIsCreating(false);

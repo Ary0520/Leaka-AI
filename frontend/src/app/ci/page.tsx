@@ -1,4 +1,5 @@
 "use client";
+import { useWorkspace } from "@/app/providers";
 
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -71,11 +72,12 @@ function CodeBlock({ code, language = "yaml" }: { code: string; language?: strin
 }
 
 export default function CIPage() {
+  const { activeWorkspaceId } = useWorkspace();
   const [testSuiteId, setTestSuiteId] = useState<string>("");
   const [testCaseIds, setTestCaseIds] = useState<string>("");
 
   const { data: suites } = useQuery({
-    queryKey: ["suites"],
+    queryKey: ["suites", activeWorkspaceId],
     queryFn: () => api.listSuites({ limit: 100 }),
   });
 

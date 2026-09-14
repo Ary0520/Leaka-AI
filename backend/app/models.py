@@ -50,6 +50,7 @@ class TestSuite(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     owner_id = Column(String(64), nullable=True, index=True)  # Supabase user UUID
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=True, index=True)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
