@@ -15,22 +15,36 @@ import { FooterSection } from "@/components/landing/footer-section";
 export default function Home() {
   const jsonLd = {
     "@context": "https://schema.org",
-    "@type": "SoftwareApplication",
-    "name": "Leaka AI",
-    "applicationCategory": "DeveloperApplication",
-    "operatingSystem": "Any",
-    "offers": {
-      "@type": "Offer",
-      "price": "0",
-      "priceCurrency": "USD"
-    },
-    "description": "Leaka AI is an enterprise-grade autonomous QA agent that executes natural language test flows. Secure, visual, and zero data egress.",
-    "url": "https://leaka.live",
-    "publisher": {
-      "@type": "Organization",
-      "name": "Leaka AI",
-      "url": "https://leaka.live",
-    }
+    "@graph": [
+      {
+        "@type": "WebSite",
+        "@id": "https://leaka.live/#website",
+        "name": "Leaka AI",
+        "alternateName": "Leaka",
+        "url": "https://leaka.live/",
+        "publisher": {
+          "@id": "https://leaka.live/#organization"
+        }
+      },
+      {
+        "@type": "Organization",
+        "@id": "https://leaka.live/#organization",
+        "name": "Leaka AI",
+        "url": "https://leaka.live/"
+      },
+      {
+        "@type": "SoftwareApplication",
+        "@id": "https://leaka.live/#software",
+        "name": "Leaka AI",
+        "url": "https://leaka.live/",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Web",
+        "description": "Leaka AI is an autonomous QA agent for modern software teams that executes natural-language test flows visually, helps diagnose failures, and supports secure enterprise deployments.",
+        "publisher": {
+          "@id": "https://leaka.live/#organization"
+        }
+      }
+    ]
   };
 
   return (
