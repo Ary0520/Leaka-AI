@@ -20,6 +20,6 @@ export default function robots(): MetadataRoute.Robots {
         '/tests'
       ],
     },
-    sitemap: 'https://leaka.live/sitemap.xml',
+    sitemap: 'https://www.leaka.live/sitemap.xml',
   }
 }
