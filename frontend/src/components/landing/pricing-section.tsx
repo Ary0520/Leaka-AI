@@ -89,60 +89,77 @@ export function PricingSection() {
         </div>
 
         {/* Waitlist CTA Area */}
-        <div className="bg-foreground/5 border border-foreground/10 p-8 md:p-12 max-w-3xl mx-auto flex flex-col items-center text-center">
-          <h3 className="font-display text-2xl md:text-3xl text-foreground mb-4">
-            Join the exclusive waitlist
-          </h3>
-          <p className="text-muted-foreground mb-8 max-w-md">
-            We are currently onboarding enterprise partners in batches to ensure maximum quality and dedicated support.
-          </p>
-          
-          {status === "success" ? (
-            <div className="w-full max-w-md bg-green-500/10 border border-green-500/20 text-green-500 px-4 py-4 rounded flex items-center justify-center gap-2 mb-6">
-              <Check className="w-5 h-5" />
-              <span>You're on the list! Check your email.</span>
+        <div className="bg-foreground/5 border border-foreground/10 p-8 md:p-12 max-w-3xl mx-auto flex flex-col items-center text-center relative overflow-hidden">
+          <div className="relative z-10 w-full flex flex-col items-center">
+            <h3 className="font-display text-2xl md:text-3xl text-foreground mb-4">
+              Join the exclusive waitlist
+            </h3>
+            <p className="text-muted-foreground mb-8 max-w-md">
+              We are currently onboarding enterprise partners in batches to ensure maximum quality and dedicated support.
+            </p>
+            
+            <div className="w-full max-w-md min-h-[60px] relative flex justify-center">
+              {status === "success" ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center animate-in fade-in zoom-in duration-500">
+                  <div className="w-full bg-primary/10 border border-primary/20 text-primary-foreground px-6 py-4 flex items-center justify-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
+                      <Check className="w-4 h-4 text-primary" />
+                    </div>
+                    <span className="font-medium text-sm">Status Confirmed. Check your inbox.</span>
+                  </div>
+                </div>
+              ) : (
+                <form 
+                  ref={formRef} 
+                  action={handleWaitlist} 
+                  className={`w-full flex flex-col sm:flex-row gap-3 absolute inset-0 transition-all duration-500 ${
+                    status === "loading" ? "opacity-70 scale-[0.98]" : "opacity-100 scale-100"
+                  }`}
+                >
+                  <input 
+                    name="email"
+                    type="email" 
+                    placeholder="Enter your work email" 
+                    className="flex-1 px-4 py-3 bg-background border border-foreground/20 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-foreground transition-colors"
+                    required
+                    disabled={status === "loading"}
+                  />
+                  <button 
+                    type="submit" 
+                    disabled={status === "loading"}
+                    className="px-6 py-3 bg-foreground text-background font-medium hover:bg-foreground/90 transition-all flex items-center justify-center gap-2 group disabled:cursor-not-allowed"
+                  >
+                    {status === "loading" ? "Securing spot..." : "Join Waitlist"}
+                    {status === "loading" ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
+                    )}
+                  </button>
+                </form>
+              )}
             </div>
-          ) : (
-            <form ref={formRef} action={handleWaitlist} className="w-full max-w-md flex flex-col sm:flex-row gap-3 mb-6">
-              <input 
-                name="email"
-                type="email" 
-                placeholder="Enter your work email" 
-                className="flex-1 px-4 py-3 bg-background border border-foreground/20 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-foreground transition-colors"
-                required
-                disabled={status === "loading"}
-              />
-              <button 
-                type="submit" 
-                disabled={status === "loading"}
-                className="px-6 py-3 bg-foreground text-background font-medium hover:bg-foreground/90 transition-colors flex items-center justify-center gap-2 group disabled:opacity-70"
-              >
-                {status === "loading" ? "Joining..." : "Join Waitlist"}
-                {status === "loading" ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
-                )}
-              </button>
-            </form>
-          )}
 
-          {status === "error" && (
-            <p className="text-red-500 text-sm mb-4">Something went wrong. Please try again.</p>
-          )}
+            {status === "error" && (
+              <p className="text-red-500 text-sm mt-4 animate-in fade-in">Something went wrong. Please try again.</p>
+            )}
 
-          <div className="flex items-center gap-4 w-full max-w-md">
-            <div className="h-px bg-foreground/10 flex-1"></div>
-            <span className="text-xs text-muted-foreground uppercase tracking-widest font-mono">OR</span>
-            <div className="h-px bg-foreground/10 flex-1"></div>
+            <div className="flex items-center gap-4 w-full max-w-md mt-10 mb-6 transition-opacity duration-500">
+              <div className="h-px bg-foreground/10 flex-1"></div>
+              <span className="text-xs text-muted-foreground uppercase tracking-widest font-mono">OR</span>
+              <div className="h-px bg-foreground/10 flex-1"></div>
+            </div>
+
+            <a 
+              href="mailto:founder@leaka.live" 
+              className="px-6 py-3 border border-foreground/20 text-foreground font-medium hover:bg-foreground/5 hover:border-foreground transition-all"
+            >
+              Talk to Founder
+            </a>
           </div>
-
-          <a 
-            href="mailto:founder@leaka.live" 
-            className="mt-6 px-6 py-3 border border-foreground/20 text-foreground font-medium hover:bg-foreground/5 hover:border-foreground transition-all"
-          >
-            Talk to Founder
-          </a>
+          
+          {/* Subtle background glow when success */}
+          <div className={`absolute inset-0 bg-primary/5 transition-opacity duration-1000 ${status === "success" ? "opacity-100" : "opacity-0"}`} />
         </div>
 
         {/* 
