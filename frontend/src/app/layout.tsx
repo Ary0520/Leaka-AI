@@ -30,10 +30,10 @@ export const metadata: Metadata = {
     siteName: "Leaka AI",
     images: [
       {
-        url: "https://www.leaka.live/leaka-logo.png",
-        width: 800,
-        height: 600,
-        alt: "Leaka AI Logo",
+        url: "https://www.leaka.live/og-image.png",
+        width: 1200,
+        height: 630,
+        alt: "Leaka AI - Autonomous QA Platform",
       },
     ],
   },
@@ -41,7 +41,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Leaka AI – Autonomous QA Agent Platform",
     description: "Leaka AI is the enterprise autonomous QA platform. We convert plain English into robust, visual test automation that runs directly in your CI/CD pipeline without maintaining brittle scripts.",
-    images: ["https://www.leaka.live/leaka-logo.png"],
+    images: ["https://www.leaka.live/og-image.png"],
   },
   robots: {
     index: true,
