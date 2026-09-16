@@ -13,22 +13,35 @@ export const metadata: Metadata = {
     default: "Leaka AI – Autonomous QA Agent Platform",
     template: "%s | Leaka AI"
   },
-  description: "Leaka AI is an enterprise-grade autonomous QA agent that executes natural language test flows. Secure, visual, and zero data egress.",
-  keywords: ["Autonomous QA", "AI QA Agent", "Software Testing", "Leaka AI", "Test Automation"],
+  description: "Leaka AI is the enterprise autonomous QA platform. We convert plain English into robust, visual test automation that runs directly in your CI/CD pipeline without maintaining brittle scripts.",
+  keywords: ["Autonomous QA", "AI QA Agent", "Software Testing", "Leaka AI", "Test Automation", "Enterprise QA"],
   authors: [{ name: "Leaka AI" }],
   creator: "Leaka AI",
+  icons: {
+    icon: "/leaka-logo.png",
+    apple: "/leaka-logo.png",
+  },
   openGraph: {
     type: "website",
     locale: "en_US",
     url: "https://www.leaka.live",
     title: "Leaka AI – Autonomous QA Agent Platform",
-    description: "Leaka AI is an enterprise-grade autonomous QA agent that executes natural language test flows. Secure, visual, and zero data egress.",
+    description: "Leaka AI is the enterprise autonomous QA platform. We convert plain English into robust, visual test automation that runs directly in your CI/CD pipeline without maintaining brittle scripts.",
     siteName: "Leaka AI",
+    images: [
+      {
+        url: "https://www.leaka.live/leaka-logo.png",
+        width: 800,
+        height: 600,
+        alt: "Leaka AI Logo",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Leaka AI – Autonomous QA Agent Platform",
-    description: "Leaka AI is an enterprise-grade autonomous QA agent that executes natural language test flows. Secure, visual, and zero data egress.",
+    description: "Leaka AI is the enterprise autonomous QA platform. We convert plain English into robust, visual test automation that runs directly in your CI/CD pipeline without maintaining brittle scripts.",
+    images: ["https://www.leaka.live/leaka-logo.png"],
   },
   robots: {
     index: true,
