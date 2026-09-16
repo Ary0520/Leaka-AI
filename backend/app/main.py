@@ -526,6 +526,15 @@ def dashboard_kpis(
     user: dict = Depends(get_current_user),
 ):
     owner = user["sub"]
+    if workspace_id:
+        from .models import WorkspaceMember
+        member = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == workspace_id,
+            WorkspaceMember.user_id == user["sub"]
+        ).first()
+        if not member:
+            raise HTTPException(404, "Workspace not found or access denied")
+
     
     # Query builder
     def apply_filters(query, model):
@@ -579,28 +588,55 @@ def dashboard_kpis(
 
 
 def dashboard_health(
+    workspace_id: Optional[int] = None,
     limit: int = 14,
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     owner = user["sub"]
     result = []
+    
+    if workspace_id:
+        from .models import WorkspaceMember
+        member = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == workspace_id,
+            WorkspaceMember.user_id == user["sub"]
+        ).first()
+        if not member:
+            raise HTTPException(404, "Workspace not found or access denied")
 
     # 1. Test cases that have associated runs
-    cases = (
-        db.query(TestCase)
-        .filter(TestCase.owner_id == owner)
-        .order_by(TestCase.created_at.asc())
-        .all()
-    )
-    for tc in cases:
-        runs = (
-            db.query(TestRun)
-            .filter(TestRun.test_case_id == tc.id, TestRun.owner_id == owner)
-            .order_by(TestRun.created_at.desc())
-            .limit(limit)
+    if workspace_id:
+        cases = (
+            db.query(TestCase)
+            .filter(TestCase.workspace_id == workspace_id)
+            .order_by(TestCase.created_at.asc())
             .all()
         )
+    else:
+        cases = (
+            db.query(TestCase)
+            .filter(TestCase.workspace_id == None, TestCase.owner_id == owner)
+            .order_by(TestCase.created_at.asc())
+            .all()
+        )
+    for tc in cases:
+        if workspace_id:
+            runs = (
+                db.query(TestRun)
+                .filter(TestRun.test_case_id == tc.id, TestRun.workspace_id == workspace_id)
+                .order_by(TestRun.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+        else:
+            runs = (
+                db.query(TestRun)
+                .filter(TestRun.test_case_id == tc.id, TestRun.workspace_id == None, TestRun.owner_id == owner)
+                .order_by(TestRun.created_at.desc())
+                .limit(limit)
+                .all()
+            )
         runs_data = [
             {
                 "job_id": r.job_id,
@@ -831,6 +867,15 @@ def list_test_cases(
     user: dict = Depends(get_current_user),
 ):
     if workspace_id:
+        from .models import WorkspaceMember
+        member = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == workspace_id,
+            WorkspaceMember.user_id == user["sub"]
+        ).first()
+        if not member:
+            raise HTTPException(404, "Workspace not found or access denied")
+
+    if workspace_id:
         q = db.query(TestCase).filter(TestCase.workspace_id == workspace_id)
     else:
         q = db.query(TestCase).filter(TestCase.workspace_id == None, TestCase.owner_id == user["sub"])
@@ -886,6 +931,15 @@ def create_suite(body: TestSuiteCreate, db: Session = Depends(get_db), user: dic
 @app.get("/api/test-suites", response_model=list[TestSuiteOut])
 def list_suites(skip: int = 0, limit: int = 100, workspace_id: Optional[int] = None, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     if workspace_id:
+        from .models import WorkspaceMember
+        member = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == workspace_id,
+            WorkspaceMember.user_id == user["sub"]
+        ).first()
+        if not member:
+            raise HTTPException(404, "Workspace not found or access denied")
+
+    if workspace_id:
         return (
             db.query(TestSuite).filter(TestSuite.workspace_id == workspace_id)
             .order_by(TestSuite.created_at.desc())
@@ -930,9 +984,7 @@ def run_suite(
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    suite = db.query(TestSuite).filter(TestSuite.id == id, TestSuite.owner_id == user["sub"]).first()
-    if not suite:
-        raise HTTPException(404, "Suite not found")
+    suite = _get_owned_suite(db, id, user)
 
     cases = db.query(TestCase).filter(TestCase.suite_id == id).all()
     if not cases:
@@ -1005,7 +1057,10 @@ def enqueue_test(body: TestRunRequest, db: Session = Depends(get_db), user: dict
         assertions_json = json.dumps([a.model_dump() for a in body.assertions])
 
     if test_case_id:
-        tc = db.query(TestCase).filter(TestCase.id == test_case_id, TestCase.owner_id == owner_id).first()
+        try:
+            tc = _get_owned_test_case(db, test_case_id, user)
+        except HTTPException:
+            tc = None
         if tc:
             prompt = prompt or tc.prompt
             target_url = target_url or tc.target_url
@@ -1206,6 +1261,15 @@ def list_runs(
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
+    if workspace_id:
+        from .models import WorkspaceMember
+        member = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == workspace_id,
+            WorkspaceMember.user_id == user["sub"]
+        ).first()
+        if not member:
+            raise HTTPException(404, "Workspace not found or access denied")
+
     if workspace_id:
         q = db.query(TestRun).filter(TestRun.workspace_id == workspace_id)
     else:
@@ -3148,9 +3212,10 @@ def run_diff_recommendation(
 
     job_ids: list[str] = []
     for tc_id in ids:
-        tc = db.query(TestCase).filter(
-            TestCase.id == tc_id, TestCase.owner_id == owner_id
-        ).first()
+        try:
+            tc = _get_owned_test_case(db, tc_id, user={"sub": owner_id})
+        except HTTPException:
+            tc = None
         if not tc:
             continue  # owner-scoped: never run another tenant's test
         job_id = uuid.uuid4().hex
@@ -3183,6 +3248,15 @@ def run_diff_recommendation(
 @app.get("/api/quarantine", response_model=list[TestCaseOut])
 def list_quarantined_tests(workspace_id: Optional[int] = None, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     if workspace_id:
+        from .models import WorkspaceMember
+        member = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == workspace_id,
+            WorkspaceMember.user_id == user["sub"]
+        ).first()
+        if not member:
+            raise HTTPException(404, "Workspace not found or access denied")
+
+    if workspace_id:
         return db.query(TestCase).filter(TestCase.workspace_id == workspace_id, TestCase.is_quarantined == True).order_by(TestCase.updated_at.desc()).all()
     else:
         return db.query(TestCase).filter(TestCase.workspace_id == None, TestCase.owner_id == user["sub"], TestCase.is_quarantined == True).order_by(TestCase.updated_at.desc()).all()
@@ -3196,6 +3270,15 @@ def toggle_quarantine(id: int, db: Session = Depends(get_db), user: dict = Depen
 
 @app.get("/api/run-groups")
 def list_run_groups(workspace_id: Optional[int] = None, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    if workspace_id:
+        from .models import WorkspaceMember
+        member = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == workspace_id,
+            WorkspaceMember.user_id == user["sub"]
+        ).first()
+        if not member:
+            raise HTTPException(404, "Workspace not found or access denied")
+
     # Group runs by run_group_id
     from sqlalchemy import func, Integer
     

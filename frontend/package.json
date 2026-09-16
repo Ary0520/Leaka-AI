@@ -61,6 +61,7 @@
     "react-dom": "^18.3.1",
     "react-resizable-panels": "^4.12.3",
     "recharts": "^3.10.1",
+    "resend": "^6.28.1",
     "sonner": "^2.0.8",
     "tailwind-merge": "^2.5.3",
     "tailwindcss-animate": "^1.0.7",
