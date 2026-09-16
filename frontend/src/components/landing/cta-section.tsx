@@ -68,7 +68,7 @@ export function CtaSection() {
                     className="bg-foreground hover:bg-foreground/90 text-background px-8 h-14 text-base rounded-full group"
                     asChild
                   >
-                    <a href="/login">
+                    <a href="#pricing">
                       Start building free
                       <ArrowRight className="w-4 h-4 ml-2 transition-transform group-hover:translate-x-1" />
                     </a>
@@ -79,8 +79,8 @@ export function CtaSection() {
                     className="h-14 px-8 text-base rounded-full border-foreground/20 hover:bg-foreground/5"
                     asChild
                   >
-                    <a href="/login">
-                      Talk to sales
+                    <a href="mailto:founder@leaka.live">
+                      Talk to Founder
                     </a>
                   </Button>
                 </div>

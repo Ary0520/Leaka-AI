@@ -587,7 +587,7 @@ export const api = {
       failed_runs: number;
       auto_healed: number;
     }>(workspaceId && workspaceId !== 'personal' ? `/api/dashboard/kpis?workspace_id=${workspaceId}` : "/api/dashboard/kpis"),
-  dashboardHealth: (limit = 14) =>
+  dashboardHealth: (workspaceId?: string, limit = 14) =>
     request<Array<{
       id: number;
       name: string;
@@ -603,7 +603,7 @@ export const api = {
         created_at: string | null;
         duration_seconds: number | null;
       }>;
-    }>>(`/api/dashboard/health?limit=${limit}`),
+    }>>(workspaceId && workspaceId !== 'personal' ? `/api/dashboard/health?workspace_id=${workspaceId}&limit=${limit}` : `/api/dashboard/health?limit=${limit}`),
 
   // Demo seed
   seedDemo: () => request<{ message: string; created: number }>("/api/demo/seed", { method: "POST" }),

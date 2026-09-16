@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { ArrowRight, Check } from "lucide-react";
+import { useState, useRef } from "react";
+import { ArrowRight, Check, Loader2 } from "lucide-react";
+import { joinWaitlist } from "@/app/actions/waitlist";
 
 const plans = [
   {
@@ -55,6 +56,19 @@ const plans = [
 
 export function PricingSection() {
   const [isAnnual, setIsAnnual] = useState(true);
+  const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const formRef = useRef<HTMLFormElement>(null);
+
+  async function handleWaitlist(formData: FormData) {
+    setStatus("loading");
+    const result = await joinWaitlist(formData);
+    if (result.success) {
+      setStatus("success");
+      formRef.current?.reset();
+    } else {
+      setStatus("error");
+    }
+  }
 
   return (
     <section id="pricing" className="relative py-32 lg:py-40 border-t border-foreground/10">
@@ -74,7 +88,67 @@ export function PricingSection() {
           </p>
         </div>
 
-        {/* Billing Toggle */}
+        {/* Waitlist CTA Area */}
+        <div className="bg-foreground/5 border border-foreground/10 p-8 md:p-12 max-w-3xl mx-auto flex flex-col items-center text-center">
+          <h3 className="font-display text-2xl md:text-3xl text-foreground mb-4">
+            Join the exclusive waitlist
+          </h3>
+          <p className="text-muted-foreground mb-8 max-w-md">
+            We are currently onboarding enterprise partners in batches to ensure maximum quality and dedicated support.
+          </p>
+          
+          {status === "success" ? (
+            <div className="w-full max-w-md bg-green-500/10 border border-green-500/20 text-green-500 px-4 py-4 rounded flex items-center justify-center gap-2 mb-6">
+              <Check className="w-5 h-5" />
+              <span>You're on the list! Check your email.</span>
+            </div>
+          ) : (
+            <form ref={formRef} action={handleWaitlist} className="w-full max-w-md flex flex-col sm:flex-row gap-3 mb-6">
+              <input 
+                name="email"
+                type="email" 
+                placeholder="Enter your work email" 
+                className="flex-1 px-4 py-3 bg-background border border-foreground/20 text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-foreground transition-colors"
+                required
+                disabled={status === "loading"}
+              />
+              <button 
+                type="submit" 
+                disabled={status === "loading"}
+                className="px-6 py-3 bg-foreground text-background font-medium hover:bg-foreground/90 transition-colors flex items-center justify-center gap-2 group disabled:opacity-70"
+              >
+                {status === "loading" ? "Joining..." : "Join Waitlist"}
+                {status === "loading" ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
+                )}
+              </button>
+            </form>
+          )}
+
+          {status === "error" && (
+            <p className="text-red-500 text-sm mb-4">Something went wrong. Please try again.</p>
+          )}
+
+          <div className="flex items-center gap-4 w-full max-w-md">
+            <div className="h-px bg-foreground/10 flex-1"></div>
+            <span className="text-xs text-muted-foreground uppercase tracking-widest font-mono">OR</span>
+            <div className="h-px bg-foreground/10 flex-1"></div>
+          </div>
+
+          <a 
+            href="mailto:founder@leaka.live" 
+            className="mt-6 px-6 py-3 border border-foreground/20 text-foreground font-medium hover:bg-foreground/5 hover:border-foreground transition-all"
+          >
+            Talk to Founder
+          </a>
+        </div>
+
+        {/* 
+        =========================================
+        PRICING CARDS - COMMENTED OUT FOR NOW
+        =========================================
         <div className="flex items-center gap-4 mb-16">
           <span
             className={`text-sm transition-colors ${
@@ -107,7 +181,6 @@ export function PricingSection() {
           )}
         </div>
 
-        {/* Pricing Cards */}
         <div className="grid md:grid-cols-3 gap-px bg-foreground/10">
           {plans.map((plan, idx) => (
             <div
@@ -122,7 +195,6 @@ export function PricingSection() {
                 </span>
               )}
 
-              {/* Plan Header */}
               <div className="mb-8">
                 <span className="font-mono text-xs text-muted-foreground">
                   {String(idx + 1).padStart(2, "0")}
@@ -131,7 +203,6 @@ export function PricingSection() {
                 <p className="text-sm text-muted-foreground mt-2">{plan.description}</p>
               </div>
 
-              {/* Price */}
               <div className="mb-8 pb-8 border-b border-foreground/10">
                 {plan.price.monthly !== null ? (
                   <div className="flex items-baseline gap-2">
@@ -145,7 +216,6 @@ export function PricingSection() {
                 )}
               </div>
 
-              {/* Features */}
               <ul className="space-y-4 mb-10">
                 {plan.features.map((feature) => (
                   <li key={feature} className="flex items-start gap-3">
@@ -155,7 +225,6 @@ export function PricingSection() {
                 ))}
               </ul>
 
-              {/* CTA */}
               <a
                 href="/login"
                 className={`w-full py-4 flex items-center justify-center gap-2 text-sm font-medium transition-all group ${
@@ -171,13 +240,14 @@ export function PricingSection() {
           ))}
         </div>
 
-        {/* Bottom Note */}
         <p className="mt-12 text-center text-sm text-muted-foreground">
           All plans include automatic updates, HTTPS, and DDoS protection.{" "}
           <a href="#" className="underline underline-offset-4 hover:text-foreground transition-colors">
             Compare all features
           </a>
         </p>
+        =========================================
+        */}
       </div>
     </section>
   );
