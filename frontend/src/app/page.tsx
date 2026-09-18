@@ -55,8 +55,8 @@ export default function Home() {
       />
       <Navigation />
       <HeroSection />
-      <FeaturesSection />
       <HowItWorksSection />
+      <FeaturesSection />
       <InfrastructureSection />
       <MetricsSection />
       <IntegrationsSection />
