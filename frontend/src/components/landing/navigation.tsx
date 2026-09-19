@@ -45,7 +45,7 @@ export function Navigation() {
         >
           {/* Logo */}
           <a href="/" className="flex items-center gap-2 group">
-            <img src="/leaka-logo.png" alt="Leaka AI Logo" className={`transition-all duration-500 invert dark:invert-0 ${isScrolled ? "h-5" : "h-7"}`} />
+            <img src="/leaka-logo.png" alt="Leaka AI Logo" className={`transition-all duration-500 ${isScrolled ? "h-5" : "h-7"}`} />
             <span className={`font-display tracking-tight transition-all duration-500 ${isScrolled ? "text-xl" : "text-2xl"}`}>Leaka AI</span>
           </a>
 
