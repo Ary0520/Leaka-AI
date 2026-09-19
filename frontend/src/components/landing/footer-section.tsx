@@ -50,7 +50,7 @@ export function FooterSection() {
             {/* Brand Column */}
             <div className="col-span-2">
               <a href="#" className="inline-flex items-center gap-1 mb-6">
-                <img src="/leaka-logo.png" alt="Leaka AI Logo" className="h-7 -mr-1" />
+                <img src="/leaka-logo.png" alt="Leaka AI Logo" className="h-10 -mr-1" />
                 <span className="text-2xl font-display">Leaka AI</span>
               </a>
 
@@ -106,10 +106,10 @@ export function FooterSection() {
           </p>
 
           <div className="flex items-center gap-4 text-sm text-muted-foreground">
-            <span className="flex items-center gap-2">
+            {/* <span className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-green-500" />
               All systems operational
-            </span>
+            </span> */}
           </div>
         </div>
       </div>
