@@ -50,7 +50,7 @@ export function FooterSection() {
             {/* Brand Column */}
             <div className="col-span-2">
               <a href="#" className="inline-flex items-center gap-2 mb-6">
-                <img src="/leaka-logo.png" alt="Leaka AI Logo" className="h-6 invert dark:invert-0" />
+                <img src="/leaka-logo.png" alt="Leaka AI Logo" className="h-6" />
                 <span className="text-2xl font-display">Leaka AI</span>
               </a>
 
