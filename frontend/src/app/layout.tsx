@@ -18,8 +18,8 @@ export const metadata: Metadata = {
   authors: [{ name: "Leaka AI" }],
   creator: "Leaka AI",
   icons: {
-    icon: "/favicon.png?v=2",
-    apple: "/favicon.png?v=2",
+    icon: "/favicon.png",
+    apple: "/favicon.png",
   },
   openGraph: {
     type: "website",
