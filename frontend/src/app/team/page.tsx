@@ -15,6 +15,8 @@ export default function TeamPage() {
   const [role, setRole] = useState("EDITOR");
   const [isInviting, setIsInviting] = useState(false);
 
+  const displayWorkspaceId = activeWorkspaceId === "personal" || !activeWorkspaceId ? "Personal (None)" : activeWorkspaceId;
+
   const handleInvite = async () => {
     if (!email.trim()) return;
     setIsInviting(true);
@@ -40,6 +42,10 @@ export default function TeamPage() {
           <p className="text-sm text-muted-foreground mt-1">
             Manage your team members and roles.
           </p>
+          <div className="mt-4 p-3 bg-primary/10 rounded-md border border-primary/20 inline-flex items-center gap-2">
+            <span className="text-sm font-medium">Extension Workspace ID:</span>
+            <code className="bg-background px-2 py-1 rounded text-xs">personal</code>
+          </div>
         </div>
         <Card className="bg-[#161922] border-muted/10">
           <CardContent className="py-12 flex flex-col items-center justify-center text-center">
@@ -63,6 +69,10 @@ export default function TeamPage() {
         <p className="text-sm text-muted-foreground mt-1">
           Manage your team members and roles for this workspace.
         </p>
+        <div className="mt-4 p-3 bg-primary/10 rounded-md border border-primary/20 inline-flex items-center gap-2">
+          <span className="text-sm font-medium">Extension Workspace ID:</span>
+          <code className="bg-background px-2 py-1 rounded text-xs">{activeWorkspaceId}</code>
+        </div>
       </div>
 
       <div className="grid gap-6 md:grid-cols-2">
