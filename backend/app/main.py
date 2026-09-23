@@ -3412,8 +3412,33 @@ def store_vault_cookies(body: VaultCookiesRequest, db: Session = Depends(get_db)
 @app.post("/api/vault/prompts")
 def store_vault_prompts(body: VaultPromptsRequest, db: Session = Depends(get_db)):
     # The recorded NL prompts from the extension.
-    # We could save this as a draft TestCase or send to frontend via websocket.
-    print(f"[VAULT] Received {len(body.prompts)} prompts in workspace {body.workspace_id}")
-    for p in body.prompts:
-        print(f" - {p}")
-    return {"status": "ok", "message": "Prompts received successfully."}
+    # Note: In a full production launch, we would use an Extension API Key here.
+    
+    prompt_str = "\n".join([f"{i+1}. {p}" for i, p in enumerate(body.prompts)])
+    
+    workspace_id = None
+    if body.workspace_id and body.workspace_id != "personal":
+        try:
+            workspace_id = int(body.workspace_id)
+        except ValueError:
+            pass
+            
+    # Find any user to assign this to (for demo purposes)
+    from .models import WorkspaceMember
+    owner = "extension-recorded-user"
+    if workspace_id:
+        member = db.query(WorkspaceMember).filter(WorkspaceMember.workspace_id == workspace_id).first()
+        if member:
+            owner = member.user_id
+
+    tc = TestCase(
+        owner_id=owner,
+        workspace_id=workspace_id,
+        name=f"Recorded Flow ({len(body.prompts)} steps)",
+        prompt=f"Execute the following recorded flow precisely:\n{prompt_str}",
+    )
+    db.add(tc)
+    db.commit()
+    db.refresh(tc)
+    
+    return {"status": "ok", "message": "Test Case created successfully from recorded flow.", "test_case_id": tc.id}
