@@ -615,3 +615,22 @@ class DiffRunResponse(BaseModel):
     message: str
     diff_id: int
     job_ids: List[str] = []
+
+class CookieData(BaseModel):
+    name: str
+    value: str
+    domain: str
+    path: str
+    expires: float
+    httpOnly: bool
+    secure: bool
+    sameSite: str
+
+class VaultCookiesRequest(BaseModel):
+    workspace_id: Optional[str] = None
+    domain: str
+    cookies: List[CookieData]
+
+class VaultPromptsRequest(BaseModel):
+    workspace_id: Optional[str] = None
+    prompts: List[str]

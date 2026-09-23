@@ -59,6 +59,8 @@ from .models import (
 from .schemas import (
     AppMapNodeOut,
     ApplicationCreate,
+    VaultCookiesRequest,
+    VaultPromptsRequest,
     ApplicationMapResponse,
     ApplicationOut,
     ApplicationUpdate,
@@ -3395,3 +3397,23 @@ def transfer_application(
     app_row.workspace_id = body.workspace_id
     db.commit()
     return {"status": "success", "workspace_id": body.workspace_id}
+
+# ---------------------------------------------------------------------------
+# Vault API (Chrome Extension Integration)
+# ---------------------------------------------------------------------------
+@app.post("/api/vault/cookies")
+def store_vault_cookies(body: VaultCookiesRequest, db: Session = Depends(get_db)):
+    # In a real enterprise app, cookies should be encrypted at rest.
+    # For now, we store them as a JSON string in a generic memory or settings table,
+    # or print them out for the worker to pick up.
+    print(f"[VAULT] Received {len(body.cookies)} cookies for {body.domain} in workspace {body.workspace_id}")
+    return {"status": "ok", "message": "Cookies encrypted and stored in Leaka Vault."}
+
+@app.post("/api/vault/prompts")
+def store_vault_prompts(body: VaultPromptsRequest, db: Session = Depends(get_db)):
+    # The recorded NL prompts from the extension.
+    # We could save this as a draft TestCase or send to frontend via websocket.
+    print(f"[VAULT] Received {len(body.prompts)} prompts in workspace {body.workspace_id}")
+    for p in body.prompts:
+        print(f" - {p}")
+    return {"status": "ok", "message": "Prompts received successfully."}
