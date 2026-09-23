@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Leaka AI</title>
+    <style>
+      :root {
+        --primary: #000000;
+        --secondary: #666666;
+        --accent: #2563eb;
+        --danger: #ef4444;
+        --success: #10b981;
+      }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        width: 320px;
+        margin: 0;
+        padding: 16px;
+        color: var(--primary);
+        background: #ffffff;
+      }
+      .header {
+        display: flex;
+        align-items: center;
+        margin-bottom: 16px;
+        border-bottom: 1px solid #eee;
+        padding-bottom: 12px;
+      }
+      .header h2 {
+        margin: 0;
+        font-size: 16px;
+      }
+      .section {
+        margin-bottom: 16px;
+      }
+      button {
+        width: 100%;
+        padding: 10px;
+        border: none;
+        border-radius: 6px;
+        font-weight: 600;
+        cursor: pointer;
+        margin-bottom: 8px;
+        transition: opacity 0.2s;
+      }
+      button:hover { opacity: 0.9; }
+      .btn-primary { background: var(--primary); color: white; }
+      .btn-danger { background: var(--danger); color: white; }
+      .btn-outline { background: white; border: 1px solid #ccc; color: var(--primary); }
+      
+      .status-dot {
+        height: 8px;
+        width: 8px;
+        border-radius: 50%;
+        display: inline-block;
+        margin-right: 6px;
+        background: var(--secondary);
+      }
+      .status-dot.active { background: var(--success); }
+      .status-text { font-size: 13px; color: var(--secondary); margin-bottom: 12px; display: flex; align-items: center; }
+      
+      input[type="text"] {
+        width: 100%;
+        padding: 8px;
+        margin-bottom: 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        box-sizing: border-box;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <h2>Leaka AI Recorder</h2>
+    </div>
+
+    <div class="section">
+      <div class="status-text">
+        <span id="status-dot" class="status-dot"></span>
+        <span id="status-label">Idle</span>
+      </div>
+      
+      <button id="btn-record" class="btn-primary">Start Recording Prompts</button>
+      <button id="btn-stop" class="btn-danger" style="display: none;">Stop & Save to Vault</button>
+    </div>
+
+    <div class="section" style="border-top: 1px solid #eee; padding-top: 12px;">
+      <h3 style="font-size: 14px; margin-top: 0;">Session Auth</h3>
+      <input type="text" id="workspace-id" placeholder="Workspace ID" />
+      <button id="btn-extract-cookies" class="btn-outline">Push Cookies to Leaka Vault</button>
+      <div id="cookie-status" style="font-size: 12px; color: var(--success); margin-top: 4px; display: none;">Cookies pushed successfully!</div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
