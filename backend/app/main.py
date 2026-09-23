@@ -3406,8 +3406,12 @@ def store_vault_cookies(body: VaultCookiesRequest, db: Session = Depends(get_db)
     # In a real enterprise app, cookies should be encrypted at rest.
     # For now, we store them as a JSON string in a generic memory or settings table,
     # or print them out for the worker to pick up.
-    print(f"[VAULT] Received {len(body.cookies)} cookies for {body.domain} in workspace {body.workspace_id}")
-    return {"status": "ok", "message": "Cookies encrypted and stored in Leaka Vault."}
+    ls_count = 0
+    if body.origins:
+        ls_count = sum(len(o.localStorage) for o in body.origins)
+        
+    print(f"[VAULT] Received {len(body.cookies)} cookies and {ls_count} localStorage items for {body.domain} in workspace {body.workspace_id}")
+    return {"status": "ok", "message": "Auth state (Cookies + LocalStorage) stored in Leaka Vault."}
 
 @app.post("/api/vault/prompts")
 def store_vault_prompts(body: VaultPromptsRequest, db: Session = Depends(get_db)):

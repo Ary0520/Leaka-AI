@@ -626,10 +626,19 @@ class CookieData(BaseModel):
     secure: bool
     sameSite: str
 
+class LocalStorageItem(BaseModel):
+    name: str
+    value: str
+
+class OriginState(BaseModel):
+    origin: str
+    localStorage: List[LocalStorageItem]
+
 class VaultCookiesRequest(BaseModel):
     workspace_id: Optional[str] = None
     domain: str
     cookies: List[CookieData]
+    origins: Optional[List[OriginState]] = None
 
 class VaultPromptsRequest(BaseModel):
     workspace_id: Optional[str] = None
