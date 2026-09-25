@@ -126,9 +126,14 @@
     <!-- Settings View -->
     <div id="settings-panel">
       <h3 style="font-size: 14px; margin-top: 0;">Extension Settings</h3>
-      <label style="font-size: 12px; font-weight: 600; margin-bottom: 4px; display: block;">Backend URL</label>
+      
+      <label style="font-size: 12px; font-weight: 600; margin-bottom: 4px; display: block;">Leaka API Key (Required)</label>
+      <input type="password" id="api-key" placeholder="Paste Leaka API Key or JWT..." style="font-family: monospace;" />
+      
+      <label style="font-size: 12px; font-weight: 600; margin-top: 8px; margin-bottom: 4px; display: block;">Backend URL</label>
       <input type="text" id="backend-url" placeholder="http://localhost:8000" />
-      <button id="btn-save-settings" class="btn-primary" style="margin-top: 8px;">Save</button>
+      
+      <button id="btn-save-settings" class="btn-primary" style="margin-top: 12px;">Save & Authenticate</button>
     </div>
 
     <script src="popup.js"></script>

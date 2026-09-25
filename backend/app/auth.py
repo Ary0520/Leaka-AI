@@ -169,3 +169,38 @@ def get_runner_user(
     db.commit()
     
     return {"sub": api_key.owner_id, "is_runner": True, "api_key_id": api_key.id}
+
+def get_extension_user(
+    authorization: Optional[str] = Header(None, description="Bearer token for Extension API Key"),
+    db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    """
+    Authenticates the Chrome Extension using a long-lived API Key provided as Bearer token.
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid Authorization header. Expected 'Bearer <api_key>'."
+        )
+    
+    token = authorization.split(" ")[1]
+    
+    # Try as Supabase JWT first, if it fails, try as API Key
+    try:
+        return verify_token(token)
+    except Exception:
+        pass
+        
+    key_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    api_key = db.query(ApiKey).filter(ApiKey.key_hash == key_hash).first()
+    
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or revoked Extension API Key."
+        )
+        
+    api_key.last_used_at = datetime.utcnow()
+    db.commit()
+    
+    return {"sub": api_key.owner_id, "is_api_key": True}

@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 from .celery_app import celery_app
 from .config import settings
 from .database import get_db, init_db
-from .auth import get_current_user
+from .auth import get_current_user, get_extension_user
 from .integrations import linear_client, email_client, slack_client
 from .models import (
     Application,
@@ -3406,12 +3406,19 @@ def transfer_application(
 # ---------------------------------------------------------------------------
 
 @app.get("/api/vault/context", response_model=VaultContextResponse)
-def get_vault_context(db: Session = Depends(get_db)):
-    # Note: No auth for testing purposes. In prod, use Depends(get_current_user)
-    from .models import Application, Environment, Workspace
+def get_vault_context(db: Session = Depends(get_db), user: dict = Depends(get_extension_user)):
+    from .models import Application, Environment, Workspace, WorkspaceMember
+    owner_id = user["sub"]
     
-    # Let's deduplicate and group by workspace to avoid the massive chaotic list
-    apps = db.query(Application).all()
+    # Get all workspaces the user is a member of
+    user_workspaces = db.query(WorkspaceMember.workspace_id).filter(WorkspaceMember.user_id == owner_id).all()
+    workspace_ids = [w[0] for w in user_workspaces]
+    
+    # Also fetch apps that belong directly to the owner (personal workspace)
+    apps = db.query(Application).filter(
+        (Application.workspace_id.in_(workspace_ids)) | 
+        ((Application.workspace_id == None) & (Application.owner_id == owner_id))
+    ).all()
     
     # Fetch all workspaces for easy lookup
     workspaces = {w.id: w.name for w in db.query(Workspace).all()}
@@ -3440,7 +3447,7 @@ def get_vault_context(db: Session = Depends(get_db)):
     return VaultContextResponse(applications=result)
 
 @app.post("/api/vault/cookies")
-def store_vault_cookies(body: VaultCookiesRequest, db: Session = Depends(get_db)):
+def store_vault_cookies(body: VaultCookiesRequest, db: Session = Depends(get_db), user: dict = Depends(get_extension_user)):
     import json
     ls_count = 0
     if body.origins:

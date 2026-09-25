@@ -99,7 +99,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
               const res = await fetch(`${config.backendUrl}/api/vault/cookies`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${config.apiKey}`
+                },
                 body: JSON.stringify({
                   environment_id: config.selectedEnvId ? parseInt(config.selectedEnvId) : null,
                   domain: domain,
@@ -150,7 +153,10 @@ async function pushPromptsToVault(prompts, config) {
   
   await fetch(`${config.backendUrl}/api/vault/prompts`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${config.apiKey}`
+    },
     body: JSON.stringify({
       environment_id: config.selectedEnvId ? parseInt(config.selectedEnvId) : null,
       prompts: prompts

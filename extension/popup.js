@@ -13,12 +13,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const settingsPanel = document.getElementById('settings-panel');
   const mainView = document.getElementById('main-view');
   const inputBackendUrl = document.getElementById('backend-url');
+  const inputApiKey = document.getElementById('api-key');
   const btnSaveSettings = document.getElementById('btn-save-settings');
 
   // Default config
   let config = {
     backendUrl: 'http://localhost:8000',
-    selectedEnvId: null
+    selectedEnvId: null,
+    apiKey: ''
   };
 
   // Load config
@@ -27,6 +29,14 @@ document.addEventListener('DOMContentLoaded', () => {
       config = { ...config, ...data.leakaConfig };
     }
     inputBackendUrl.value = config.backendUrl;
+    inputApiKey.value = config.apiKey || '';
+    
+    // Force open settings if no API key
+    if (!config.apiKey) {
+      settingsPanel.style.display = 'block';
+      mainView.style.display = 'none';
+      return;
+    }
     
     if (data.isRecording) {
       setRecordingState(true);
@@ -47,7 +57,8 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   btnSaveSettings.addEventListener('click', () => {
-    config.backendUrl = inputBackendUrl.value.replace(/\/$/, ""); // remove trailing slash
+    config.backendUrl = inputBackendUrl.value.replace(/\/$/, "");
+    config.apiKey = inputApiKey.value.trim();
     chrome.storage.local.set({ leakaConfig: config }, () => {
       settingsPanel.style.display = 'none';
       mainView.style.display = 'block';
@@ -67,7 +78,13 @@ document.addEventListener('DOMContentLoaded', () => {
       btnRecord.disabled = true;
       btnExtractCookies.disabled = true;
 
-      const res = await fetch(`${config.backendUrl}/api/vault/context`);
+      const res = await fetch(`${config.backendUrl}/api/vault/context`, { headers: { 'Authorization': `Bearer ${config.apiKey}` } });
+      if (res.status === 401) {
+        alert('Invalid API Key. Please check settings.');
+        settingsPanel.style.display = 'block';
+        mainView.style.display = 'none';
+        return;
+      }
       if (!res.ok) throw new Error('Failed to fetch contexts');
       const data = await res.json();
       
