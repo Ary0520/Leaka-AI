@@ -131,11 +131,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 function formatIdentifier(ev) {
-  if (ev.text && ev.text.trim().length > 0) {
-    let cleanText = ev.text.trim().replace(/\n/g, " ");
-    if (cleanText.length > 40) cleanText = cleanText.substring(0, 40) + "...";
-    return `"${cleanText}"`;
-  }
+  // For form elements, text is highly volatile (it changes as you type).
+  // We should prioritize structural attributes over text.
   
   if (ev.selector_strategy === 'placeholder') {
     const match = ev.selector.match(/placeholder="(.*?)"/);
@@ -144,24 +141,33 @@ function formatIdentifier(ev) {
   
   if (ev.selector_strategy === 'aria-label') {
     const match = ev.selector.match(/aria-label="(.*?)"/);
-    if (match) return `"${match[1]}"`;
+    if (match) return `the "${match[1]}" element`;
+  }
+  
+  if (ev.selector_strategy === 'testid') {
+    const match = ev.selector.match(/"(.*?)"/);
+    if (match) return `the "${match[1].replace(/[-_]/g, ' ')}"`;
+  }
+
+  if (ev.selector_strategy === 'name') {
+    const match = ev.selector.match(/name="(.*?)"/);
+    if (match) return `the "${match[1].replace(/[-_]/g, ' ')}" field`;
+  }
+  
+  if (ev.text && ev.text.trim().length > 0) {
+    let cleanText = ev.text.trim().replace(/\n/g, " ");
+    if (cleanText.length > 40) cleanText = cleanText.substring(0, 40) + "...";
+    return `"${cleanText}"`;
+  }
+  
+  if (ev.selector_strategy === 'id') {
+    const match = ev.selector.match(/#(.*)/);
+    if (match) return `the "${match[1].replace(/[-_]/g, ' ')}"`;
   }
   
   if (ev.selector_strategy === 'alt') {
     const match = ev.selector.match(/alt="(.*?)"/);
     if (match) return `the "${match[1]}" image`;
-  }
-  
-  if (ev.selector_strategy === 'testid' || ev.selector_strategy === 'id') {
-    let raw = ev.selector.match(/"(.*?)"/) || ev.selector.match(/#(.*)/);
-    if (raw && raw[1]) {
-       return `the "${raw[1].replace(/[-_]/g, ' ')}"`;
-    }
-  }
-  
-  if (ev.selector_strategy === 'name') {
-    const match = ev.selector.match(/name="(.*?)"/);
-    if (match) return `the "${match[1].replace(/[-_]/g, ' ')}" field`;
   }
   
   return `the ${ev.tag_name || 'element'}`;
@@ -171,26 +177,33 @@ function processEventsToPrompts(events) {
   const prompts = [];
   
   for (const ev of events) {
+    const target = formatIdentifier(ev);
+    
     if (ev.type === 'click') {
-      prompts.push(`Click on ${formatIdentifier(ev)}`);
+      prompts.push({ type: 'click', target, text: `Click on ${target}` });
+      
     } else if (ev.type === 'input' || ev.type === 'change') {
-      if (ev.value === undefined) continue;
-      prompts.push(`Type "${ev.value}" into ${formatIdentifier(ev)}`);
+      if (ev.value === undefined || ev.value === "") continue; // Ignore clearing empty fields on submit
+      
+      const cleanValue = ev.value.replace(/\n/g, "");
+      if (cleanValue === "") continue;
+      
+      prompts.push({ type: 'type', target, value: cleanValue, text: `Type "${cleanValue}" into ${target}` });
+      
     } else if (ev.type === 'keydown' && ev.key === 'Enter') {
-      prompts.push(`Press Enter`);
+      prompts.push({ type: 'enter', target, text: `Press Enter` });
+      
     } else if (ev.type === 'navigate') {
-      prompts.push(`Navigate to ${ev.url}`);
+      prompts.push({ type: 'navigate', target: 'browser', text: `Navigate to ${ev.url}` });
     }
   }
   
-  // Deduplicate consecutive keystrokes on the same input
+  // Deduplicate consecutive typing events targeting the exact same element
   const compressed = [];
   for (const p of prompts) {
-    if (compressed.length > 0 && p.startsWith("Type ") && compressed[compressed.length-1].startsWith("Type ")) {
-       const prevTarget = compressed[compressed.length-1].split(" into ")[1];
-       const curTarget = p.split(" into ")[1];
-       if (prevTarget === curTarget) {
-         // Replace the old keystroke string with the new accumulated string
+    if (compressed.length > 0 && p.type === 'type' && compressed[compressed.length-1].type === 'type') {
+       if (compressed[compressed.length-1].target === p.target) {
+         // The user is just continuing to type in the same field. Override with the accumulated full string.
          compressed[compressed.length-1] = p;
          continue;
        }
@@ -198,7 +211,8 @@ function processEventsToPrompts(events) {
     compressed.push(p);
   }
   
-  return compressed;
+  // Return just the string instructions
+  return compressed.map(p => p.text);
 }
 
 async function pushPromptsToVault(prompts, config) {
