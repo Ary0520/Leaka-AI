@@ -3472,6 +3472,3501 @@ def store_vault_cookies(body: VaultCookiesRequest, db: Session = Depends(get_db)
     return {"status": "ok", "message": "Auth state successfully saved to Environment."}
 
 @app.post("/api/vault/prompts")
+def store_vault_prompts(body: VaultPromptsRequest, db: Session = Depends(get_db), user: dict = Depends(get_extension_user)):
+    from .models import Environment, TestCase, Application
+    
+    if not body.prompts:
+        return {"status": "ok", "message": "No prompts recorded"}
+        
+    prompt_str = "\n".join([f"{i+1}. {p}" for i, p in enumerate(body.prompts)])
+    owner_id = user["sub"]
+    workspace_id = None
+    
+    if body.environment_id:
+        env = db.query(Environment).filter(Environment.id == body.environment_id).first()
+        if env:
+            app = db.query(Application).filter(Application.id == env.application_id).first()
+            if app:
+                workspace_id = app.workspace_id
+                
+    tc = TestCase(
+        owner_id=owner_id,
+        workspace_id=workspace_id,
+        name=f"Recorded Flow ({len(body.prompts)} steps)",
+        prompt=f"Execute the following recorded flow precisely:\n{prompt_str}",
+        environment_id=body.environment_id,
+    )
+    db.add(tc)
+    db.commit()
+    
+    return {"status": "ok", "message": f"Recorded flow with {len(body.prompts)} steps saved to Vault."}tures import ThreadPoolExecutor
+from datetime import datetime
+from typing import Optional
+
+from celery.result import AsyncResult
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Request,
+    UploadFile,
+    status,
+)
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from .celery_app import celery_app
+from .config import settings
+from .database import get_db, init_db
+from .auth import get_current_user, get_extension_user
+from .integrations import linear_client, email_client, slack_client
+from .models import (
+    Application,
+    AppMapNode,
+    ExploreRun,
+    ExploreRunStatus,
+    GraphNode,
+    GraphEdge,
+    GraphSnapshot,
+    SnapshotMember,
+    CoverageVerdict,
+    CoverageLink,
+    MemoryItem,
+    RepoConnection,
+    CodeDiff,
+    FlowMapping,
+    LinearIssue,
+    TestCase,
+    TestRun,
+    TestRunStatus,
+    TestScreenshot,
+    TestSuite,
+    UserSettings,
+    Environment,
+    TestFixture,
+)
+from .schemas import (
+    AppMapNodeOut,
+    ApplicationCreate,
+    VaultCookiesRequest,
+    VaultPromptsRequest,
+    VaultContextResponse,
+    VaultApplicationOut,
+    VaultEnvironmentOut,
+    ApplicationMapResponse,
+    ApplicationOut,
+    ApplicationUpdate,
+    CIWebhookRequest,
+    CIWebhookResponse,
+    CreateLinearTicketRequest,
+    ExploreEnqueueResponse,
+    ExploreRunStatusResponse,
+    GraphNodeOut,
+    GraphEdgeOut,
+    GraphResponse,
+    GraphNodeDetail,
+    GraphNodeOverride,
+    SnapshotOut,
+    SnapshotListResponse,
+    SnapshotDiffResponse,
+    CoverageRollupOut,
+    CoverageGapOut,
+    CoverageResponse,
+    MemoryItemOut,
+    MemoryListResponse,
+    RepoConnectRequest,
+    RepoStatusOut,
+    WebhookAck,
+    CodeDiffOut,
+    CodeDiffListResponse,
+    FlowMappingOut,
+    DiffRecommendationResponse,
+    DiffRunResponse,
+    LinearTicketResponse,
+    ScreenshotOut,
+    TestCaseCreate,
+    TestCaseOut,
+    TestCaseUpdate,
+    TestRunEnqueueResponse,
+    TestRunListResponse,
+    TestRunRequest,
+    TestRunStatusResponse,
+    TestSuiteCreate,
+    TestSuiteOut,
+    TestSuiteRunResponse,
+    TestSuiteUpdate,
+    EnvironmentOut,
+    EnvironmentCreate,
+    EnvironmentUpdate,
+    TestFixtureOut,
+    TestFixtureCreate,
+)
+from .worker import run_browser_test
+from .explore_worker import explore_application
+
+logger = logging.getLogger("revguard")
+
+_SYNC_DEMO_EXECUTOR: Optional[ThreadPoolExecutor] = None
+_EXECUTOR_LOCK = threading.Lock()
+
+
+def _get_sync_executor() -> ThreadPoolExecutor:
+    global _SYNC_DEMO_EXECUTOR
+    with _EXECUTOR_LOCK:
+        if _SYNC_DEMO_EXECUTOR is None:
+            _SYNC_DEMO_EXECUTOR = ThreadPoolExecutor(
+                max_workers=2, thread_name_prefix="revguard_sync_demo"
+            )
+            atexit.register(lambda: _SYNC_DEMO_EXECUTOR.shutdown(wait=False))
+    return _SYNC_DEMO_EXECUTOR
+
+
+def _dispatch_run_task(
+    job_id: str,
+    *,
+    name: str,
+    prompt: str,
+    target_url: str,
+    success_criteria: Optional[str],
+    use_vision: bool,
+    max_steps: int,
+    test_case_id: Optional[int],
+    environment_id: Optional[int] = None,
+    fixture_id: Optional[int] = None,
+    owner_id: Optional[str] = None,
+) -> str:
+    """Dispatch a test run.
+
+    - RUN_MODE=celery    → push to Redis via run_browser_test.delay() (async, separate worker)
+    - RUN_MODE=sync_demo → run the EXACT SAME Celery task locally via .apply() in a
+                           background thread. No mocking. All DB writes, screenshots,
+                           DOM snapshots, and auto-integrations run identically.
+    """
+    if environment_id:
+        from .database import SessionLocal
+        from .models import Environment
+        db = SessionLocal()
+        try:
+            env = db.query(Environment).filter(Environment.id == environment_id).first()
+            if env and env.execution_location == "self_hosted":
+                import logging
+                logging.info(f"Job {job_id} is marked for self-hosted execution. Not dispatching to cloud.")
+                return f"queued-for-runner-{job_id}"
+        finally:
+            db.close()
+
+    kwargs = dict(
+        job_id=job_id,
+        name=name,
+        prompt=prompt,
+        target_url=target_url,
+        success_criteria=success_criteria,
+        use_vision=use_vision,
+        max_steps=max_steps,
+        test_case_id=test_case_id,
+        environment_id=environment_id,
+        fixture_id=fixture_id,
+        owner_id=owner_id,
+    )
+
+    if settings.RUN_MODE == "sync_demo":
+        task_id = f"sync-{job_id}"
+
+        def _run_local():
+            try:
+                # run_browser_test.run is the raw underlying Python function
+                # with no Celery task binding — no self.update_state(), no
+                # self.retry(), no broker touched. 100% same worker logic:
+                # browser-use Agent, DB writes, screenshots, integrations.
+                run_browser_test.run(**kwargs)
+            except Exception as exc:  # noqa: BLE001 - worker already wrote FAILED to DB
+                logger.exception("sync_demo worker raised (job_id=%s): %s", job_id, exc)
+
+        _get_sync_executor().submit(_run_local)
+        return task_id
+
+    task = run_browser_test.delay(**kwargs)
+    return task.id
+
+
+def _dispatch_explore_task(
+    job_id: str,
+    *,
+    application_id: int,
+    owner_id: Optional[str],
+    base_url: str,
+    login_hint: Optional[str],
+    max_steps: int,
+    environment_id: Optional[int] = None,
+) -> str:
+    """Dispatch an application explore run — mirrors _dispatch_run_task.
+
+    - RUN_MODE=sync_demo → run explore_application in a background thread
+    - RUN_MODE=celery    → push to Redis via .delay()
+    """
+    kwargs = dict(
+        job_id=job_id,
+        application_id=application_id,
+        owner_id=owner_id,
+        base_url=base_url,
+        login_hint=login_hint,
+        max_steps=max_steps,
+        environment_id=environment_id,
+    )
+
+    if settings.RUN_MODE == "sync_demo":
+        task_id = f"sync-explore-{job_id}"
+
+        def _run_local():
+            try:
+                explore_application.run(**kwargs)
+            except Exception as exc:  # noqa: BLE001 - worker already wrote FAILED to DB
+                logger.exception("sync_demo explore raised (job_id=%s): %s", job_id, exc)
+
+        _get_sync_executor().submit(_run_local)
+        return task_id
+
+    task = explore_application.delay(**kwargs)
+    return task.id
+
+
+
+
+
+app = FastAPI(
+    title="Leaka AI — RevGuard QA API",
+    version="0.1.0",
+    description="Autonomous QA agent for revenue flows using browser-use.",
+)
+
+from .routers import runner
+app.include_router(runner.router)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS or ["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.on_event("startup")
+def _startup():
+    init_db()
+    # Run idempotent, additive migrations (pgvector extension, embeddings table,
+    # and later Application Intelligence schema). Guarded internally so a
+    # migration failure never blocks API startup.
+    from .migrations import run_migrations
+    run_migrations()
+    pb = settings.PLAYWRIGHT_BROWSERS_PATH
+    logger.info(
+        "Leaka AI RevGuard API starting — RUN_MODE=%s LLM=%s DB=%s PB=%s",
+        settings.RUN_MODE,
+        settings.LLM_PROVIDER,
+        settings.DATABASE_URL,
+        pb,
+    )
+    if settings.RUN_MODE == "sync_demo":
+        logger.warning(
+            "RUN_MODE=sync_demo: using in-process thread pool (no Redis/Celery broker). "
+            "This is for local demo/dev only. Set RUN_MODE=celery with Redis for production."
+        )
+    if settings.LLM_PROVIDER == "ollama":
+            logger.warning(
+                "LLM_PROVIDER=ollama: ensure Ollama is running locally on %s "
+                "with model '%s' pulled (run: ollama pull %s). "
+                "Otherwise agent tasks will fail with a connection error until Ollama is available.",
+                settings.OLLAMA_BASE_URL,
+                settings.OLLAMA_MODEL,
+                settings.OLLAMA_MODEL,
+            )
+
+
+# ---------------------------------------------------------------------------
+# Integration Settings — read/write .env values at runtime
+# ---------------------------------------------------------------------------
+_ENV_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+
+
+def _read_env_file() -> dict[str, str]:
+    """Read the backend .env file into a dict."""
+    result: dict[str, str] = {}
+    if not os.path.isfile(_ENV_PATH):
+        return result
+    with open(_ENV_PATH) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            result[key.strip()] = val.strip()
+    return result
+
+
+def _write_env_file(updates: dict[str, str]) -> None:
+    """Merge updates into the .env file, preserving comments and order."""
+    lines: list[str] = []
+    if os.path.isfile(_ENV_PATH):
+        with open(_ENV_PATH) as f:
+            lines = f.readlines()
+
+    written_keys: set[str] = set()
+    new_lines: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("#") or not stripped or "=" not in stripped:
+            new_lines.append(line)
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if key in updates:
+            new_lines.append(f"{key}={updates[key]}\n")
+            written_keys.add(key)
+        else:
+            new_lines.append(line)
+
+    # Append any keys not already in the file
+    for key, val in updates.items():
+        if key not in written_keys:
+            new_lines.append(f"{key}={val}\n")
+
+    with open(_ENV_PATH, "w") as f:
+        f.writelines(new_lines)
+
+
+def _mask(val: str | None) -> str:
+    """Mask a secret: show first 8 chars then ***"""
+    if not val:
+        return ""
+    if len(val) <= 8:
+        return "***"
+    return val[:8] + "***"
+
+
+@app.get("/api/settings/integrations")
+def get_integration_settings(user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Return current integration config, combining global and user-specific settings."""
+    env = _read_env_file()
+    
+    # Defaults from global env
+    llm_provider = env.get("LLM_PROVIDER", "openai")
+    openrouter_model = env.get("LLM_MODEL_OPENROUTER", "")
+    openai_model = env.get("LLM_MODEL_OPENAI", "")
+    anthropic_model = env.get("LLM_MODEL_ANTHROPIC", "")
+    ollama_model = env.get("OLLAMA_MODEL", "")
+    
+    or_set = bool(env.get("OPENROUTER_API_KEY"))
+    oa_set = bool(env.get("OPENAI_API_KEY"))
+    an_set = bool(env.get("ANTHROPIC_API_KEY"))
+
+    # Override with per-user DB settings
+    user_settings = db.query(UserSettings).filter(UserSettings.owner_id == user["sub"]).first()
+    if user_settings and user_settings.llm_provider:
+        llm_provider = user_settings.llm_provider
+        # Only the active provider's key is known to be set from user_settings
+        has_key = bool(user_settings.llm_api_key)
+        if llm_provider == "openrouter":
+            or_set = has_key
+            if user_settings.llm_model: openrouter_model = user_settings.llm_model
+        elif llm_provider == "openai":
+            oa_set = has_key
+            if user_settings.llm_model: openai_model = user_settings.llm_model
+        elif llm_provider == "anthropic":
+            an_set = has_key
+            if user_settings.llm_model: anthropic_model = user_settings.llm_model
+        elif llm_provider == "ollama":
+            if user_settings.llm_model: ollama_model = user_settings.llm_model
+
+    return {
+        "linear": {
+            "api_key": _mask(env.get("LINEAR_API_KEY")),
+            "api_key_set": bool(env.get("LINEAR_API_KEY")),
+            "team_id": env.get("LINEAR_TEAM_ID", ""),
+        },
+        "resend": {
+            "api_key": _mask(env.get("RESEND_API_KEY")),
+            "api_key_set": bool(env.get("RESEND_API_KEY")),
+            "email_from": env.get("EMAIL_FROM", ""),
+            "email_alert_to": env.get("EMAIL_ALERT_TO", ""),
+        },
+        "slack": {
+            "webhook_url": _mask(env.get("SLACK_WEBHOOK_URL")),
+            "webhook_url_set": bool(env.get("SLACK_WEBHOOK_URL")),
+        },
+        "llm": {
+            "provider": llm_provider,
+            "openrouter_model": openrouter_model,
+            "openai_model": openai_model,
+            "anthropic_model": anthropic_model,
+            "ollama_model": ollama_model,
+            "openrouter_key_set": or_set,
+            "openai_key_set": oa_set,
+            "anthropic_key_set": an_set,
+        },
+        "ci": {
+            "webhook_token": env.get("CI_WEBHOOK_TOKEN", ""),
+        },
+    }
+
+
+class IntegrationSettingsUpdate(BaseModel):
+    # Linear
+    linear_api_key: Optional[str] = None
+    linear_team_id: Optional[str] = None
+    # Resend
+    resend_api_key: Optional[str] = None
+    email_from: Optional[str] = None
+    email_alert_to: Optional[str] = None
+    # Slack
+    slack_webhook_url: Optional[str] = None
+    # LLM
+    llm_provider: Optional[str] = None
+    llm_model_openrouter: Optional[str] = None
+    openrouter_api_key: Optional[str] = None
+    openai_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
+    # CI
+    ci_webhook_token: Optional[str] = None
+
+
+@app.patch("/api/settings/integrations")
+def update_integration_settings(body: IntegrationSettingsUpdate, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    Persist integration settings.
+    Global integrations (Linear, Resend, Slack, CI) go to .env and os.environ.
+    LLM settings (BYOK) go to UserSettings in DB.
+    """
+    field_map = {
+        "linear_api_key": "LINEAR_API_KEY",
+        "linear_team_id": "LINEAR_TEAM_ID",
+        "resend_api_key": "RESEND_API_KEY",
+        "email_from": "EMAIL_FROM",
+        "email_alert_to": "EMAIL_ALERT_TO",
+        "slack_webhook_url": "SLACK_WEBHOOK_URL",
+        "ci_webhook_token": "CI_WEBHOOK_TOKEN",
+    }
+
+    updates: dict[str, str] = {}
+    for field, env_key in field_map.items():
+        val = getattr(body, field)
+        if val is not None:  # None = skip; "" = clear
+            updates[env_key] = val
+
+    updated_fields = list(updates.keys())
+    
+    if updates:
+        # 1. Persist to .env so changes survive a restart
+        _write_env_file(updates)
+
+        # 2. Apply immediately to os.environ so the running process picks them up
+        for env_key, val in updates.items():
+            if val:
+                os.environ[env_key] = val
+            elif env_key in os.environ:
+                del os.environ[env_key]
+
+    # Handle per-user LLM BYOK settings
+    if any(v is not None for v in [body.llm_provider, body.openrouter_api_key, body.openai_api_key, body.anthropic_api_key, body.llm_model_openrouter]):
+        owner = user["sub"]
+        us = db.query(UserSettings).filter(UserSettings.owner_id == owner).first()
+        if not us:
+            us = UserSettings(owner_id=owner)
+            db.add(us)
+            
+        if body.llm_provider is not None:
+            us.llm_provider = body.llm_provider
+            
+        # Only update the api key for the provider being saved.
+        # This matches how the frontend submits the form.
+        provider_to_save = body.llm_provider or us.llm_provider
+        if provider_to_save == "openrouter" and body.openrouter_api_key is not None:
+            us.llm_api_key = body.openrouter_api_key if body.openrouter_api_key else None
+        elif provider_to_save == "openai" and body.openai_api_key is not None:
+            us.llm_api_key = body.openai_api_key if body.openai_api_key else None
+        elif provider_to_save == "anthropic" and body.anthropic_api_key is not None:
+            us.llm_api_key = body.anthropic_api_key if body.anthropic_api_key else None
+
+        if body.llm_model_openrouter is not None and provider_to_save == "openrouter":
+            us.llm_model = body.llm_model_openrouter
+
+        db.commit()
+        updated_fields.append("llm_settings")
+
+    if not updated_fields:
+        return {"message": "Nothing to update", "updated": []}
+
+    logger.info(
+        "Integration settings updated live: %s",
+        updated_fields,
+    )
+
+    return {
+        "message": "Settings saved and active immediately.",
+        "updated": updated_fields,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Health
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Dashboard health overview — test cases with run history
+@app.get("/api/dashboard/health")
+
+@app.get("/api/dashboard/kpis")
+def dashboard_kpis(
+    workspace_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    owner = user["sub"]
+    if workspace_id:
+        from .models import WorkspaceMember
+        member = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == workspace_id,
+            WorkspaceMember.user_id == user["sub"]
+        ).first()
+        if not member:
+            raise HTTPException(404, "Workspace not found or access denied")
+
+    
+    # Query builder
+    def apply_filters(query, model):
+        if workspace_id:
+            return query.filter(model.workspace_id == workspace_id)
+        else:
+            return query.filter(model.workspace_id == None, model.owner_id == owner)
+
+    def apply_testcase_filters(query):
+        if workspace_id:
+            return query.filter(TestCase.workspace_id == workspace_id)
+        else:
+            return query.filter(TestCase.workspace_id == None, TestCase.owner_id == owner)
+
+    # All-time stats
+    total_runs = apply_filters(db.query(TestRun), TestRun).filter(TestRun.status != TestRunStatus.PENDING).count()
+    passed_runs = apply_filters(db.query(TestRun), TestRun).filter(TestRun.is_successful == True).count()
+    pass_rate = round((passed_runs / total_runs) * 100, 1) if total_runs > 0 else None
+
+    # Flake Rate
+    flaky_runs = apply_filters(db.query(TestRun), TestRun).filter(TestRun.is_flaky == True).count()
+    flake_rate = round((flaky_runs / total_runs) * 100, 1) if total_runs > 0 else 0
+
+    # Quarantined Tests
+    quarantined_tests = apply_testcase_filters(db.query(TestCase)).filter(TestCase.is_quarantined == True).count()
+
+    # Auto-healed Runs
+    # Dynamic LLM agents self-heal by scrolling, retrying, and falling back automatically.
+    auto_healed = apply_filters(db.query(TestRun), TestRun).filter(
+        TestRun.is_successful == True,
+        (TestRun.live_steps.ilike('%"scroll"%')) | (TestRun.live_steps.ilike('%retry%'))
+    ).count()
+
+    # Failure Categories
+    from sqlalchemy import func
+    failures = apply_filters(db.query(TestRun.rca_category, func.count(TestRun.id)), TestRun).filter(
+        TestRun.is_successful == False, TestRun.rca_category != None
+    ).group_by(TestRun.rca_category).all()
+    failure_categories = [{"category": str(f[0]), "count": f[1]} for f in failures]
+
+    return {
+        "pass_rate": pass_rate,
+        "flake_rate": flake_rate,
+        "quarantined_tests": quarantined_tests,
+        "failure_categories": failure_categories,
+        "total_runs": total_runs,
+        "passed_runs": passed_runs,
+        "failed_runs": total_runs - passed_runs,
+        "auto_healed": auto_healed
+    }
+
+
+def dashboard_health(
+    workspace_id: Optional[int] = None,
+    limit: int = 14,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    owner = user["sub"]
+    result = []
+    
+    if workspace_id:
+        from .models import WorkspaceMember
+        member = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == workspace_id,
+            WorkspaceMember.user_id == user["sub"]
+        ).first()
+        if not member:
+            raise HTTPException(404, "Workspace not found or access denied")
+
+    # 1. Test cases that have associated runs
+    if workspace_id:
+        cases = (
+            db.query(TestCase)
+            .filter(TestCase.workspace_id == workspace_id)
+            .order_by(TestCase.created_at.asc())
+            .all()
+        )
+    else:
+        cases = (
+            db.query(TestCase)
+            .filter(TestCase.workspace_id == None, TestCase.owner_id == owner)
+            .order_by(TestCase.created_at.asc())
+            .all()
+        )
+    for tc in cases:
+        if workspace_id:
+            runs = (
+                db.query(TestRun)
+                .filter(TestRun.test_case_id == tc.id, TestRun.workspace_id == workspace_id)
+                .order_by(TestRun.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+        else:
+            runs = (
+                db.query(TestRun)
+                .filter(TestRun.test_case_id == tc.id, TestRun.workspace_id == None, TestRun.owner_id == owner)
+                .order_by(TestRun.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+        runs_data = [
+            {
+                "job_id": r.job_id,
+                "status": r.status.value,
+                "is_successful": r.is_successful,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "duration_seconds": r.duration_seconds,
+            }
+            for r in reversed(runs)
+        ]
+        last = runs[0] if runs else None
+        total = len(runs)
+        passed = sum(1 for r in runs if r.is_successful is True)
+        result.append({
+            "id": tc.id,
+            "name": tc.name,
+            "target_url": tc.target_url,
+            "last_status": last.status.value if last else None,
+            "last_successful": last.is_successful if last else None,
+            "pass_rate": round(passed * 100 / total) if total > 0 else None,
+            "total_runs": total,
+            "runs": runs_data,
+        })
+
+    # 2. Ad-hoc runs (no test_case_id) — group by name, show as anonymous rows
+    adhoc_runs = (
+        db.query(TestRun)
+        .filter(
+            TestRun.owner_id == owner,
+            TestRun.test_case_id.is_(None),
+        )
+        .order_by(TestRun.created_at.desc())
+        .limit(limit * 5)  # fetch more to group
+        .all()
+    )
+
+    # Group by name
+    from collections import defaultdict
+    adhoc_groups: dict = defaultdict(list)
+    for r in adhoc_runs:
+        adhoc_groups[r.name].append(r)
+
+    for name, group_runs in adhoc_groups.items():
+        # Keep only the most recent `limit` runs per group
+        group_runs = sorted(group_runs, key=lambda r: r.created_at or datetime.min)[-limit:]
+        runs_data = [
+            {
+                "job_id": r.job_id,
+                "status": r.status.value,
+                "is_successful": r.is_successful,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "duration_seconds": r.duration_seconds,
+            }
+            for r in group_runs
+        ]
+        last = group_runs[-1]
+        total = len(group_runs)
+        passed = sum(1 for r in group_runs if r.is_successful is True)
+        result.append({
+            "id": None,
+            "name": name,
+            "target_url": last.target_url,
+            "last_status": last.status.value,
+            "last_successful": last.is_successful,
+            "pass_rate": round(passed * 100 / total) if total > 0 else None,
+            "total_runs": total,
+            "runs": runs_data,
+        })
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Health
+# ---------------------------------------------------------------------------
+@app.get("/api/health")
+def health():
+    model = (
+        settings.LLM_MODEL_OPENROUTER if settings.LLM_PROVIDER == "openrouter"
+        else settings.LLM_MODEL_OPENAI if settings.LLM_PROVIDER == "openai"
+        else settings.LLM_MODEL_ANTHROPIC if settings.LLM_PROVIDER == "anthropic"
+        else settings.OLLAMA_MODEL if settings.LLM_PROVIDER == "ollama"
+        else "unknown"
+    )
+    return {"status": "ok", "llm_provider": settings.LLM_PROVIDER, "llm_model": model}
+
+
+@app.post("/api/settings/llm/test-connection")
+async def test_llm_connection(user: dict = Depends(get_current_user)):
+    """
+    Validate the currently configured LLM provider and API key by making a
+    lightweight live API call (no tokens consumed for OpenAI/OpenRouter/Anthropic).
+
+    Returns:
+        {"ok": bool, "provider": str, "model": str, "detail": str}
+    """
+    from .llm import _test_llm_connection
+    result = await _test_llm_connection(owner_id=user["sub"])
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Demo seed — pre-populate example test cases for investor demos
+# ---------------------------------------------------------------------------
+@app.post("/api/demo/seed", status_code=201)
+def seed_demo_data(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    """
+    Idempotent per-user: creates example test cases for the calling user if they
+    have none yet. Auth-required and owner-scoped so demo data belongs to the
+    user who seeded it (not shared globally). Safe to call multiple times.
+    """
+    owner = user["sub"]
+    existing = db.query(TestCase).filter(TestCase.owner_id == owner).count()
+    if existing > 0:
+        return {"message": f"Already seeded ({existing} cases exist)", "created": 0}
+
+    demos = [
+        TestCase(
+            owner_id=owner,
+            name="Checkout flow — add to cart",
+            prompt=(
+                "Go to the target URL (saucedemo.com). Log in with username "
+                "'standard_user' and password 'secret_sauce'. Add the first product "
+                "to the cart. Open the cart and verify the product appears with the "
+                "correct name and price."
+            ),
+            target_url="https://www.saucedemo.com",
+            success_criteria="Product is in the cart with a visible name and price.",
+        ),
+        TestCase(
+            owner_id=owner,
+            name="Checkout flow — complete order",
+            prompt=(
+                "Go to the target URL (saucedemo.com). Log in with username "
+                "'standard_user' and password 'secret_sauce'. Add any product to the "
+                "cart, proceed through checkout with first name 'Test', last name "
+                "'User', zip '12345', and complete the order. Verify the order "
+                "confirmation message appears."
+            ),
+            target_url="https://www.saucedemo.com",
+            success_criteria="Order confirmation ('Thank you for your order') is shown.",
+        ),
+        TestCase(
+            owner_id=owner,
+            name="Login — invalid credentials rejected",
+            prompt=(
+                "Go to the target URL (saucedemo.com). Attempt to log in with "
+                "username 'locked_out_user' and password 'secret_sauce'. "
+                "Verify that an error message is shown and login is blocked."
+            ),
+            target_url="https://www.saucedemo.com",
+            success_criteria="An error message is displayed and the user is not logged in.",
+        ),
+    ]
+
+    for tc in demos:
+        db.add(tc)
+    db.commit()
+
+    return {"message": "Demo data seeded successfully", "created": len(demos)}
+
+
+# ---------------------------------------------------------------------------
+# Test Cases CRUD
+# ---------------------------------------------------------------------------
+@app.post("/api/test-cases", response_model=TestCaseOut)
+def create_test_case(body: TestCaseCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    data = body.model_dump()
+    # assertions is a list of Assertion models → serialize to JSON string column
+    assertions = data.pop("assertions", None)
+    # Optional coverage linkage fields are NOT columns on TestCase — pop them.
+    link_app_id = data.pop("application_id", None)
+    link_node_id = data.pop("node_id", None)
+
+    tc = TestCase(**data, owner_id=user["sub"])
+    if assertions:
+        tc.assertions = json.dumps(assertions)
+    db.add(tc)
+    db.commit()
+    db.refresh(tc)
+
+    # Authoritative coverage link (R4.3, R11.5): record generated-from-node.
+    # Best-effort + owner-scoped; a link failure must NOT fail test creation.
+    if link_app_id and link_node_id:
+        try:
+            app_row = db.query(Application).filter(Application.id == link_app_id).first()
+            if app_row and (not app_row.owner_id or app_row.owner_id == user.get("sub")):
+                node = (
+                    db.query(GraphNode)
+                    .filter(GraphNode.id == link_node_id,
+                            GraphNode.application_id == link_app_id)
+                    .first()
+                )
+                if node is not None:
+                    exists = (
+                        db.query(CoverageLink)
+                        .filter(CoverageLink.application_id == link_app_id,
+                                CoverageLink.node_id == link_node_id,
+                                CoverageLink.test_case_id == tc.id)
+                        .first()
+                    )
+                    if exists is None:
+                        db.add(CoverageLink(
+                            owner_id=user.get("sub"),
+                            application_id=link_app_id,
+                            node_id=link_node_id,
+                            test_case_id=tc.id,
+                            source="generated",
+                        ))
+                        db.commit()
+                    # Coverage changed → refresh verdicts.
+                    from .graph_worker import _dispatch_recompute_coverage
+                    _dispatch_recompute_coverage(link_app_id, reason="coverage_link_created")
+        except Exception as exc:  # noqa: BLE001
+            db.rollback()
+            logger.warning("Coverage link creation skipped for test %s: %s", tc.id, exc)
+
+    return tc
+
+
+@app.get("/api/test-cases", response_model=list[TestCaseOut])
+def list_test_cases(
+    suite_id: Optional[int] = None,
+    workspace_id: Optional[int] = None,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    if workspace_id:
+        from .models import WorkspaceMember
+        member = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == workspace_id,
+            WorkspaceMember.user_id == user["sub"]
+        ).first()
+        if not member:
+            raise HTTPException(404, "Workspace not found or access denied")
+
+    if workspace_id:
+        q = db.query(TestCase).filter(TestCase.workspace_id == workspace_id)
+    else:
+        q = db.query(TestCase).filter(TestCase.workspace_id == None, TestCase.owner_id == user["sub"])
+    if suite_id:
+        q = q.filter(TestCase.suite_id == suite_id)
+    return q.order_by(TestCase.created_at.desc()).offset(skip).limit(limit).all()
+
+
+@app.get("/api/test-cases/{id}", response_model=TestCaseOut)
+def get_test_case(id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    return _get_owned_test_case(db, id, user)
+
+
+@app.put("/api/test-cases/{id}", response_model=TestCaseOut)
+def update_test_case(
+    id: int,
+    body: TestCaseUpdate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    tc = _get_owned_test_case(db, id, user)
+    for field, value in body.model_dump(exclude_unset=True).items():
+        if field == "assertions":
+            # Serialize list → JSON string; empty list / None clears it
+            tc.assertions = json.dumps(value) if value else None
+        else:
+            setattr(tc, field, value)
+    db.commit()
+    db.refresh(tc)
+    return tc
+
+
+@app.delete("/api/test-cases/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_test_case(id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    tc = _get_owned_test_case(db, id, user)
+    db.delete(tc)
+    db.commit()
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Test Suites CRUD
+# ---------------------------------------------------------------------------
+@app.post("/api/test-suites", response_model=TestSuiteOut)
+def create_suite(body: TestSuiteCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    s = TestSuite(**body.model_dump(), owner_id=user["sub"])
+    db.add(s)
+    db.commit()
+    db.refresh(s)
+    return s
+
+
+@app.get("/api/test-suites", response_model=list[TestSuiteOut])
+def list_suites(skip: int = 0, limit: int = 100, workspace_id: Optional[int] = None, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    if workspace_id:
+        from .models import WorkspaceMember
+        member = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == workspace_id,
+            WorkspaceMember.user_id == user["sub"]
+        ).first()
+        if not member:
+            raise HTTPException(404, "Workspace not found or access denied")
+
+    if workspace_id:
+        return (
+            db.query(TestSuite).filter(TestSuite.workspace_id == workspace_id)
+            .order_by(TestSuite.created_at.desc())
+            .offset(skip).limit(limit).all()
+        )
+    else:
+        return (
+            db.query(TestSuite).filter(TestSuite.workspace_id == None, TestSuite.owner_id == user["sub"])
+            .order_by(TestSuite.created_at.desc())
+            .offset(skip).limit(limit).all()
+        )
+
+
+@app.get("/api/test-suites/{id}", response_model=TestSuiteOut)
+def get_suite(id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    return _get_owned_suite(db, id, user)
+
+
+@app.put("/api/test-suites/{id}", response_model=TestSuiteOut)
+def update_suite(id: int, body: TestSuiteUpdate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    s = _get_owned_suite(db, id, user)
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(s, field, value)
+    db.commit()
+    db.refresh(s)
+    return s
+
+
+@app.delete("/api/test-suites/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_suite(id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    s = _get_owned_suite(db, id, user)
+    db.delete(s)
+    db.commit()
+    return None
+
+
+@app.post("/api/test-suites/{id}/run", response_model=TestSuiteRunResponse)
+def run_suite(
+    id: int,
+    use_vision: bool = True,
+    max_steps: int = 50,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    suite = _get_owned_suite(db, id, user)
+
+    cases = db.query(TestCase).filter(TestCase.suite_id == id).all()
+    if not cases:
+        raise HTTPException(400, "Suite has no test cases — add test cases first.")
+
+    run_group_id = str(uuid.uuid4())
+    job_ids: list[str] = []
+    for tc in cases:
+        job_id = uuid.uuid4().hex
+        run_name = f"[Suite] {suite.name} — {tc.name}"
+        run = TestRun(
+            job_id=job_id,
+            run_group_id=run_group_id,
+            owner_id=user["sub"],
+            test_case_id=tc.id,
+            workspace_id=tc.workspace_id,
+            name=run_name,
+            prompt=tc.prompt,
+            target_url=tc.target_url,
+            success_criteria=tc.success_criteria,
+            assertions=tc.assertions,  # inherit deterministic assertions
+            status=TestRunStatus.PENDING,
+        )
+        db.add(run)
+        db.flush()
+        task_id = _dispatch_run_task(
+            job_id=job_id,
+            name=run_name,
+            prompt=tc.prompt,
+            target_url=tc.target_url or "",
+            success_criteria=tc.success_criteria,
+            use_vision=use_vision,
+            max_steps=max_steps,
+            test_case_id=tc.id,
+            owner_id=user["sub"],
+        )
+        run.task_id = task_id
+        job_ids.append(job_id)
+
+    db.commit()
+    return TestSuiteRunResponse(
+        message=f"Enqueued {len(job_ids)} test run(s) for suite '{suite.name}'.",
+        suite_id=suite.id,
+        count=len(job_ids),
+        job_ids=job_ids,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test Run Enqueue + Poll (THE CORE FLOW)
+# ---------------------------------------------------------------------------
+@app.post("/api/tests/run", response_model=TestRunEnqueueResponse)
+def enqueue_test(body: TestRunRequest, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    job_id = uuid.uuid4().hex
+    run_name = body.name or (body.prompt[:60].strip() or f"Run {job_id[:8]}")
+    owner_id = user["sub"]
+
+    prompt = body.prompt
+    target_url = body.target_url
+    success_criteria = body.success_criteria
+    test_case_id = body.test_case_id
+
+    environment_id = body.environment_id
+    fixture_id = body.fixture_id
+
+    # Resolve assertions: explicit request assertions take precedence, else
+    # inherit from the test case. Serialized to a JSON string for storage.
+    assertions_json: Optional[str] = None
+    if body.assertions:
+        assertions_json = json.dumps([a.model_dump() for a in body.assertions])
+
+    if test_case_id:
+        try:
+            tc = _get_owned_test_case(db, test_case_id, user)
+        except HTTPException:
+            tc = None
+        if tc:
+            prompt = prompt or tc.prompt
+            target_url = target_url or tc.target_url
+            success_criteria = success_criteria or tc.success_criteria
+            environment_id = environment_id or tc.environment_id
+            fixture_id = fixture_id or tc.fixture_id
+            if assertions_json is None and tc.assertions:
+                assertions_json = tc.assertions  # already a JSON string
+            if not body.name:
+                run_name = tc.name
+
+    run = TestRun(
+        job_id=job_id,
+        task_id=None,
+        owner_id=owner_id,
+        test_case_id=test_case_id,
+        workspace_id=body.workspace_id if body.workspace_id else (tc.workspace_id if test_case_id and tc else None),
+        environment_id=environment_id,
+        fixture_id=fixture_id,
+        name=run_name,
+        prompt=prompt,
+        target_url=target_url,
+        success_criteria=success_criteria,
+        assertions=assertions_json,
+        status=TestRunStatus.PENDING,
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    task_id = _dispatch_run_task(
+        job_id=job_id,
+        name=run_name,
+        prompt=prompt,
+        target_url=target_url or "",
+        success_criteria=success_criteria,
+        use_vision=bool(body.use_vision),
+        max_steps=body.max_steps if body.max_steps is not None else 50,
+        test_case_id=test_case_id,
+        environment_id=environment_id,
+        fixture_id=fixture_id,
+        owner_id=user["sub"],
+    )
+    run.task_id = task_id
+    db.commit()
+
+    return {"job_id": job_id, "task_id": task_id, "status": TestRunStatus.PENDING.value}
+
+
+# ---------------------------------------------------------------------------
+# Ownership helper — enforce tenant isolation on TestRun lookups
+# ---------------------------------------------------------------------------
+def _get_owned_test_case(db: Session, tc_id: int, user: dict) -> "TestCase":
+    tc = db.query(TestCase).filter(TestCase.id == tc_id).first()
+    if not tc:
+        raise HTTPException(404, "Test case not found")
+        
+    user_id = user.get("sub")
+    if tc.owner_id == user_id:
+        return tc
+        
+    if tc.workspace_id:
+        from .models import WorkspaceMember
+        member = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == tc.workspace_id,
+            WorkspaceMember.user_id == user_id
+        ).first()
+        if member:
+            return tc
+            
+    raise HTTPException(404, "Test case not found")
+
+def _get_owned_suite(db: Session, suite_id: int, user: dict) -> "TestSuite":
+    s = db.query(TestSuite).filter(TestSuite.id == suite_id).first()
+    if not s:
+        raise HTTPException(404, "Suite not found")
+        
+    user_id = user.get("sub")
+    if s.owner_id == user_id:
+        return s
+        
+    if s.workspace_id:
+        from .models import WorkspaceMember
+        member = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == s.workspace_id,
+            WorkspaceMember.user_id == user_id
+        ).first()
+        if member:
+            return s
+            
+    raise HTTPException(404, "Suite not found")
+
+def _get_owned_run(
+    db: Session,
+    job_id: str,
+    user: Optional[dict],
+) -> "TestRun":
+    run = db.query(TestRun).filter(TestRun.job_id == job_id).first()
+    if not run:
+        raise HTTPException(404, "Job not found")
+
+    if user is not None:
+        user_id = user.get("sub")
+        if run.workspace_id:
+            from .models import WorkspaceMember
+            member = db.query(WorkspaceMember).filter(
+                WorkspaceMember.workspace_id == run.workspace_id,
+                WorkspaceMember.user_id == user_id
+            ).first()
+            if not member:
+                raise HTTPException(404, "Job not found")
+        elif run.owner_id and run.owner_id != user_id:
+            raise HTTPException(404, "Job not found")
+
+    return run
+
+
+@app.get("/api/tests/status/{job_id}", response_model=TestRunStatusResponse)
+def get_run_status(
+    job_id: str,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    run = _get_owned_run(db, job_id, user)
+
+    # Merge live Celery state if task_id exists and task is not terminal
+    stage: Optional[str] = None
+    progress: Optional[dict] = None
+    if run.task_id and run.status in (TestRunStatus.PENDING, TestRunStatus.RUNNING):
+        try:
+            result = AsyncResult(run.task_id, app=celery_app)
+            if result.state == "STARTED":
+                stage = "worker_started"
+            elif result.state == "PROGRESS":
+                info = result.info if isinstance(result.info, dict) else {}
+                stage = info.get("stage", "running_agent")
+                progress = info
+                current_step = info.get("step")
+                total = info.get("total")
+                if isinstance(current_step, int) and isinstance(total, int) and total:
+                    progress["pct"] = round(current_step * 100 / max(total, 1), 1)
+            elif result.state == "FAILURE":
+                if run.status != TestRunStatus.FAILED:
+                    run.status = TestRunStatus.FAILED
+                    run.error_message = str(result.info)
+                    run.completed_at = datetime.utcnow()
+                    run.is_successful = False
+                    db.commit()
+            elif result.state == "SUCCESS" and run.status in (
+                TestRunStatus.PENDING,
+                TestRunStatus.RUNNING,
+            ):
+                db.refresh(run)
+        except Exception:
+            pass
+
+    screenshots = (
+        db.query(TestScreenshot)
+        .filter(TestScreenshot.test_run_id == run.id)
+        .order_by(TestScreenshot.step_index.asc(), TestScreenshot.created_at.asc())
+        .all()
+    )
+
+    return TestRunStatusResponse(
+        job_id=run.job_id,
+        task_id=run.task_id,
+        status=run.status,
+        name=run.name,
+        prompt=run.prompt,
+        target_url=run.target_url,
+        stage=stage,
+        progress=progress,
+        total_steps=run.total_steps,
+        duration_seconds=run.duration_seconds,
+        result_summary=run.result_summary,
+        final_result=run.final_result,
+        error_message=run.error_message,
+        steps_log=run.steps_log,
+        visited_urls=run.visited_urls,
+        live_steps=run.live_steps,
+        is_successful=run.is_successful,
+        assertions=run.assertions,
+        assertion_results=run.assertion_results,
+        created_at=run.created_at,
+        started_at=run.started_at,
+        completed_at=run.completed_at,
+        screenshots=[ScreenshotOut.model_validate(s) for s in screenshots],
+    )
+
+
+@app.get("/api/tests", response_model=list[TestRunListResponse])
+def list_runs(
+    status: Optional[TestRunStatus] = None,
+    test_case_id: Optional[int] = None,
+    workspace_id: Optional[int] = None,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    if workspace_id:
+        from .models import WorkspaceMember
+        member = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == workspace_id,
+            WorkspaceMember.user_id == user["sub"]
+        ).first()
+        if not member:
+            raise HTTPException(404, "Workspace not found or access denied")
+
+    if workspace_id:
+        q = db.query(TestRun).filter(TestRun.workspace_id == workspace_id)
+    else:
+        q = db.query(TestRun).filter(TestRun.workspace_id == None, TestRun.owner_id == user["sub"])
+    if status:
+        q = q.filter(TestRun.status == status)
+    if test_case_id:
+        q = q.filter(TestRun.test_case_id == test_case_id)
+    rows = q.order_by(TestRun.created_at.desc()).offset(skip).limit(limit).all()
+    return [
+        TestRunListResponse(
+            job_id=r.job_id, name=r.name, status=r.status,
+            is_successful=r.is_successful, duration_seconds=r.duration_seconds,
+            has_visual_proof=r.has_visual_proof or False,
+            created_at=r.created_at, completed_at=r.completed_at,
+        )
+        for r in rows
+    ]
+
+
+@app.get("/api/tests/{job_id}", response_model=TestRunStatusResponse)
+def get_run_detail(job_id: str, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    return get_run_status(job_id, db=db, user=user)
+
+
+@app.post("/api/tests/{job_id}/cancel", response_model=TestRunStatusResponse)
+def cancel_run(job_id: str, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    """
+    Cancel a pending or running test run.
+    For sync_demo mode this marks the DB record cancelled immediately.
+    For celery mode it also revokes the task from the broker queue.
+    """
+    run = _get_owned_run(db, job_id, user)
+
+    if run.status not in (TestRunStatus.PENDING, TestRunStatus.RUNNING):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Cannot cancel a run in '{run.status.value}' state.",
+        )
+
+    # Attempt broker-level revoke (no-op if no broker / sync_demo mode)
+    if run.task_id and settings.RUN_MODE == "celery":
+        try:
+            from celery.app.control import Control
+            ctrl = Control(app=celery_app)
+            ctrl.revoke(run.task_id, terminate=True, signal="SIGTERM")
+        except Exception:
+            pass  # revoke failure must never block the DB update
+
+    run.status = TestRunStatus.CANCELLED
+    run.completed_at = datetime.utcnow()
+    run.is_successful = False
+    if not run.error_message:
+        run.error_message = "Cancelled by user."
+    db.commit()
+
+    return get_run_status(job_id, db=db, user=user)
+
+
+# ---------------------------------------------------------------------------
+# Screenshot file serving
+# ---------------------------------------------------------------------------
+SCREENSHOT_ROOT = os.path.abspath(settings.SCREENSHOT_DIR)
+
+
+@app.get("/api/screenshots/{screenshot_id}")
+def get_screenshot(
+    screenshot_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Serve a screenshot image — auth-gated and tenant-scoped.
+
+    A screenshot belongs to a TestRun. We resolve the parent run and enforce
+    the same ownership rule as _get_owned_run: if the run has an owner_id, it
+    must match the caller. Legacy NULL-owner runs remain accessible.
+    Returns 404 (not 403) on ownership mismatch so we don't leak existence.
+    """
+    shot = db.query(TestScreenshot).filter(TestScreenshot.id == screenshot_id).first()
+    if not shot:
+        raise HTTPException(404, "Screenshot not found")
+
+    # Resolve parent run and enforce ownership
+    run = db.query(TestRun).filter(TestRun.id == shot.test_run_id).first()
+    if not run:
+        raise HTTPException(404, "Screenshot not found")
+    if run.owner_id and run.owner_id != user.get("sub"):
+        raise HTTPException(404, "Screenshot not found")
+
+    # file_path is stored relative to the parent of SCREENSHOT_ROOT, or absolute
+    if os.path.isabs(shot.file_path):
+        full_path = shot.file_path
+    else:
+        full_path = os.path.normpath(os.path.join(os.path.dirname(SCREENSHOT_ROOT), shot.file_path))
+
+    # Defense-in-depth: ensure the resolved path stays within SCREENSHOT_ROOT
+    # (prevents path traversal if a malformed file_path ever gets persisted).
+    _root = os.path.abspath(os.path.dirname(SCREENSHOT_ROOT))
+    if not os.path.abspath(full_path).startswith(_root):
+        raise HTTPException(404, "Screenshot not found")
+
+    if not os.path.isfile(full_path):
+        raise HTTPException(404, "Screenshot file missing on disk")
+
+    return FileResponse(full_path, media_type="image/png")
+
+
+# ---------------------------------------------------------------------------
+# CI Webhook (GitHub Actions etc.)
+# ---------------------------------------------------------------------------
+@app.post("/api/webhooks/ci", response_model=CIWebhookResponse)
+def ci_webhook(
+    body: CIWebhookRequest,
+    x_ci_token: Optional[str] = Header(default=None),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    # Two accepted auth modes:
+    #   1. External CI systems (GitHub Actions) send X-CI-Token = CI_WEBHOOK_TOKEN.
+    #   2. The dashboard "trigger now" button sends the logged-in user's Supabase
+    #      JWT as a Bearer token. We verify it and scope created runs to that user.
+    # This means the CI secret NEVER needs to ship to the browser.
+    caller_owner_id: Optional[str] = None
+    authorized = False
+
+    bearer_token: Optional[str] = None
+    if authorization and authorization.lower().startswith("bearer "):
+        bearer_token = authorization.split(" ", 1)[1].strip()
+
+    # Mode 1: CI token (header or bearer) matches the configured secret
+    if x_ci_token and x_ci_token == settings.CI_WEBHOOK_TOKEN:
+        authorized = True
+    elif bearer_token and bearer_token == settings.CI_WEBHOOK_TOKEN:
+        authorized = True
+    # Mode 2: valid Supabase user JWT (dashboard-triggered)
+    elif bearer_token:
+        try:
+            from .auth import verify_token
+            claims = verify_token(bearer_token)
+            caller_owner_id = claims.get("sub")
+            authorized = bool(caller_owner_id)
+        except Exception:
+            authorized = False
+
+    if not authorized:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "Invalid CI webhook token or user session.",
+        )
+
+    # Gather test case IDs
+    ids = list(body.test_case_ids or [])
+    if body.suite_id:
+        suite_cases = (
+            db.query(TestCase).filter(TestCase.suite_id == body.suite_id).all()
+        )
+        ids.extend(tc.id for tc in suite_cases)
+
+    ids = list(set(ids))
+    if not ids:
+        raise HTTPException(400, "No test cases to run (suite_id empty or no test_case_ids)")
+
+    job_ids: list[str] = []
+    for tc_id in ids:
+        tc = db.query(TestCase).filter(TestCase.id == tc_id).first()
+        if not tc:
+            continue
+        job_id = uuid.uuid4().hex
+        run = TestRun(
+            job_id=job_id,
+            owner_id=caller_owner_id or tc.owner_id,
+            test_case_id=tc.id,
+            workspace_id=tc.workspace_id,
+            name=f"[CI] {tc.name}",
+            prompt=tc.prompt,
+            target_url=tc.target_url,
+            success_criteria=tc.success_criteria,
+            assertions=tc.assertions,  # inherit deterministic assertions
+            status=TestRunStatus.PENDING,
+            commit_sha=body.commit_sha,
+            repo_full_name=body.repo_full_name,
+        )
+        db.add(run)
+        db.flush()
+
+        # Try to post pending commit status if repo info provided
+        if body.commit_sha and body.repo_full_name:
+            from app.models import RepoConnection
+            from app.secrets_store import resolve_secret_ref
+            from app.integrations.github_client import post_commit_status
+            
+            repo_conn = db.query(RepoConnection).filter(
+                RepoConnection.repo_full_name == body.repo_full_name,
+                RepoConnection.owner_id == run.owner_id
+            ).first()
+            if repo_conn and repo_conn.secret_ref:
+                pat = resolve_secret_ref(repo_conn.secret_ref)
+                if pat:
+                    post_commit_status(
+                        token=pat,
+                        repo_full_name=body.repo_full_name,
+                        sha=body.commit_sha,
+                        state="pending",
+                        description="Leaka AI test queued.",
+                        context=f"leaka-ai/qa/{run.name}"
+                    )
+
+        task_id = _dispatch_run_task(
+            job_id=job_id,
+            name=run.name,
+            prompt=tc.prompt,
+            target_url=tc.target_url or "",
+            success_criteria=tc.success_criteria,
+            use_vision=True,
+            max_steps=50,
+            test_case_id=tc.id,
+            owner_id=run.owner_id,
+        )
+        run.task_id = task_id
+        job_ids.append(job_id)
+
+    db.commit()
+    return CIWebhookResponse(
+        message=f"Enqueued {len(job_ids)} test run(s) from CI.",
+        job_ids=job_ids,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Linear Integration
+# ---------------------------------------------------------------------------
+@app.post("/api/integrations/linear/issue", response_model=LinearTicketResponse)
+def create_linear_ticket(body: CreateLinearTicketRequest, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    run = _get_owned_run(db, body.job_id, user)
+
+    screenshots = (
+        db.query(TestScreenshot)
+        .filter(TestScreenshot.test_run_id == run.id)
+        .order_by(TestScreenshot.step_index.asc())
+        .all()
+    )
+    shot_count = len(screenshots)
+
+    title = body.title or (
+        f"[QA FAILURE] {run.name} — {run.job_id[:8]}"
+    )
+    description = body.description or (
+        f"### Test run failed\n\n"
+        f"- **Name:** {run.name}\n"
+        f"- **Job ID:** `{run.job_id}`\n"
+        f"- **Target URL:** {run.target_url or 'N/A'}\n"
+        f"- **Duration:** {run.duration_seconds or 0}s over {run.total_steps or 0} steps\n"
+        f"- **Success criteria:** {run.success_criteria or 'N/A'}\n\n"
+        f"### Prompt executed\n\n```\n{run.prompt}\n```\n\n"
+        f"### Agent result\n\n```\n{run.final_result or '(empty)'}\n```\n\n"
+        f"### Error\n\n```\n{run.error_message or '(none)'}\n```\n\n"
+        f"Screenshots captured: {shot_count}. "
+        f"View failure screenshots in the Leaka AI dashboard (job {run.job_id})."
+    )
+
+    existing = db.query(LinearIssue).filter(LinearIssue.test_run_id == run.id).first()
+    if existing:
+        return LinearTicketResponse(
+            success=True,
+            issue_id=existing.issue_id,
+            identifier=existing.identifier,
+            title=existing.title,
+        )
+
+    result = linear_client.create_issue(title=title, description_md=description)
+    if not result.get("success"):
+        return LinearTicketResponse(success=False)
+
+    issue = LinearIssue(
+        test_run_id=run.id,
+        issue_id=result["issue_id"],
+        identifier=result.get("identifier"),
+        title=result.get("title") or title,
+        url=result.get("url"),
+    )
+    db.add(issue)
+    db.commit()
+    return LinearTicketResponse(
+        success=True,
+        issue_id=issue.issue_id,
+        identifier=issue.identifier,
+        title=issue.title,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Resend Email Alert
+# ---------------------------------------------------------------------------
+@app.post("/api/integrations/email/alert-failure/{job_id}")
+def email_failure_alert(
+    job_id: str,
+    dashboard_base_url: Optional[str] = Form(default=None),
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    run = _get_owned_run(db, job_id, user)
+
+    shots = (
+        db.query(TestScreenshot)
+        .filter(
+            TestScreenshot.test_run_id == run.id,
+            TestScreenshot.is_failure_point == True,
+        )
+        .order_by(TestScreenshot.step_index.desc())
+        .all()
+    )
+    if not shots:
+        shots = (
+            db.query(TestScreenshot)
+            .filter(TestScreenshot.test_run_id == run.id)
+            .order_by(TestScreenshot.step_index.desc())
+            .limit(1)
+            .all()
+        )
+
+    screenshot_path = None
+    if shots:
+        fp = shots[0].file_path
+        screenshot_path = fp if os.path.isabs(fp) else os.path.normpath(
+            os.path.join(os.path.dirname(SCREENSHOT_ROOT), fp)
+        )
+        if not os.path.isfile(screenshot_path):
+            screenshot_path = None
+
+    steps_summary = run.steps_log or "(steps log unavailable)"
+    dashboard_url = None
+    if dashboard_base_url:
+        dashboard_url = f"{dashboard_base_url.rstrip('/')}/runs/{job_id}"
+
+    result = email_client.send_test_failure_alert(
+        test_name=run.name,
+        job_id=job_id,
+        steps_summary=steps_summary,
+        screenshot_path=screenshot_path,
+        dashboard_url=dashboard_url,
+    )
+    return {"sent": True, "result": result}
+
+
+# ---------------------------------------------------------------------------
+# Slack Webhook Alert
+# ---------------------------------------------------------------------------
+@app.post("/api/integrations/slack/alert-failure/{job_id}")
+def slack_failure_alert(
+    job_id: str,
+    dashboard_base_url: Optional[str] = Form(default=None),
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    run = _get_owned_run(db, job_id, user)
+
+    cfg = db.query(UserSettings).filter(UserSettings.owner_id == user["sub"]).first()
+    webhook = (cfg.slack_webhook_url if cfg else None) or settings.SLACK_WEBHOOK_URL
+    if not webhook:
+        raise HTTPException(400, "No Slack webhook URL configured.")
+
+    dash_base = (
+        (cfg.dashboard_base_url if cfg and cfg.dashboard_base_url else None)
+        or (dashboard_base_url.strip() if dashboard_base_url else None)
+        or settings.DASHBOARD_BASE_URL
+    )
+
+    lin = db.query(LinearIssue).filter(LinearIssue.test_run_id == run.id).first()
+
+    # Reuse the same incident builder as the worker auto-alert path
+    from .worker import _build_incident_context
+
+    ctx = _build_incident_context(
+        name=run.name,
+        job_id=job_id,
+        prompt=run.prompt,
+        target_url=run.target_url,
+        success_criteria=run.success_criteria,
+        steps_log_json=run.steps_log or "[]",
+        final_result_text=run.final_result,
+        error_message=run.error_message,
+        total_steps_count=run.total_steps or 0,
+        duration=run.duration_seconds or 0,
+        screenshots_persisted=[],
+        final_failure_shot_rel=None,
+        completed_at=run.completed_at or datetime.utcnow(),
+        dashboard_base_url=dash_base,
+        linear_issue_url=lin.url if lin else None,
+        linear_identifier=lin.identifier if lin else None,
+    )
+    result = slack_client.send_qa_incident(webhook_url=webhook, **ctx)
+    return {"sent": bool(result.get("ok")), "result": result}
+
+
+# ---------------------------------------------------------------------------
+# Per-user Slack settings (stored in DB, per Supabase user)
+# ---------------------------------------------------------------------------
+
+
+class SlackSettingsBody(BaseModel):
+    slack_webhook_url: Optional[str] = None       # empty string = clear
+    slack_auto_alert_on_failure: Optional[bool] = None
+    dashboard_base_url: Optional[str] = None
+
+
+@app.get("/api/user/slack-settings")
+def get_user_slack_settings(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    owner = user["sub"]
+    cfg = db.query(UserSettings).filter(UserSettings.owner_id == owner).first()
+    if not cfg:
+        return {
+            "slack_webhook_url_set": False,
+            "slack_webhook_url_masked": "",
+            "slack_auto_alert_on_failure": True,
+            "dashboard_base_url": "",
+        }
+    masked = ""
+    if cfg.slack_webhook_url:
+        masked = cfg.slack_webhook_url[:34] + "…" if len(cfg.slack_webhook_url) > 34 else cfg.slack_webhook_url
+    return {
+        "slack_webhook_url_set": bool(cfg.slack_webhook_url),
+        "slack_webhook_url_masked": masked,
+        "slack_auto_alert_on_failure": cfg.slack_auto_alert_on_failure,
+        "dashboard_base_url": cfg.dashboard_base_url or "",
+    }
+
+
+@app.patch("/api/user/slack-settings")
+def update_user_slack_settings(
+    body: SlackSettingsBody,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    owner = user["sub"]
+    cfg = db.query(UserSettings).filter(UserSettings.owner_id == owner).first()
+    if not cfg:
+        cfg = UserSettings(owner_id=owner)
+        db.add(cfg)
+
+    if body.slack_webhook_url is not None:
+        cfg.slack_webhook_url = body.slack_webhook_url or None  # "" → None (clear)
+    if body.slack_auto_alert_on_failure is not None:
+        cfg.slack_auto_alert_on_failure = body.slack_auto_alert_on_failure
+    if body.dashboard_base_url is not None:
+        cfg.dashboard_base_url = body.dashboard_base_url.strip() or None
+
+    db.commit()
+    return {"message": "Slack settings saved.", "auto_alert": cfg.slack_auto_alert_on_failure}
+
+
+@app.post("/api/user/slack-settings/test-ping")
+def test_slack_ping(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Send a test ping to verify the webhook URL is working."""
+    owner = user["sub"]
+    cfg = db.query(UserSettings).filter(UserSettings.owner_id == owner).first()
+    webhook = (cfg and cfg.slack_webhook_url) or settings.SLACK_WEBHOOK_URL
+    if not webhook:
+        raise HTTPException(400, "No Slack webhook URL configured.")
+
+    import requests as _req
+    payload = {
+        "text": "✅ *Leaka AI — Slack connection verified.*\nYou'll receive QA incident alerts here when tests fail.",
+        "blocks": [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "✅ *Leaka AI — Slack connection verified.*\nYou'll receive QA incident alerts here when tests fail.",
+                },
+            }
+        ],
+    }
+    try:
+        resp = _req.post(webhook, json=payload, timeout=10)
+        if 200 <= resp.status_code < 300:
+            return {"ok": True, "message": "Test ping sent successfully."}
+        return {"ok": False, "message": f"Slack returned HTTP {resp.status_code}: {resp.text[:200]}"}
+    except Exception as exc:
+        return {"ok": False, "message": f"Request failed: {exc}"}
+
+
+# ---------------------------------------------------------------------------
+# Onboarding state — track whether user has completed the onboarding flow
+# ---------------------------------------------------------------------------
+
+@app.get("/api/user/onboarding")
+def get_onboarding_status(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Return whether the current user has completed onboarding."""
+    owner = user["sub"]
+    cfg = db.query(UserSettings).filter(UserSettings.owner_id == owner).first()
+    completed = bool(cfg and cfg.onboarding_completed)
+    return {"onboarding_completed": completed}
+
+
+@app.post("/api/user/onboarding/complete")
+def complete_onboarding(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Mark onboarding as complete for the current user."""
+    owner = user["sub"]
+    cfg = db.query(UserSettings).filter(UserSettings.owner_id == owner).first()
+    if not cfg:
+        cfg = UserSettings(owner_id=owner)
+        db.add(cfg)
+    cfg.onboarding_completed = True
+    db.commit()
+    return {"onboarding_completed": True}
+
+
+# ---------------------------------------------------------------------------
+# Application Intelligence (Explore Mode)
+# ---------------------------------------------------------------------------
+def _get_owned_application(db: Session, app_id: int, user: dict) -> "Application":
+    """Fetch an Application enforcing ownership or workspace membership (404 on mismatch)."""
+    app_row = db.query(Application).filter(Application.id == app_id).first()
+    if not app_row:
+        raise HTTPException(404, "Application not found")
+        
+    user_id = user.get("sub")
+    
+    # 1. Legacy fallback: public app (no owner, no workspace)
+    if not app_row.owner_id and not app_row.workspace_id:
+        return app_row
+        
+    # 2. Legacy check: matches direct owner
+    if app_row.owner_id == user_id:
+        return app_row
+        
+    # 3. Enterprise RBAC check: user is in the assigned workspace
+    if app_row.workspace_id:
+        from .models import WorkspaceMember
+        member = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == app_row.workspace_id,
+            WorkspaceMember.user_id == user_id
+        ).first()
+        if member:
+            return app_row
+
+    raise HTTPException(404, "Application not found")
+
+
+@app.post("/api/applications", response_model=ApplicationOut)
+def create_application(
+    body: ApplicationCreate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    app_row = Application(
+        owner_id=user["sub"],
+        workspace_id=body.workspace_id,
+        name=body.name,
+        base_url=body.base_url,
+        description=body.description,
+        login_hint=body.login_hint,
+        openapi_spec=body.openapi_spec,
+    )
+    db.add(app_row)
+    db.commit()
+    db.refresh(app_row)
+    return app_row
+
+
+from typing import Optional
+
+@app.get("/api/applications", response_model=list[ApplicationOut])
+def list_applications(
+    skip: int = 0,
+    limit: int = 100,
+    workspace_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    if workspace_id:
+        from .models import WorkspaceMember
+        # Verify user is in workspace
+        member = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == workspace_id,
+            WorkspaceMember.user_id == user["sub"]
+        ).first()
+        if not member:
+            return []
+            
+        return (
+            db.query(Application)
+            .filter(Application.workspace_id == workspace_id)
+            .order_by(Application.created_at.desc())
+            .offset(skip).limit(limit).all()
+        )
+    else:
+        # Legacy fallback: only show unassigned (personal) apps where user is owner
+        return (
+            db.query(Application)
+            .filter(Application.owner_id == user["sub"], Application.workspace_id == None)
+            .order_by(Application.created_at.desc())
+            .offset(skip).limit(limit).all()
+        )
+
+
+@app.get("/api/applications/{app_id}", response_model=ApplicationOut)
+def get_application(app_id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    return _get_owned_application(db, app_id, user)
+
+
+@app.put("/api/applications/{app_id}", response_model=ApplicationOut)
+def update_application(
+    app_id: int,
+    body: ApplicationUpdate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    app_row = _get_owned_application(db, app_id, user)
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(app_row, field, value)
+    db.commit()
+    db.refresh(app_row)
+    return app_row
+
+
+@app.delete("/api/applications/{app_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_application(app_id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    app_row = _get_owned_application(db, app_id, user)
+    db.delete(app_row)
+    db.commit()
+    return None
+
+
+# ── Environments ──
+@app.get("/api/applications/{app_id}/environments", response_model=list[EnvironmentOut])
+def list_environments(app_id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    _get_owned_application(db, app_id, user)
+    return db.query(Environment).filter(Environment.application_id == app_id).all()
+
+@app.post("/api/applications/{app_id}/environments", response_model=EnvironmentOut)
+def create_environment(app_id: int, body: EnvironmentCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    _get_owned_application(db, app_id, user)
+    env = Environment(application_id=app_id, **body.model_dump())
+    db.add(env)
+    db.commit()
+    db.refresh(env)
+    return env
+
+@app.put("/api/applications/{app_id}/environments/{env_id}")
+def update_environment(app_id: int, env_id: int, body: EnvironmentUpdate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    _get_owned_application(db, app_id, user)
+    env = db.query(Environment).filter(Environment.id == env_id, Environment.application_id == app_id).first()
+    if not env:
+        raise HTTPException(status_code=404, detail="Environment not found")
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(env, field, value)
+    db.commit()
+    db.refresh(env)
+    return env
+
+
+@app.delete("/api/applications/{app_id}/environments/{env_id}")
+def delete_environment(app_id: int, env_id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    _get_owned_application(db, app_id, user)
+    env = db.query(Environment).filter(Environment.id == env_id, Environment.application_id == app_id).first()
+    if not env:
+        raise HTTPException(status_code=404, detail="Environment not found")
+    db.delete(env)
+    db.commit()
+    return {"success": True}
+
+
+# ── Fixtures ──
+@app.get("/api/applications/{app_id}/fixtures", response_model=list[TestFixtureOut])
+def list_fixtures(app_id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    _get_owned_application(db, app_id, user)
+    return db.query(TestFixture).filter(TestFixture.application_id == app_id).all()
+
+@app.post("/api/applications/{app_id}/fixtures", response_model=TestFixtureOut)
+def create_fixture(app_id: int, body: TestFixtureCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    _get_owned_application(db, app_id, user)
+    fix = TestFixture(application_id=app_id, **body.model_dump())
+    db.add(fix)
+    db.commit()
+    db.refresh(fix)
+    return fix
+
+
+@app.post("/api/applications/{app_id}/explore", response_model=ExploreEnqueueResponse)
+def explore_application_endpoint(
+    app_id: int,
+    max_steps: int = 40,
+    environment_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Kick off an autonomous exploration run for an application.
+
+    - environment_id (optional): when supplied, the explore agent is pre-authenticated
+      using the Environment's configured auth strategy (api_injection, state_cache, or
+      ephemeral_users). The Environment must belong to this application.
+      When omitted, the agent runs unauthenticated (suitable for public-facing apps
+      or the initial onboarding Step 2 where auth hasn't been configured yet).
+    """
+    app_row = _get_owned_application(db, app_id, user)
+
+    # Validate the environment belongs to this application (ownership + app scoping).
+    # This prevents a user from injecting an environment from a different application.
+    if environment_id is not None:
+        from .models import Environment
+        env_row = (
+            db.query(Environment)
+            .filter(
+                Environment.id == environment_id,
+                Environment.application_id == app_row.id,
+            )
+            .first()
+        )
+        if not env_row:
+            raise HTTPException(
+                404,
+                f"Environment {environment_id} not found or does not belong to application {app_id}",
+            )
+
+    job_id = uuid.uuid4().hex
+    run = ExploreRun(
+        owner_id=user["sub"],
+        application_id=app_row.id,
+        job_id=job_id,
+        status=ExploreRunStatus.PENDING,
+        max_steps=max_steps,
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    task_id = _dispatch_explore_task(
+        job_id=job_id,
+        application_id=app_row.id,
+        owner_id=user["sub"],
+        base_url=app_row.base_url,
+        login_hint=app_row.login_hint,
+        max_steps=max_steps,
+        environment_id=environment_id,
+    )
+    run.task_id = task_id
+    db.commit()
+
+    return {"job_id": job_id, "task_id": task_id, "status": ExploreRunStatus.PENDING.value}
+
+
+@app.get("/api/explore/status/{job_id}", response_model=ExploreRunStatusResponse)
+def explore_status(job_id: str, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    run = db.query(ExploreRun).filter(ExploreRun.job_id == job_id).first()
+    if not run:
+        raise HTTPException(404, "Explore run not found")
+    if run.owner_id and run.owner_id != user.get("sub"):
+        raise HTTPException(404, "Explore run not found")
+    return ExploreRunStatusResponse(
+        job_id=run.job_id,
+        task_id=run.task_id,
+        application_id=run.application_id,
+        status=run.status,
+        max_steps=run.max_steps,
+        nodes_found=run.nodes_found,
+        result_summary=run.result_summary,
+        error_message=run.error_message,
+        live_steps=run.live_steps,
+        visited_urls=run.visited_urls,
+        created_at=run.created_at,
+        started_at=run.started_at,
+        completed_at=run.completed_at,
+    )
+
+
+def _map_heuristic_is_covered(node: AppMapNode, cases: list) -> bool:
+    """
+    Legacy substring heuristic — retained ONLY as the fallback when the coverage
+    engine has not yet produced verdicts for an application (R11.4). Deliberately
+    simple and explainable.
+    """
+    node_url = (node.url or "").strip().lower()
+    node_label = (node.label or "").strip().lower()
+    for c in cases:
+        c_url = (c.target_url or "").strip().lower()
+        c_name = (c.name or "").strip().lower()
+        c_prompt = (c.prompt or "").strip().lower()
+        if node_url and c_url and (node_url in c_url or c_url in node_url):
+            return True
+        if node_label and (node_label in c_name or node_label in c_prompt):
+            return True
+    return False
+
+
+@app.get("/api/applications/{app_id}/map", response_model=ApplicationMapResponse)
+def get_application_map(app_id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    """
+    Return the application's discovered map with coverage cross-reference.
+
+    Coverage source (R11.4): stored CoverageVerdicts from the coverage engine,
+    correlated to AppMapNodes by canonical_key via the graph. If no verdicts
+    exist yet (pre-reconcile / pre-recompute app), we fall back to the legacy
+    substring heuristic and enqueue a background recompute so the next read is
+    upgraded. The response SHAPE is unchanged for existing consumers.
+    """
+    app_row = _get_owned_application(db, app_id, user)
+
+    nodes = (
+        db.query(AppMapNode)
+        .filter(AppMapNode.application_id == app_row.id)
+        .order_by(AppMapNode.created_at.asc())
+        .all()
+    )
+
+    # Try stored verdicts first. Map each AppMapNode → its GraphNode by
+    # canonical_key, then look up that graph node's verdict.
+    from .intelligence.fingerprint import Discovery, compute_canonical_key
+
+    verdict_by_graph_node = {
+        v.node_id: v
+        for v in db.query(CoverageVerdict)
+        .filter(CoverageVerdict.application_id == app_row.id)
+        .all()
+    }
+    graph_id_by_key = {
+        key: nid
+        for nid, key in db.query(GraphNode.id, GraphNode.canonical_key)
+        .filter(GraphNode.application_id == app_row.id)
+        .all()
+    }
+    have_verdicts = len(verdict_by_graph_node) > 0
+
+    cases = None
+    if not have_verdicts:
+        # Fallback path: heuristic + enqueue a recompute for next time.
+        cases = db.query(TestCase).filter(TestCase.owner_id == user["sub"]).all()
+        try:
+            from .graph_worker import _dispatch_recompute_coverage
+            _dispatch_recompute_coverage(app_row.id, reason="map_read_no_verdicts")
+        except Exception:  # noqa: BLE001 — never block the read
+            pass
+
+    def _covered_for(node: AppMapNode) -> bool:
+        if have_verdicts:
+            key = compute_canonical_key(Discovery.from_app_map_node(node))
+            gid = graph_id_by_key.get(key)
+            v = verdict_by_graph_node.get(gid) if gid is not None else None
+            if v is not None:
+                return v.state in ("covered", "partially_covered")
+            return False
+        return _map_heuristic_is_covered(node, cases or [])
+
+    node_outs: list[AppMapNodeOut] = []
+    covered_count = 0
+    for n in nodes:
+        covered = _covered_for(n)
+        if covered:
+            covered_count += 1
+        node_outs.append(AppMapNodeOut(
+            id=n.id,
+            node_type=n.node_type,
+            label=n.label,
+            url=n.url,
+            description=n.description,
+            suggested_prompt=n.suggested_prompt,
+            is_covered=covered,
+            created_at=n.created_at,
+        ))
+
+    # Latest explore run for status display
+    latest = (
+        db.query(ExploreRun)
+        .filter(ExploreRun.application_id == app_row.id)
+        .order_by(ExploreRun.created_at.desc())
+        .first()
+    )
+    latest_out = None
+    if latest:
+        latest_out = ExploreRunStatusResponse(
+            job_id=latest.job_id,
+            task_id=latest.task_id,
+            application_id=latest.application_id,
+            status=latest.status,
+            max_steps=latest.max_steps,
+            nodes_found=latest.nodes_found,
+            result_summary=latest.result_summary,
+            error_message=latest.error_message,
+            live_steps=latest.live_steps,
+            visited_urls=latest.visited_urls,
+            created_at=latest.created_at,
+            started_at=latest.started_at,
+            completed_at=latest.completed_at,
+        )
+
+    return ApplicationMapResponse(
+        application=ApplicationOut.model_validate(app_row),
+        latest_explore=latest_out,
+        nodes=node_outs,
+        total_nodes=len(node_outs),
+        covered_nodes=covered_count,
+    )
+
+
+# ===========================================================================
+# APPLICATION GRAPH (Layer 1) — owner-scoped read/override API.
+# Every query is scoped by application_id AFTER _get_owned_application has
+# verified tenant ownership, so cross-tenant access always 404s (never 403,
+# never reveals existence). All list endpoints paginate (R10.6).
+# ===========================================================================
+
+
+def _parse_json_field(val, default=None):
+    """Parse a JSON-as-text ORM column defensively; return default on any error."""
+    if not val:
+        return default
+    if isinstance(val, (dict, list)):
+        return val
+    try:
+        return json.loads(val)
+    except Exception:
+        return default
+
+
+def _graph_node_out(
+    n: GraphNode, verdict: "Optional[CoverageVerdict]" = None
+) -> GraphNodeOut:
+    """
+    Serialize a GraphNode for the API. When the node's latest CoverageVerdict is
+    passed, its state/confidence are attached so the graph view can color nodes
+    by coverage; absent a verdict they stay None (honest "undetermined").
+    """
+    coverage_state = verdict.state if verdict is not None else None
+    coverage_confidence = (
+        (verdict.confidence_milli or 0) / 1000.0 if verdict is not None else None
+    )
+    return GraphNodeOut(
+        id=n.id,
+        canonical_key=n.canonical_key,
+        node_type=n.node_type,
+        business_category=n.business_category,
+        label=n.label,
+        url_pattern=n.url_pattern,
+        role_association=n.role_association,
+        dependencies_incomplete=bool(n.dependencies_incomplete),
+        status=n.status or "active",
+        semantics=_parse_json_field(n.semantics),
+        risk=_parse_json_field(n.risk),
+        manual_overrides=_parse_json_field(n.manual_overrides),
+        coverage_state=coverage_state,
+        coverage_confidence=coverage_confidence,
+        first_seen_run=n.first_seen_run,
+        last_seen_run=n.last_seen_run,
+        created_at=n.created_at,
+        updated_at=n.updated_at,
+    )
+
+
+@app.get("/api/applications/{app_id}/graph", response_model=GraphResponse)
+def get_application_graph(
+    app_id: int,
+    skip: int = 0,
+    limit: int = 100,
+    include_stale: bool = False,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Return the application's persistent graph (active nodes + edges), paginated.
+
+    An application that has never been reconciled returns an explicit empty
+    graph (is_empty=true), not an error (R1.9).
+    """
+    app_row = _get_owned_application(db, app_id, user)
+    limit = max(1, min(limit, 500))  # bound response size (R10.6)
+
+    node_q = db.query(GraphNode).filter(GraphNode.application_id == app_row.id)
+    if not include_stale:
+        node_q = node_q.filter(GraphNode.status == "active")
+
+    total_nodes = node_q.count()
+    nodes = (
+        node_q.order_by(GraphNode.id.asc()).offset(skip).limit(limit).all()
+    )
+
+    # Edges are returned for the active graph (bounded by the node cap above via
+    # the same status filter); they are lightweight rows.
+    edge_q = db.query(GraphEdge).filter(GraphEdge.application_id == app_row.id)
+    if not include_stale:
+        edge_q = edge_q.filter(GraphEdge.status == "active")
+    total_edges = edge_q.count()
+    edges = edge_q.order_by(GraphEdge.id.asc()).limit(limit).all()
+
+    # is_empty reflects whether ANY graph exists (not whether this page is empty).
+    any_node = db.query(GraphNode.id).filter(GraphNode.application_id == app_row.id).first()
+
+    # Join the latest CoverageVerdict for the nodes on THIS page only (bounded),
+    # so the graph view can color each node by its computed coverage. Nodes
+    # without a verdict simply keep coverage_state=None (honest "undetermined").
+    page_node_ids = [n.id for n in nodes]
+    verdict_by_node: dict[int, CoverageVerdict] = {}
+    if page_node_ids:
+        for v in (
+            db.query(CoverageVerdict)
+            .filter(
+                CoverageVerdict.application_id == app_row.id,
+                CoverageVerdict.node_id.in_(page_node_ids),
+            )
+            .all()
+        ):
+            verdict_by_node[v.node_id] = v
+
+    return GraphResponse(
+        application_id=app_row.id,
+        nodes=[_graph_node_out(n, verdict_by_node.get(n.id)) for n in nodes],
+        edges=[
+            GraphEdgeOut(
+                id=e.id,
+                source_node_id=e.source_node_id,
+                target_node_id=e.target_node_id,
+                edge_type=e.edge_type,
+                confidence=int(e.confidence or 100),
+                status=e.status or "active",
+            )
+            for e in edges
+        ],
+        total_nodes=total_nodes,
+        total_edges=total_edges,
+        is_empty=(any_node is None),
+        skip=skip,
+        limit=limit,
+    )
+
+
+def _node_coverage_detail(verdict: "Optional[CoverageVerdict]") -> Optional[dict]:
+    """
+    Build the explainable coverage object for a node's detail view from its
+    stored CoverageVerdict (R4.8). Returns None when no verdict has been
+    computed yet — the UI shows an honest "not yet computed" state rather than
+    a fabricated verdict.
+    """
+    if verdict is None:
+        return None
+    evidence = _parse_json_field(verdict.evidence, default=[]) or []
+    return {
+        "state": verdict.state,
+        "confidence": (verdict.confidence_milli or 0) / 1000.0,
+        "evidence": evidence if isinstance(evidence, list) else [],
+        "updated_at": verdict.updated_at.isoformat() if verdict.updated_at else None,
+    }
+
+
+def _node_memory_summary(db: Session, application_id: int, node_id: int) -> Optional[dict]:
+    """
+    Summarize what Leaka has learned about a specific node (R5.10) for the node
+    detail view: counts per memory kind + a few most-recent human-readable
+    items. Owner scope is already enforced by the caller (app is owner-verified
+    and MemoryItem is application-scoped). Returns None when nothing is learned
+    yet so the UI can show an honest empty state.
+    """
+    rows = (
+        db.query(MemoryItem)
+        .filter(
+            MemoryItem.application_id == application_id,
+            MemoryItem.node_id == node_id,
+        )
+        .order_by(MemoryItem.id.desc())
+        .limit(50)
+        .all()
+    )
+    if not rows:
+        return None
+
+    counts: dict[str, int] = {}
+    recent: list[dict] = []
+    for r in rows:
+        counts[r.kind] = counts.get(r.kind, 0) + 1
+        if len(recent) < 8:
+            payload = _parse_json_field(r.payload, default={}) or {}
+            recent.append({
+                "kind": r.kind,
+                "version": r.version or 1,
+                "payload": payload,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            })
+    return {"counts": counts, "total": len(rows), "recent": recent}
+
+
+def _get_owned_graph_node(db: Session, app_row: "Application", node_id: int) -> GraphNode:
+    """Fetch a graph node scoped to an already-owner-verified application (404)."""
+    node = (
+        db.query(GraphNode)
+        .filter(GraphNode.id == node_id, GraphNode.application_id == app_row.id)
+        .first()
+    )
+    if not node:
+        raise HTTPException(404, "Graph node not found")
+    return node
+
+
+class GenerateMatrixRequest(BaseModel):
+    app_map_node_id: Optional[int] = None
+    graph_node_id: Optional[int] = None
+
+
+@app.post("/api/applications/{app_id}/generate-matrix")
+def generate_matrix(
+    app_id: int,
+    body: GenerateMatrixRequest,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Generate a test matrix (happy/negative/edge cases) for a flow."""
+    app_row = _get_owned_application(db, app_id, user)
+    
+    graph_node = None
+    app_map_node = None
+    
+    if body.graph_node_id:
+        graph_node = _get_owned_graph_node(db, app_row, body.graph_node_id)
+    if body.app_map_node_id:
+        app_map_node = db.query(AppMapNode).filter(AppMapNode.id == body.app_map_node_id, AppMapNode.application_id == app_row.id).first()
+        
+    if not graph_node and not app_map_node:
+        raise HTTPException(400, "Must provide either graph_node_id or app_map_node_id")
+        
+    from app.intelligence.generator import generate_test_matrix_for_node
+    matrix = generate_test_matrix_for_node(graph_node, app_map_node)
+    
+    return matrix.model_dump()
+
+
+@app.get(
+    "/api/applications/{app_id}/graph/nodes/{node_id}",
+    response_model=GraphNodeDetail,
+)
+def get_graph_node(
+    app_id: int,
+    node_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Node detail: semantics, provenance, manual overrides, and the node's real
+    computed coverage verdict + learned memory summary. Each is derived only
+    from persisted engine output (CoverageVerdict / MemoryItem); when nothing
+    has been computed yet the field is null (honest — never fabricated).
+    """
+    app_row = _get_owned_application(db, app_id, user)
+    node = _get_owned_graph_node(db, app_row, node_id)
+
+    # Latest coverage verdict for this node (attached to base + detail).
+    verdict = (
+        db.query(CoverageVerdict)
+        .filter(
+            CoverageVerdict.application_id == app_row.id,
+            CoverageVerdict.node_id == node.id,
+        )
+        .first()
+    )
+
+    base = _graph_node_out(node, verdict)
+    provenance = {
+        "first_seen_run": node.first_seen_run,
+        "last_seen_run": node.last_seen_run,
+        "created_at": node.created_at.isoformat() if node.created_at else None,
+        "updated_at": node.updated_at.isoformat() if node.updated_at else None,
+    }
+    return GraphNodeDetail(
+        **base.model_dump(),
+        provenance=provenance,
+        coverage=_node_coverage_detail(verdict),
+        memory=_node_memory_summary(db, app_row.id, node.id),
+    )
+
+
+@app.patch(
+    "/api/applications/{app_id}/graph/nodes/{node_id}",
+    response_model=GraphNodeDetail,
+)
+def override_graph_node(
+    app_id: int,
+    node_id: int,
+    body: GraphNodeOverride,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Apply an authoritative manual override to a node (Req 2.7, 3.5).
+
+    Overrides are persisted into `manual_overrides` (so future reconciliations
+    re-apply them and never revert a human correction — Property 5) AND applied
+    to the live columns immediately so reads reflect them at once. Each override
+    records provenance (who/when) for audit (R9.6).
+    """
+    app_row = _get_owned_application(db, app_id, user)
+    node = _get_owned_graph_node(db, app_row, node_id)
+
+    incoming = body.model_dump(exclude_unset=True)
+    if not incoming:
+        raise HTTPException(400, "No override fields provided")
+
+    overrides = _parse_json_field(node.manual_overrides, default={}) or {}
+
+    # Apply each provided field to overrides + live column.
+    if "node_type" in incoming and incoming["node_type"]:
+        nt = str(incoming["node_type"]).strip().lower()
+        overrides["node_type"] = nt
+        node.node_type = nt
+    if "business_category" in incoming:
+        overrides["business_category"] = incoming["business_category"]
+        node.business_category = incoming["business_category"]
+    if "role_association" in incoming and incoming["role_association"]:
+        role = str(incoming["role_association"]).strip()
+        overrides["role_association"] = role
+        node.role_association = role
+    if "risk" in incoming and incoming["risk"] is not None:
+        overrides["risk"] = incoming["risk"]
+        # Live risk column mirrors the override until the risk engine recomputes.
+        node.risk = json.dumps(incoming["risk"], default=str)
+
+    # Provenance for audit (who/when), appended non-destructively.
+    prov = overrides.get("_provenance", [])
+    if not isinstance(prov, list):
+        prov = []
+    prov.append({
+        "by": user.get("sub"),
+        "at": datetime.utcnow().isoformat(),
+        "fields": [k for k in incoming.keys()],
+    })
+    overrides["_provenance"] = prov[-20:]  # bound audit trail growth
+
+    node.manual_overrides = json.dumps(overrides, default=str)
+    node.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(node)
+
+    _audit("graph_node_override", owner_id=user.get("sub"), app=app_row.id,
+           node=node.id, fields=",".join(incoming.keys()))
+
+    # Recompute coverage/risk on manual override (R3.6): the engines honor
+    # manual_overrides, so this makes the persisted state converge on the
+    # override even if a recompute was mid-flight. Best-effort, never blocks.
+    try:
+        from .graph_worker import _dispatch_recompute_coverage
+        _dispatch_recompute_coverage(app_row.id, reason="manual_override")
+    except Exception:  # noqa: BLE001
+        pass
+
+    base = _graph_node_out(node)
+    return GraphNodeDetail(
+        **base.model_dump(),
+        provenance={
+            "first_seen_run": node.first_seen_run,
+            "last_seen_run": node.last_seen_run,
+            "overrides": overrides.get("_provenance"),
+        },
+        coverage=None,
+        memory=None,
+    )
+
+
+def _snapshot_out(s: GraphSnapshot) -> SnapshotOut:
+    return SnapshotOut(
+        id=s.id,
+        application_id=s.application_id,
+        explore_run_id=s.explore_run_id,
+        node_count=s.node_count or 0,
+        edge_count=s.edge_count or 0,
+        diff_summary=_parse_json_field(s.diff_summary),
+        created_at=s.created_at,
+    )
+
+
+@app.get("/api/applications/{app_id}/snapshots", response_model=SnapshotListResponse)
+def list_snapshots(
+    app_id: int,
+    skip: int = 0,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Append-only snapshot history for an application, newest first (paginated)."""
+    app_row = _get_owned_application(db, app_id, user)
+    limit = max(1, min(limit, 200))
+
+    q = db.query(GraphSnapshot).filter(GraphSnapshot.application_id == app_row.id)
+    total = q.count()
+    rows = q.order_by(GraphSnapshot.id.desc()).offset(skip).limit(limit).all()
+    return SnapshotListResponse(
+        application_id=app_row.id,
+        snapshots=[_snapshot_out(s) for s in rows],
+        total=total,
+        skip=skip,
+        limit=limit,
+    )
+
+
+def _snapshot_members(db: Session, snapshot_id: int):
+    from .intelligence.reconciliation import SnapshotMemberState
+    members = (
+        db.query(SnapshotMember)
+        .filter(SnapshotMember.snapshot_id == snapshot_id)
+        .all()
+    )
+    out = []
+    for m in members:
+        st = _parse_json_field(m.node_state, default={}) or {}
+        out.append(SnapshotMemberState(
+            canonical_key=st.get("canonical_key", m.canonical_key or ""),
+            node_type=st.get("node_type", "page"),
+            label=st.get("label", ""),
+            url_pattern=st.get("url_pattern"),
+            business_category=st.get("business_category"),
+            role_association=st.get("role_association", "unknown"),
+            status=st.get("status", "active"),
+            text_signature=st.get("text_signature", ""),
+            url_signature=st.get("url_signature", ""),
+        ))
+    return out
+
+
+@app.get(
+    "/api/applications/{app_id}/snapshots/{from_id}/diff/{to_id}",
+    response_model=SnapshotDiffResponse,
+)
+def diff_snapshots_endpoint(
+    app_id: int,
+    from_id: int,
+    to_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """Diff two of this application's snapshots (added/removed/changed nodes)."""
+    app_row = _get_owned_application(db, app_id, user)
+
+    # Both snapshots must belong to THIS application (else 404 — no leakage).
+    def _owned_snapshot(sid: int) -> GraphSnapshot:
+        s = (
+            db.query(GraphSnapshot)
+            .filter(GraphSnapshot.id == sid, GraphSnapshot.application_id == app_row.id)
+            .first()
+        )
+        if not s:
+            raise HTTPException(404, "Snapshot not found")
+        return s
+
+    _owned_snapshot(from_id)
+    _owned_snapshot(to_id)
+
+    from .intelligence.reconciliation import diff_snapshots as _diff
+
+    a_members = _snapshot_members(db, from_id)
+    b_members = _snapshot_members(db, to_id)
+    diff = _diff(a_members, b_members)
+
+    return SnapshotDiffResponse(
+        application_id=app_row.id,
+        from_snapshot_id=from_id,
+        to_snapshot_id=to_id,
+        diff=diff,
+    )
+
+
+# ===========================================================================
+# COVERAGE INTELLIGENCE (Layer 2) — rollups + prioritized gaps, owner-scoped.
+# Reads stored CoverageVerdicts (produced by graph_worker.recompute_coverage)
+# and composes them through the pure coverage engine's rollup/gaps helpers.
+# ===========================================================================
+
+
+@app.get("/api/applications/{app_id}/coverage", response_model=CoverageResponse)
+def get_application_coverage(
+    app_id: int,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Risk-weighted coverage rollups (application + per business_category) and a
+    prioritized list of coverage gaps. If no graph exists yet, returns an
+    explicit empty state (never an error).
+    """
+    from .intelligence import coverage as COV
+    from .intelligence.fingerprint import Discovery, compute_canonical_key
+
+    app_row = _get_owned_application(db, app_id, user)
+    limit = max(1, min(limit, 500))
+
+    nodes = (
+        db.query(GraphNode)
+        .filter(GraphNode.application_id == app_row.id, GraphNode.status == "active")
+        .all()
+    )
+    if not nodes:
+        return CoverageResponse(application_id=app_row.id, is_empty=True, skip=skip, limit=limit)
+
+    # If verdicts have never been computed, enqueue a recompute so the next read
+    # is populated; meanwhile return everything as uncovered (honest).
+    verdict_rows = (
+        db.query(CoverageVerdict)
+        .filter(CoverageVerdict.application_id == app_row.id)
+        .all()
+    )
+    if not verdict_rows:
+        try:
+            from .graph_worker import _dispatch_recompute_coverage
+            _dispatch_recompute_coverage(app_row.id, reason="coverage_read_no_verdicts")
+        except Exception:  # noqa: BLE001
+            pass
+
+    verdict_by_node = {v.node_id: v for v in verdict_rows}
+
+    # Build pure CoverageNode inputs (with risk from stored GraphNode.risk).
+    cov_nodes: list = []
+    node_meta: dict = {}
+    for n in nodes:
+        risk = _parse_json_field(n.risk, default={}) or {}
+        cov_nodes.append(COV.CoverageNode(
+            node_id=n.id,
+            canonical_key=n.canonical_key,
+            url_pattern=n.url_pattern,
+            business_category=n.business_category,
+            status="active",
+            risk_score=int(risk.get("score", 0) or 0),
+            risk_level=str(risk.get("level", "Trivial")),
+        ))
+        node_meta[n.id] = n
+
+    # Convert stored verdicts → engine verdicts for rollup/gaps.
+    verdicts: dict = {}
+    for n in nodes:
+        vr = verdict_by_node.get(n.id)
+        if vr is None:
+            verdicts[n.id] = COV.CoverageVerdict(node_id=n.id, state=COV.UNCOVERED,
+                                                 confidence=0.0, evidence=())
+        else:
+            verdicts[n.id] = COV.CoverageVerdict(
+                node_id=n.id, state=vr.state,
+                confidence=(vr.confidence_milli or 0) / 1000.0, evidence=(),
+            )
+
+    rollups = COV.rollup(verdicts, cov_nodes)
+    app_rollup = rollups.pop("application", None)
+
+    def _rollup_out(r) -> CoverageRollupOut:
+        return CoverageRollupOut(
+            scope=r.scope, percent=r.percent, node_count=r.node_count,
+            covered_count=r.covered_count, partial_count=r.partial_count,
+            uncovered_count=r.uncovered_count,
+        )
+
+    gap_list = COV.gaps(verdicts, cov_nodes)
+    total_gaps = len(gap_list)
+    page = gap_list[skip: skip + limit]
+
+    # Join AppMapNode suggested_prompt/url onto each gap via canonical_key.
+    appmap = db.query(AppMapNode).filter(AppMapNode.application_id == app_row.id).all()
+    prompt_by_key: dict = {}
+    url_by_key: dict = {}
+    for amn in appmap:
+        key = compute_canonical_key(Discovery.from_app_map_node(amn))
+        prompt_by_key.setdefault(key, amn.suggested_prompt)
+        url_by_key.setdefault(key, amn.url)
+
+    gaps_out: list[CoverageGapOut] = []
+    for g in page:
+        n = node_meta.get(g.node_id)
+        gaps_out.append(CoverageGapOut(
+            node_id=g.node_id,
+            canonical_key=g.canonical_key,
+            label=(n.label if n else ""),
+            state=g.state,
+            confidence=g.confidence,
+            risk_score=g.risk_score,
+            risk_level=g.risk_level,
+            business_category=g.business_category,
+            suggested_prompt=prompt_by_key.get(g.canonical_key),
+            url=url_by_key.get(g.canonical_key) or (n.url_pattern if n else None),
+        ))
+
+    return CoverageResponse(
+        application_id=app_row.id,
+        is_empty=False,
+        application_rollup=_rollup_out(app_rollup) if app_rollup else None,
+        category_rollups=[_rollup_out(r) for r in sorted(rollups.values(), key=lambda x: x.scope)],
+        gaps=gaps_out,
+        total_gaps=total_gaps,
+        skip=skip,
+        limit=limit,
+    )
+
+
+# ===========================================================================
+# MEMORY TRANSPARENCY (Layer 3) — "what Leaka knows about this app" (R5.10).
+# Owner-scoped, paginated. Memory holds learned knowledge (locators, timings,
+# outcomes, fingerprints) — never secrets — but we expose only the safe fields.
+# ===========================================================================
+
+
+@app.get("/api/applications/{app_id}/memory", response_model=MemoryListResponse)
+def get_application_memory(
+    app_id: int,
+    kind: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Paginated, owner-scoped view of an application's learned Memory. Filterable
+    by kind (locator|timing|auth_pattern|outcome|fingerprint).
+    """
+    app_row = _get_owned_application(db, app_id, user)
+    limit = max(1, min(limit, 500))
+
+    q = db.query(MemoryItem).filter(MemoryItem.application_id == app_row.id)
+    if kind:
+        q = q.filter(MemoryItem.kind == kind)
+    total = q.count()
+    rows = q.order_by(MemoryItem.id.desc()).offset(skip).limit(limit).all()
+
+    items: list[MemoryItemOut] = []
+    for r in rows:
+        items.append(MemoryItemOut(
+            id=r.id,
+            kind=r.kind,
+            node_id=r.node_id,
+            payload=_parse_json_field(r.payload, default={}) or {},
+            version=r.version or 1,
+            provenance=_parse_json_field(r.provenance),
+            created_at=r.created_at,
+        ))
+
+    return MemoryListResponse(
+        application_id=app_row.id,
+        items=items,
+        total=total,
+        skip=skip,
+        limit=limit,
+    )
+
+
+# ===========================================================================
+# PR INTELLIGENCE — repo connection + webhook endpoints (Layer 4).
+#
+# SECURITY (R9.3): tokens/webhook secrets arrive in the request body, are
+# immediately converted to encrypted secret REFS via secrets_store, and are
+# NEVER returned by any read endpoint (only `*_set` booleans + masks). Webhook
+# deliveries are HMAC-verified over the RAW body and deduped by delivery id
+# (R6.7, R9.5). Security-relevant actions are audit-logged (R9.6).
+# ===========================================================================
+
+
+def _audit(action: str, *, owner_id: Optional[str], **fields) -> None:
+    """Emit a security audit log line (R9.6). Structured, greppable, no secrets."""
+    detail = " ".join(f"{k}={v}" for k, v in fields.items())
+    logger.info("AUDIT action=%s owner=%s %s", action, owner_id, detail)
+
+
+def _repo_status_out(conn: RepoConnection) -> RepoStatusOut:
+    from .secrets_store import is_ref
+    return RepoStatusOut(
+        id=conn.id,
+        application_id=conn.application_id,
+        provider=conn.provider,
+        repo_full_name=conn.repo_full_name,
+        status=conn.status,
+        last_error=conn.last_error,
+        secret_set=is_ref(conn.secret_ref),
+        webhook_secret_set=is_ref(conn.webhook_secret_ref),
+        created_at=conn.created_at,
+        updated_at=conn.updated_at,
+    )
+
+
+@app.post("/api/applications/{app_id}/repo", response_model=RepoStatusOut)
+def connect_repo(
+    app_id: int,
+    body: RepoConnectRequest,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Connect (or re-connect) a source repository. The token is verified against
+    GitHub, then stored ONLY as an encrypted secret ref — never persisted or
+    returned in plaintext (R9.3). Re-connecting the same repo updates the row.
+    """
+    app_row = _get_owned_application(db, app_id, user)
+    owner_id = user["sub"]
+
+    from .integrations import github_client as GH
+    from .secrets_store import store_secret
+
+    provider = (body.provider or "github").strip().lower()
+    if provider != "github":
+        raise HTTPException(400, "Only 'github' is supported currently.")
+
+    # Verify token + repo reachability BEFORE storing anything.
+    verify = GH.verify_connection(body.token, body.repo_full_name)
+
+    # Upsert the connection row (unique per app+provider+repo).
+    conn = (
+        db.query(RepoConnection)
+        .filter(RepoConnection.application_id == app_row.id,
+                RepoConnection.provider == provider,
+                RepoConnection.repo_full_name == body.repo_full_name)
+        .first()
+    )
+    if conn is None:
+        conn = RepoConnection(
+            owner_id=owner_id, application_id=app_row.id,
+            provider=provider, repo_full_name=body.repo_full_name,
+        )
+        db.add(conn)
+
+    # Store secrets as encrypted refs (never plaintext).
+    conn.secret_ref = store_secret(body.token)
+    if body.webhook_secret:
+        conn.webhook_secret_ref = store_secret(body.webhook_secret)
+    conn.status = "connected" if verify.get("connected") else "failed"
+    conn.last_error = None if verify.get("connected") else verify.get("reason")
+    db.commit()
+    db.refresh(conn)
+
+    _audit("repo_connect", owner_id=owner_id, app=app_row.id,
+           repo=body.repo_full_name, status=conn.status,
+           webhook_secret_set=bool(body.webhook_secret))
+
+    return _repo_status_out(conn)
+
+
+@app.get("/api/applications/{app_id}/repo", response_model=Optional[RepoStatusOut])
+def get_repo(app_id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    """Return the repo connection status (masked — never any secret). None if unconnected."""
+    app_row = _get_owned_application(db, app_id, user)
+    conn = (
+        db.query(RepoConnection)
+        .filter(RepoConnection.application_id == app_row.id)
+        .order_by(RepoConnection.id.desc())
+        .first()
+    )
+    if conn is None:
+        return None
+    return _repo_status_out(conn)
+
+
+@app.delete("/api/applications/{app_id}/repo", status_code=status.HTTP_204_NO_CONTENT)
+def disconnect_repo(app_id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    """Disconnect the repo. Removes the connection (and its encrypted secret refs)."""
+    app_row = _get_owned_application(db, app_id, user)
+    conns = db.query(RepoConnection).filter(RepoConnection.application_id == app_row.id).all()
+    for conn in conns:
+        db.delete(conn)
+    db.commit()
+    _audit("repo_disconnect", owner_id=user["sub"], app=app_row.id, removed=len(conns))
+    return None
+
+
+@app.post("/api/webhooks/github", response_model=WebhookAck)
+async def github_webhook(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Inbound GitHub webhook. Verifies the HMAC-SHA256 signature over the RAW body
+    using the connection's stored webhook secret, dedupes by delivery id (reject
+    replays), and enqueues diff ingestion. Unauthenticated/replayed/malformed
+    deliveries are rejected (R6.7, R9.5).
+
+    NOTE: this endpoint is intentionally NOT behind get_current_user — GitHub
+    authenticates via the HMAC signature, not a user JWT.
+    """
+    import json as _json
+    from .integrations import github_client as GH
+    from .secrets_store import resolve_secret_ref
+
+    # 1. Read the RAW body BEFORE any parsing (signature is over raw bytes).
+    raw_body = await request.body()
+    signature = request.headers.get("X-Hub-Signature-256")
+    delivery_id = request.headers.get("X-GitHub-Delivery")
+    event = request.headers.get("X-GitHub-Event", "")
+
+    # 2. Parse payload (as untrusted data) to find the target repo.
+    try:
+        payload = _json.loads(raw_body.decode("utf-8")) if raw_body else {}
+    except Exception:
+        raise HTTPException(400, "Malformed webhook payload.")
+
+    repo_full_name = (
+        (payload.get("repository") or {}).get("full_name")
+        if isinstance(payload, dict) else None
+    )
+    if not repo_full_name:
+        raise HTTPException(400, "Webhook payload missing repository.full_name.")
+
+    # 3. Find the connection for this repo (any tenant — the HMAC secret is the
+    #    authenticator here). We do NOT reveal existence on failure.
+    conn = (
+        db.query(RepoConnection)
+        .filter(RepoConnection.repo_full_name == repo_full_name)
+        .order_by(RepoConnection.id.desc())
+        .first()
+    )
+    if conn is None or not conn.webhook_secret_ref:
+        # No connection or no configured secret → cannot authenticate → reject.
+        raise HTTPException(401, "Webhook not authenticated.")
+
+    secret = resolve_secret_ref(conn.webhook_secret_ref)
+    if not secret or not GH.verify_webhook_signature(raw_body, signature, secret):
+        _audit("webhook_rejected", owner_id=conn.owner_id, repo=repo_full_name,
+               reason="signature_mismatch", delivery=delivery_id)
+        raise HTTPException(401, "Webhook signature verification failed.")
+
+    # 4. Replay dedup by delivery id (unique constraint on CodeDiff.delivery_id).
+    if delivery_id:
+        existing = db.query(CodeDiff).filter(CodeDiff.delivery_id == delivery_id).first()
+        if existing is not None:
+            return WebhookAck(received=True, detail="Duplicate delivery ignored.",
+                              diff_id=existing.id)
+
+    # 5. Only act on PR / push events; ack others.
+    if event not in ("pull_request", "push"):
+        return WebhookAck(received=True, detail=f"Event '{event}' acknowledged (no action).")
+
+    # 6. Extract identifiers and persist a pending CodeDiff, then enqueue ingest.
+    pr_number = None
+    commit_sha = None
+    branch = None
+    if event == "pull_request":
+        pr = payload.get("pull_request") or {}
+        pr_number = str(payload.get("number") or pr.get("number") or "") or None
+        commit_sha = (pr.get("head") or {}).get("sha")
+        branch = (pr.get("head") or {}).get("ref")
+    elif event == "push":
+        commit_sha = payload.get("after")
+        ref = payload.get("ref") or ""
+        branch = ref.rsplit("/", 1)[-1] if ref else None
+
+    diff = CodeDiff(
+        owner_id=conn.owner_id, application_id=conn.application_id,
+        repo_connection_id=conn.id, pr_number=pr_number, commit_sha=commit_sha,
+        branch=branch, ingest_status="pending", delivery_id=delivery_id,
+    )
+    db.add(diff)
+    db.commit()
+    db.refresh(diff)
+
+    _audit("webhook_accepted", owner_id=conn.owner_id, repo=repo_full_name,
+           event=event, delivery=delivery_id, diff_id=diff.id)
+
+    # Enqueue ingestion. repo_worker lands in Task 20; until then the pending
+    # CodeDiff is recorded and can be ingested once the worker exists. Never
+    # fail the webhook on dispatch problems.
+    try:
+        from . import repo_worker  # noqa: F401 — may not exist until Task 20
+        repo_worker._dispatch_ingest(diff.id)  # type: ignore[attr-defined]
+    except Exception:
+        logger.info("repo_worker not available yet; diff %s left pending.", diff.id)
+
+    return WebhookAck(received=True, detail="Accepted for ingestion.", diff_id=diff.id)
+
+
+# ===========================================================================
+# PR INTELLIGENCE — diffs + recommendations (Layer 4). Owner-scoped.
+# ===========================================================================
+
+
+def _owned_diff(db: Session, app_row: "Application", diff_id: int) -> CodeDiff:
+    d = (
+        db.query(CodeDiff)
+        .filter(CodeDiff.id == diff_id, CodeDiff.application_id == app_row.id)
+        .first()
+    )
+    if not d:
+        raise HTTPException(404, "Diff not found")
+    return d
+
+
+@app.get("/api/applications/{app_id}/diffs", response_model=CodeDiffListResponse)
+def list_diffs(
+    app_id: int,
+    skip: int = 0,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """List ingested diffs for an application, newest first (paginated)."""
+    app_row = _get_owned_application(db, app_id, user)
+    limit = max(1, min(limit, 200))
+    q = db.query(CodeDiff).filter(CodeDiff.application_id == app_row.id)
+    total = q.count()
+    rows = q.order_by(CodeDiff.id.desc()).offset(skip).limit(limit).all()
+
+    def _count_files(d: CodeDiff) -> int:
+        parsed = _parse_json_field(d.changed_files, default=[])
+        return len(parsed) if isinstance(parsed, list) else 0
+
+    return CodeDiffListResponse(
+        application_id=app_row.id,
+        diffs=[CodeDiffOut(
+            id=d.id, application_id=d.application_id, pr_number=d.pr_number,
+            commit_sha=d.commit_sha, branch=d.branch, ingest_status=d.ingest_status,
+            changed_file_count=_count_files(d), created_at=d.created_at,
+        ) for d in rows],
+        total=total, skip=skip, limit=limit,
+    )
+
+
+@app.get(
+    "/api/applications/{app_id}/diffs/{diff_id}/recommendation",
+    response_model=DiffRecommendationResponse,
+)
+def get_diff_recommendation(
+    app_id: int,
+    diff_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Affected flows + recommended tests + explain chains for a diff (R7.1, R7.6).
+    Reads persisted FlowMappings (produced by repo_worker.map_code_diff).
+    """
+    app_row = _get_owned_application(db, app_id, user)
+    diff = _owned_diff(db, app_row, diff_id)
+
+    if diff.ingest_status == "pending":
+        return DiffRecommendationResponse(
+            application_id=app_row.id, diff_id=diff.id, status="pending",
+            message="Diff is still being ingested — check back shortly.",
+        )
+    if diff.ingest_status == "failed":
+        err = _parse_json_field(diff.changed_files, default={})
+        reason = err.get("error") if isinstance(err, dict) else "ingestion failed"
+        return DiffRecommendationResponse(
+            application_id=app_row.id, diff_id=diff.id, status="failed",
+            message=f"Ingestion failed: {reason}",
+        )
+
+    rows = db.query(FlowMapping).filter(FlowMapping.code_diff_id == diff.id).all()
+
+    # Labels for the affected nodes.
+    node_ids = [r.node_id for r in rows if r.node_id is not None]
+    label_by_id: dict = {}
+    key_by_id: dict = {}
+    if node_ids:
+        for n in db.query(GraphNode).filter(GraphNode.id.in_(node_ids)).all():
+            label_by_id[n.id] = n.label
+            key_by_id[n.id] = n.canonical_key
+
+    # Determine overall status: no active graph → no_graph.
+    has_graph = db.query(GraphNode.id).filter(
+        GraphNode.application_id == app_row.id, GraphNode.status == "active"
+    ).first() is not None
+
+    mappings_out: list[FlowMappingOut] = []
+    flat: list[int] = []
+    seen: set[int] = set()
+    # Rank by risk desc, canonical_key asc (deterministic, mirrors the engine).
+    rows_sorted = sorted(
+        rows,
+        key=lambda r: (-(_parse_json_field(_node_risk(db, r.node_id), default={}) or {}).get("score", 0),
+                       key_by_id.get(r.node_id, "")),
+    )
+    for r in rows_sorted:
+        risk = _parse_json_field(_node_risk(db, r.node_id), default={}) or {}
+        rec = _parse_json_field(r.recommended_tests, default=[]) or []
+        signals = _parse_json_field(r.signals, default=[]) or []
+        mappings_out.append(FlowMappingOut(
+            node_id=r.node_id,
+            canonical_key=key_by_id.get(r.node_id),
+            label=label_by_id.get(r.node_id),
+            confidence=(r.confidence_milli or 0) / 1000.0,
+            signals=signals,
+            recommended_test_ids=rec,
+            coverage_state=r.coverage_state,
+            risk_score=int(risk.get("score", 0) or 0),
+            risk_level=str(risk.get("level", "Trivial")),
+            chain={"node": key_by_id.get(r.node_id), "covering_tests": rec},
+            no_coverage_warning=(len(rec) == 0),
+            suggested_prompt=None,
+        ))
+        for tid in rec:
+            if tid not in seen:
+                seen.add(tid)
+                flat.append(tid)
+
+    if not has_graph:
+        status_s, msg = "no_graph", "No recommendations available — explore this application first."
+    elif not rows:
+        status_s, msg = "ok", "No affected flows mapped for this diff."
+    else:
+        status_s, msg = "ok", f"{len(mappings_out)} affected flow(s)."
+
+    return DiffRecommendationResponse(
+        application_id=app_row.id, diff_id=diff.id, status=status_s, message=msg,
+        mappings=mappings_out, recommended_test_ids=flat,
+    )
+
+
+def _node_risk(db: Session, node_id: Optional[int]):
+    if node_id is None:
+        return None
+    n = db.query(GraphNode.risk).filter(GraphNode.id == node_id).first()
+    return n[0] if n else None
+
+
+@app.post(
+    "/api/applications/{app_id}/diffs/{diff_id}/run",
+    response_model=DiffRunResponse,
+)
+def run_diff_recommendation(
+    app_id: int,
+    diff_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """
+    Dispatch the diff's recommended tests via the existing run path (R7.5).
+    Reuses the same TestRun + _dispatch_run_task flow as the CI webhook.
+    """
+    app_row = _get_owned_application(db, app_id, user)
+    diff = _owned_diff(db, app_row, diff_id)
+    owner_id = user["sub"]
+
+    # Gather recommended test ids from persisted FlowMappings (deduped).
+    rows = db.query(FlowMapping).filter(FlowMapping.code_diff_id == diff.id).all()
+    ids: list[int] = []
+    seen: set[int] = set()
+    for r in rows:
+        for tid in (_parse_json_field(r.recommended_tests, default=[]) or []):
+            if tid not in seen:
+                seen.add(tid)
+                ids.append(tid)
+
+    job_ids: list[str] = []
+    for tc_id in ids:
+        try:
+            tc = _get_owned_test_case(db, tc_id, user={"sub": owner_id})
+        except HTTPException:
+            tc = None
+        if not tc:
+            continue  # owner-scoped: never run another tenant's test
+        job_id = uuid.uuid4().hex
+        run = TestRun(
+            job_id=job_id, owner_id=owner_id, test_case_id=tc.id,
+            workspace_id=tc.workspace_id,
+            name=f"[PR] {tc.name}", prompt=tc.prompt, target_url=tc.target_url,
+            success_criteria=tc.success_criteria, assertions=tc.assertions,
+            status=TestRunStatus.PENDING,
+        )
+        db.add(run)
+        db.flush()
+        task_id = _dispatch_run_task(
+            job_id=job_id, name=run.name, prompt=tc.prompt,
+            target_url=tc.target_url or "", success_criteria=tc.success_criteria,
+            use_vision=True, max_steps=50, test_case_id=tc.id,
+            owner_id=owner_id,
+        )
+        run.task_id = task_id
+        job_ids.append(job_id)
+
+    db.commit()
+    _audit("diff_run", owner_id=owner_id, app=app_row.id, diff=diff.id, runs=len(job_ids))
+    return DiffRunResponse(
+        message=f"Enqueued {len(job_ids)} recommended test run(s) for diff {diff.id}.",
+        diff_id=diff.id, job_ids=job_ids,
+    )
+
+
+@app.get("/api/quarantine", response_model=list[TestCaseOut])
+def list_quarantined_tests(workspace_id: Optional[int] = None, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    if workspace_id:
+        from .models import WorkspaceMember
+        member = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == workspace_id,
+            WorkspaceMember.user_id == user["sub"]
+        ).first()
+        if not member:
+            raise HTTPException(404, "Workspace not found or access denied")
+
+    if workspace_id:
+        return db.query(TestCase).filter(TestCase.workspace_id == workspace_id, TestCase.is_quarantined == True).order_by(TestCase.updated_at.desc()).all()
+    else:
+        return db.query(TestCase).filter(TestCase.workspace_id == None, TestCase.owner_id == user["sub"], TestCase.is_quarantined == True).order_by(TestCase.updated_at.desc()).all()
+
+@app.post("/api/tests/{id}/toggle-quarantine")
+def toggle_quarantine(id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    tc = _get_owned_test_case(db, id, user)
+    tc.is_quarantined = not tc.is_quarantined
+    db.commit()
+    return {"success": True, "is_quarantined": tc.is_quarantined}
+
+@app.get("/api/run-groups")
+def list_run_groups(workspace_id: Optional[int] = None, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    if workspace_id:
+        from .models import WorkspaceMember
+        member = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == workspace_id,
+            WorkspaceMember.user_id == user["sub"]
+        ).first()
+        if not member:
+            raise HTTPException(404, "Workspace not found or access denied")
+
+    # Group runs by run_group_id
+    from sqlalchemy import func, Integer
+    
+    base_q = db.query(
+        TestRun.run_group_id,
+        func.count(TestRun.id).label("total"),
+        func.sum(func.cast(TestRun.is_successful, Integer)).label("passed"),
+        func.max(TestRun.created_at).label("created_at")
+    ).filter(TestRun.run_group_id != None)
+    
+    if workspace_id:
+        base_q = base_q.filter(TestRun.workspace_id == workspace_id)
+    else:
+        base_q = base_q.filter(TestRun.workspace_id == None, TestRun.owner_id == user["sub"])
+    
+    rows = base_q.group_by(TestRun.run_group_id).order_by(func.max(TestRun.created_at).desc()).limit(50).all()
+    
+    results = []
+    for r in rows:
+        results.append({
+            "id": r[0],
+            "total_runs": r[1],
+            "passed_runs": r[2] or 0,
+            "failed_runs": r[1] - (r[2] or 0),
+            "created_at": r[3]
+        })
+    return results
+
+
+
+# ===========================================================================
+# WORKSPACE APIs (Institutional Identity)
+# ===========================================================================
+
+class WorkspaceCreate(BaseModel):
+    organization_name: str
+    workspace_name: str
+
+class WorkspaceOut(BaseModel):
+    id: int
+    organization_id: int
+    name: str
+    created_at: datetime
+    class Config:
+        orm_mode = True
+
+class AppTransfer(BaseModel):
+    workspace_id: int
+
+@app.post("/api/workspaces", response_model=WorkspaceOut)
+def create_workspace(
+    body: WorkspaceCreate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    from .models import Organization, Workspace, WorkspaceMember, RoleEnum
+    
+    org = Organization(name=body.organization_name)
+    db.add(org)
+    db.commit()
+    db.refresh(org)
+    
+    workspace = Workspace(name=body.workspace_name, organization_id=org.id)
+    db.add(workspace)
+    db.commit()
+    db.refresh(workspace)
+    
+    member = WorkspaceMember(
+        workspace_id=workspace.id,
+        user_id=user["sub"],
+        role=RoleEnum.ADMIN
+    )
+    db.add(member)
+    db.commit()
+    
+    return workspace
+
+@app.get("/api/workspaces", response_model=list[WorkspaceOut])
+def list_workspaces(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    from .models import Workspace, WorkspaceMember
+    members = db.query(WorkspaceMember).filter(WorkspaceMember.user_id == user["sub"]).all()
+    workspace_ids = [m.workspace_id for m in members]
+    if not workspace_ids:
+        return []
+    workspaces = db.query(Workspace).filter(Workspace.id.in_(workspace_ids)).all()
+    return workspaces
+
+@app.post("/api/applications/{app_id}/transfer")
+def transfer_application(
+    app_id: int,
+    body: AppTransfer,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    # Ensure they own the app directly
+    app_row = db.query(Application).filter(Application.id == app_id).first()
+    if not app_row:
+        raise HTTPException(404, "Application not found")
+    if app_row.owner_id != user["sub"]:
+        raise HTTPException(403, "Only the direct owner can transfer the application")
+        
+    # Ensure they are an ADMIN in the target workspace
+    from .models import WorkspaceMember, RoleEnum
+    member = db.query(WorkspaceMember).filter(
+        WorkspaceMember.workspace_id == body.workspace_id,
+        WorkspaceMember.user_id == user["sub"]
+    ).first()
+    if not member or member.role != RoleEnum.ADMIN:
+        raise HTTPException(403, "You must be an ADMIN of the target workspace to transfer an application.")
+        
+    app_row.workspace_id = body.workspace_id
+    db.commit()
+    return {"status": "success", "workspace_id": body.workspace_id}
+
+# ---------------------------------------------------------------------------
+# Vault API (Chrome Extension Integration)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/vault/context", response_model=VaultContextResponse)
+def get_vault_context(db: Session = Depends(get_db), user: dict = Depends(get_extension_user)):
+    from .models import Application, Environment, Workspace, WorkspaceMember
+    owner_id = user["sub"]
+    
+    # Get all workspaces the user is a member of
+    user_workspaces = db.query(WorkspaceMember.workspace_id).filter(WorkspaceMember.user_id == owner_id).all()
+    workspace_ids = [w[0] for w in user_workspaces]
+    
+    # Also fetch apps that belong directly to the owner (personal workspace)
+    apps = db.query(Application).filter(
+        (Application.workspace_id.in_(workspace_ids)) | 
+        ((Application.workspace_id == None) & (Application.owner_id == owner_id))
+    ).all()
+    
+    # Fetch all workspaces for easy lookup
+    workspaces = {w.id: w.name for w in db.query(Workspace).all()}
+    
+    # Deduplicate apps by (workspace_id, name)
+    unique_apps = {}
+    for app in apps:
+        key = (app.workspace_id, app.name)
+        if key not in unique_apps:
+            unique_apps[key] = app
+            
+    result = []
+    for (ws_id, _), app in unique_apps.items():
+        ws_name = workspaces.get(ws_id, "Personal") if ws_id else "Personal"
+        
+        envs = db.query(Environment).filter(Environment.application_id == app.id).all()
+        result.append(VaultApplicationOut(
+            id=app.id,
+            name=f"[{ws_name}] {app.name}",
+            environments=[VaultEnvironmentOut(id=e.id, name=e.name) for e in envs]
+        ))
+        
+    # Sort alphabetically for better UX
+    result.sort(key=lambda x: x.name)
+    
+    return VaultContextResponse(applications=result)
+
+@app.post("/api/vault/cookies")
+def store_vault_cookies(body: VaultCookiesRequest, db: Session = Depends(get_db), user: dict = Depends(get_extension_user)):
+    import json
+    ls_count = 0
+    if body.origins:
+        ls_count = sum(len(o.localStorage) for o in body.origins)
+        
+    print(f"[VAULT] Received {len(body.cookies)} cookies and {ls_count} localStorage items for {body.domain}")
+    
+    if body.environment_id:
+        from .models import Environment
+        env = db.query(Environment).filter(Environment.id == body.environment_id).first()
+        if env:
+            # Build Playwright storageState JSON
+            state = {
+                "cookies": [c.dict() for c in body.cookies],
+                "origins": [o.dict() for o in body.origins] if body.origins else []
+            }
+            env.auth_strategy = "state_cache"
+            env.auth_state_template = json.dumps(state)
+            db.commit()
+            print(f"[VAULT] Successfully saved Golden State to Environment {env.name} ({env.id})")
+            
+    return {"status": "ok", "message": "Auth state successfully saved to Environment."}
+
+@app.post("/api/vault/prompts")
 def store_vault_prompts(body: VaultPromptsRequest,
     VaultContextResponse,
     VaultApplicationOut,
