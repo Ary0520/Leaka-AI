@@ -3273,6 +3273,13 @@ def toggle_quarantine(id: int, db: Session = Depends(get_db), user: dict = Depen
     db.commit()
     return {"success": True, "is_quarantined": tc.is_quarantined}
 
+@app.delete("/api/test-cases/{id}")
+def delete_test_case(id: int, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
+    tc = _get_owned_test_case(db, id, user)
+    db.delete(tc)
+    db.commit()
+    return {"success": True}
+
 @app.get("/api/run-groups")
 def list_run_groups(workspace_id: Optional[int] = None, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     if workspace_id:

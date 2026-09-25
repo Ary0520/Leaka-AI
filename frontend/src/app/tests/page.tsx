@@ -196,6 +196,12 @@ export default function TestCasesPage() {
                                 <><ShieldAlert className="h-4 w-4 mr-2" /> Quarantine</>
                               )}
                             </DropdownMenuItem>
+                            <DropdownMenuItem 
+                              onClick={() => deleteMut.mutate(c.id)}
+                              className="text-destructive"
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" /> Delete
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>

@@ -544,6 +544,11 @@ export interface DiffRunResponse {
 
 // ---------- API ----------
 export const api = {
+  deleteTestCase: (id: number) =>
+    request<{ success: boolean }>(
+      `/api/test-cases/${id}`,
+      { method: "DELETE" }
+    ),
   toggleQuarantine: (id: number) =>
     request<{ success: boolean; is_quarantined: boolean }>(
       `/api/tests/${id}/toggle-quarantine`,
