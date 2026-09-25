@@ -62,6 +62,11 @@ export default function TestCasesPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["cases"] }),
   });
   
+  const deleteMut = useMutation({
+    mutationFn: (id: number) => api.deleteTestCase(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["cases"] }),
+  });
+  
   const runMut = useMutation({
 
     mutationFn: (c: TestCaseOut) => api.enqueueRun({
