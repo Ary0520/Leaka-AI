@@ -3499,7 +3499,7 @@ def store_vault_prompts(body: VaultPromptsRequest, db: Session = Depends(get_db)
     db.add(tc)
     db.commit()
     
-    return {"status": "ok", "message": f"Recorded flow with {len(body.prompts)} steps saved to Vault."}tures import ThreadPoolExecutor
+    return {"status": "ok", "message": f"Recorded flow with {len(body.prompts)} steps saved to Vault."}
 from datetime import datetime
 from typing import Optional
 
