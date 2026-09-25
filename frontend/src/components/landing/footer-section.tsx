@@ -55,7 +55,7 @@ export function FooterSection() {
               </a>
 
               <p className="text-muted-foreground leading-relaxed mb-8 max-w-xs">
-                The autonomous QA agent for revenue-critical flows. Test, verify, & scale with unprecedented confidence.
+                The autonomous QA agent for revenue-critical flows. Test, verify, and scale with unprecedented confidence.
               </p>
 
               {/* Social Links */}
