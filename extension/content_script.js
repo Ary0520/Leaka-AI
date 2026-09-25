@@ -384,9 +384,16 @@
     (e) => {
       const el = e.target;
       const isPassword = el.type === "password";
+      
+      // Fallback to innerText for contenteditable elements (Rich text editors, Notion-like apps)
+      let val = el.value;
+      if (val === undefined) {
+        if (el.isContentEditable) val = el.innerText || el.textContent;
+        else return; // If it's neither an input nor contenteditable, ignore.
+      }
+      
       // Send the input event immediately. Background.js handles deduplication perfectly.
-      // Debouncing here causes fast typers who hit Enter to lose their entire string.
-      send("input", el, { value: isPassword ? "***redacted***" : el.value });
+      send("input", el, { value: isPassword ? "***redacted***" : val });
     },
     true,
   );
