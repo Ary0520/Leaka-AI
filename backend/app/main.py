@@ -3511,14 +3511,33 @@ Example output:
 4. Press Enter
 """
             raw_data = "[\n" + ",\n".join(body.prompts) + "\n]"
-            response = llm.invoke([
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Raw trace:\n{raw_data}"}
-            ])
+            
+            import asyncio
+            async def run_llm():
+                return await llm.ainvoke([
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Raw trace:\n{raw_data}"}
+                ])
+                
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+            if loop.is_running():
+                import nest_asyncio
+                nest_asyncio.apply()
+                response = asyncio.run(run_llm())
+            else:
+                response = loop.run_until_complete(run_llm())
+                
             prompt_str = response.content.strip()
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             # Fallback if LLM fails or is not configured
-            prompt_str = "\n".join([f"{i+1}. Interacted with element (raw trace fallback)" for i, p in enumerate(body.prompts)])
+            prompt_str = f"LLM Translation Error: {str(e)}\n" + "\n".join([f"{i+1}. Interacted with element (raw trace fallback)" for i, p in enumerate(body.prompts)])
     else:
         prompt_str = "\n".join([f"{i+1}. {p}" for i, p in enumerate(body.prompts)])
     owner_id = user["sub"]
