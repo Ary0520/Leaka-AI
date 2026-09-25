@@ -1,3 +1,4 @@
+import { useState } from "react";
 "use client";
 import Link from "next/link";
 import { useWorkspace } from "@/app/providers";
@@ -10,6 +11,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { MoreHorizontal, ShieldAlert, ShieldCheck, Trash2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -47,6 +50,8 @@ function RunHistoryDots({ caseId }: { caseId: number }) {
 }
 
 export default function TestCasesPage() {
+  const [testToDelete, setTestToDelete] = useState<number | null>(null);
+  
   const router = useRouter();
   const qc = useQueryClient();
 
@@ -202,7 +207,7 @@ export default function TestCasesPage() {
                               )}
                             </DropdownMenuItem>
                             <DropdownMenuItem 
-                              onClick={() => { if (window.confirm("Are you sure you want to delete this test case? This cannot be undone.")) deleteMut.mutate(c.id); }}
+                              onClick={() => setTestToDelete(c.id)}
                               className="text-destructive"
                             >
                               <Trash2 className="h-4 w-4 mr-2" /> Delete
@@ -218,6 +223,26 @@ export default function TestCasesPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={testToDelete !== null} onOpenChange={(open) => { if (!open) setTestToDelete(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Test Case</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this test case? This action cannot be undone and will permanently remove it from the vault.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTestToDelete(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={() => {
+              if (testToDelete !== null) {
+                deleteMut.mutate(testToDelete);
+                setTestToDelete(null);
+              }
+            }}>Delete</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
