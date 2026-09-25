@@ -115,6 +115,13 @@
   }
 
   function describe(el) {
+    // If user clicked an SVG or icon, it has no semantic meaning.
+    // Snap up to the nearest button or link to grab its aria-label or text!
+    if (el && (el.tagName.toLowerCase() === 'svg' || el.tagName.toLowerCase() === 'path' || el.tagName.toLowerCase() === 'img')) {
+      const parent = el.closest('button, a, [role="button"]');
+      if (parent) el = parent;
+    }
+
     if (!el || el.nodeType !== 1) {
       return {
         selector: null,
@@ -372,17 +379,14 @@
     true,
   );
 
-  const inputTimers = new WeakMap();
   document.addEventListener(
     "input",
     (e) => {
       const el = e.target;
-      clearTimeout(inputTimers.get(el));
-      const timer = setTimeout(() => {
-        const isPassword = el.type === "password";
-        send("input", el, { value: isPassword ? "***redacted***" : el.value });
-      }, 400);
-      inputTimers.set(el, timer);
+      const isPassword = el.type === "password";
+      // Send the input event immediately. Background.js handles deduplication perfectly.
+      // Debouncing here causes fast typers who hit Enter to lose their entire string.
+      send("input", el, { value: isPassword ? "***redacted***" : el.value });
     },
     true,
   );
