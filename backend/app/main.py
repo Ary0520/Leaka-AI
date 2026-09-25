@@ -3485,7 +3485,42 @@ def store_vault_prompts(body: VaultPromptsRequest, db: Session = Depends(get_db)
     if not body.prompts:
         return {"status": "ok", "message": "No prompts recorded"}
         
-    prompt_str = "\n".join([f"{i+1}. {p}" for i, p in enumerate(body.prompts)])
+    # Check if the prompts are raw JSON traces from the new extension
+    import json
+    from .llm import get_llm
+    
+    is_raw_json = False
+    try:
+        json.loads(body.prompts[0])
+        is_raw_json = True
+    except:
+        pass
+        
+    prompt_str = ""
+    if is_raw_json:
+        try:
+            llm = get_llm(user["sub"])
+            system_prompt = """You are an expert QA Engineer. 
+I will provide a raw JSON array of DOM events recorded by a user interacting with a web app.
+Your job is to translate these raw events into a clean, human-readable Natural Language test case.
+Output ONLY the numbered list of steps. Do not include markdown blocks or intro text.
+Example output:
+1. Navigate to https://app.com
+2. Click on the "Settings" button
+3. Type "admin" into the "Username" field
+4. Press Enter
+"""
+            raw_data = "[\n" + ",\n".join(body.prompts) + "\n]"
+            response = llm.invoke([
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Raw trace:\n{raw_data}"}
+            ])
+            prompt_str = response.content.strip()
+        except Exception as e:
+            # Fallback if LLM fails or is not configured
+            prompt_str = "\n".join([f"{i+1}. Interacted with element (raw trace fallback)" for i, p in enumerate(body.prompts)])
+    else:
+        prompt_str = "\n".join([f"{i+1}. {p}" for i, p in enumerate(body.prompts)])
     owner_id = user["sub"]
     workspace_id = None
     

@@ -174,45 +174,43 @@ function formatIdentifier(ev) {
 }
 
 function processEventsToPrompts(events) {
-  const prompts = [];
+  // R&D: Send raw JSON telemetry to the backend so the LLM can intelligently synthesize it.
+  const rawSteps = [];
+  
+  let lastTypingTarget = null;
   
   for (const ev of events) {
-    const target = formatIdentifier(ev);
-    
-    if (ev.type === 'click') {
-      prompts.push({ type: 'click', target, text: `Click on ${target}` });
-      
-    } else if (ev.type === 'input' || ev.type === 'change') {
-      if (ev.value === undefined || ev.value === "") continue; // Ignore clearing empty fields on submit
-      
-      const cleanValue = ev.value.replace(/\n/g, "");
-      if (cleanValue === "") continue;
-      
-      prompts.push({ type: 'type', target, value: cleanValue, text: `Type "${cleanValue}" into ${target}` });
-      
-    } else if (ev.type === 'keydown' && ev.key === 'Enter') {
-      prompts.push({ type: 'enter', target, text: `Press Enter` });
-      
-    } else if (ev.type === 'navigate') {
-      prompts.push({ type: 'navigate', target: 'browser', text: `Navigate to ${ev.url}` });
-    }
-  }
-  
-  // Deduplicate consecutive typing events targeting the exact same element
-  const compressed = [];
-  for (const p of prompts) {
-    if (compressed.length > 0 && p.type === 'type' && compressed[compressed.length-1].type === 'type') {
-       if (compressed[compressed.length-1].target === p.target) {
-         // The user is just continuing to type in the same field. Override with the accumulated full string.
-         compressed[compressed.length-1] = p;
-         continue;
+    // Basic deduplication of typing so we don't spam the LLM with 500 keystrokes
+    if (ev.type === 'input' || ev.type === 'change') {
+       if (ev.value === undefined || ev.value === "") continue;
+       if (lastTypingTarget === ev.selector) {
+          // Replace the last item in rawSteps with the updated string
+          const last = JSON.parse(rawSteps[rawSteps.length - 1]);
+          last.value = ev.value;
+          rawSteps[rawSteps.length - 1] = JSON.stringify(last);
+          continue;
        }
+       lastTypingTarget = ev.selector;
+    } else {
+       lastTypingTarget = null;
     }
-    compressed.push(p);
+    
+    // We only need the core fields to save tokens
+    const coreEvent = {
+       type: ev.type,
+       tag: ev.tag_name,
+       text: ev.text ? ev.text.trim().substring(0, 50) : null,
+       ariaLabel: ev.attributes && ev.attributes['aria-label'] ? ev.attributes['aria-label'] : null,
+       placeholder: ev.attributes && ev.attributes['placeholder'] ? ev.attributes['placeholder'] : null,
+       testId: ev.attributes && (ev.attributes['data-testid'] || ev.attributes['data-test-id']) ? ev.attributes['data-testid'] || ev.attributes['data-test-id'] : null,
+       value: ev.value || null,
+       url: ev.url || null,
+       key: ev.key || null
+    };
+    rawSteps.push(JSON.stringify(coreEvent));
   }
   
-  // Return just the string instructions
-  return compressed.map(p => p.text);
+  return rawSteps;
 }
 
 async function pushPromptsToVault(prompts, config, testName) {
