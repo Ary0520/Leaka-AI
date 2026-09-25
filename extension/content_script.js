@@ -528,14 +528,14 @@
   }
 
   try {
-    chrome.storage.session.get(["sorify_recording"], (res) => {
-      applyRecordingState(res && res.sorify_recording);
+    chrome.storage.local.get(["isRecording"], (res) => {
+      applyRecordingState(res && res.isRecording);
       // Tell the MAIN-world script the initial state now that we know it.
       syncMainWorld();
     });
     chrome.storage.onChanged.addListener((changes, area) => {
-      if (area === "session" && changes.sorify_recording) {
-        applyRecordingState(changes.sorify_recording.newValue);
+      if (area === "local" && changes.isRecording) {
+        applyRecordingState(changes.isRecording.newValue);
       }
     });
   } catch {
