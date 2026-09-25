@@ -130,22 +130,75 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
+function formatIdentifier(ev) {
+  if (ev.text && ev.text.trim().length > 0) {
+    let cleanText = ev.text.trim().replace(/\n/g, " ");
+    if (cleanText.length > 40) cleanText = cleanText.substring(0, 40) + "...";
+    return `"${cleanText}"`;
+  }
+  
+  if (ev.selector_strategy === 'placeholder') {
+    const match = ev.selector.match(/placeholder="(.*?)"/);
+    if (match) return `the "${match[1]}" input`;
+  }
+  
+  if (ev.selector_strategy === 'aria-label') {
+    const match = ev.selector.match(/aria-label="(.*?)"/);
+    if (match) return `"${match[1]}"`;
+  }
+  
+  if (ev.selector_strategy === 'alt') {
+    const match = ev.selector.match(/alt="(.*?)"/);
+    if (match) return `the "${match[1]}" image`;
+  }
+  
+  if (ev.selector_strategy === 'testid' || ev.selector_strategy === 'id') {
+    let raw = ev.selector.match(/"(.*?)"/) || ev.selector.match(/#(.*)/);
+    if (raw && raw[1]) {
+       return `the "${raw[1].replace(/[-_]/g, ' ')}"`;
+    }
+  }
+  
+  if (ev.selector_strategy === 'name') {
+    const match = ev.selector.match(/name="(.*?)"/);
+    if (match) return `the "${match[1].replace(/[-_]/g, ' ')}" field`;
+  }
+  
+  return `the ${ev.tag_name || 'element'}`;
+}
+
 function processEventsToPrompts(events) {
   const prompts = [];
   
   for (const ev of events) {
     if (ev.type === 'click') {
-      const identifier = ev.text || ev.cssSelector || 'element';
-      prompts.push(`Click on "${identifier}"`);
+      prompts.push(`Click on ${formatIdentifier(ev)}`);
     } else if (ev.type === 'input' || ev.type === 'change') {
-      const identifier = ev.text || ev.cssSelector || 'input';
-      prompts.push(`Type "${ev.value}" into "${identifier}"`);
+      if (ev.value === undefined) continue;
+      prompts.push(`Type "${ev.value}" into ${formatIdentifier(ev)}`);
+    } else if (ev.type === 'keydown' && ev.key === 'Enter') {
+      prompts.push(`Press Enter`);
     } else if (ev.type === 'navigate') {
       prompts.push(`Navigate to ${ev.url}`);
     }
   }
   
-  return prompts;
+  // Deduplicate consecutive keystrokes on the same input
+  const compressed = [];
+  for (const p of prompts) {
+    if (compressed.length > 0 && p.startsWith("Type ") && compressed[compressed.length-1].startsWith("Type ")) {
+       const prevTarget = compressed[compressed.length-1].split(" into ")[1];
+       const curTarget = p.split(" into ")[1];
+       if (prevTarget === curTarget) {
+         // Replace the old keystroke string with the new accumulated string
+         compressed[compressed.length-1] = p;
+         continue;
+       }
+    }
+    compressed.push(p);
+  }
+  
+  return compressed;
 }
 
 async function pushPromptsToVault(prompts, config) {
