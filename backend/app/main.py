@@ -61,6 +61,9 @@ from .schemas import (
     ApplicationCreate,
     VaultCookiesRequest,
     VaultPromptsRequest,
+    VaultContextResponse,
+    VaultApplicationOut,
+    VaultEnvironmentOut,
     ApplicationMapResponse,
     ApplicationOut,
     ApplicationUpdate,
@@ -3401,20 +3404,53 @@ def transfer_application(
 # ---------------------------------------------------------------------------
 # Vault API (Chrome Extension Integration)
 # ---------------------------------------------------------------------------
+
+@app.get("/api/vault/context", response_model=VaultContextResponse)
+def get_vault_context(db: Session = Depends(get_db)):
+    # Note: No auth for testing purposes. In prod, use Depends(get_current_user)
+    from .models import Application, Environment
+    apps = db.query(Application).all() # Just grab all for demo extension
+    
+    result = []
+    for app in apps:
+        envs = db.query(Environment).filter(Environment.application_id == app.id).all()
+        result.append(VaultApplicationOut(
+            id=app.id,
+            name=app.name,
+            environments=[VaultEnvironmentOut(id=e.id, name=e.name) for e in envs]
+        ))
+    return VaultContextResponse(applications=result)
+
 @app.post("/api/vault/cookies")
 def store_vault_cookies(body: VaultCookiesRequest, db: Session = Depends(get_db)):
-    # In a real enterprise app, cookies should be encrypted at rest.
-    # For now, we store them as a JSON string in a generic memory or settings table,
-    # or print them out for the worker to pick up.
+    import json
     ls_count = 0
     if body.origins:
         ls_count = sum(len(o.localStorage) for o in body.origins)
         
-    print(f"[VAULT] Received {len(body.cookies)} cookies and {ls_count} localStorage items for {body.domain} in workspace {body.workspace_id}")
-    return {"status": "ok", "message": "Auth state (Cookies + LocalStorage) stored in Leaka Vault."}
+    print(f"[VAULT] Received {len(body.cookies)} cookies and {ls_count} localStorage items for {body.domain}")
+    
+    if body.environment_id:
+        from .models import Environment
+        env = db.query(Environment).filter(Environment.id == body.environment_id).first()
+        if env:
+            # Build Playwright storageState JSON
+            state = {
+                "cookies": [c.dict() for c in body.cookies],
+                "origins": [o.dict() for o in body.origins] if body.origins else []
+            }
+            env.auth_strategy = "state_cache"
+            env.auth_state_template = json.dumps(state)
+            db.commit()
+            print(f"[VAULT] Successfully saved Golden State to Environment {env.name} ({env.id})")
+            
+    return {"status": "ok", "message": "Auth state successfully saved to Environment."}
 
 @app.post("/api/vault/prompts")
-def store_vault_prompts(body: VaultPromptsRequest, db: Session = Depends(get_db)):
+def store_vault_prompts(body: VaultPromptsRequest,
+    VaultContextResponse,
+    VaultApplicationOut,
+    VaultEnvironmentOut, db: Session = Depends(get_db)):
     # The recorded NL prompts from the extension.
     # Note: In a full production launch, we would use an Extension API Key here.
     
@@ -3435,11 +3471,21 @@ def store_vault_prompts(body: VaultPromptsRequest, db: Session = Depends(get_db)
         if member:
             owner = member.user_id
 
+    # If environment_id is provided, link it
+    from .models import Environment
+    app_id = None
+    if body.environment_id:
+        env = db.query(Environment).filter(Environment.id == body.environment_id).first()
+        if env:
+            app_id = env.application_id
+
     tc = TestCase(
         owner_id=owner,
         workspace_id=workspace_id,
         name=f"Recorded Flow ({len(body.prompts)} steps)",
         prompt=f"Execute the following recorded flow precisely:\n{prompt_str}",
+        environment_id=body.environment_id,
+        # suite_id = None, but we could link it to an app if we had application_id on TestCase
     )
     db.add(tc)
     db.commit()

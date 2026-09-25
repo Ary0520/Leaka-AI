@@ -21,6 +21,7 @@
       }
       .header {
         display: flex;
+        justify-content: space-between;
         align-items: center;
         margin-bottom: 16px;
         border-bottom: 1px solid #eee;
@@ -29,6 +30,14 @@
       .header h2 {
         margin: 0;
         font-size: 16px;
+      }
+      .settings-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 16px;
+        color: var(--secondary);
+        padding: 4px;
       }
       .section {
         margin-bottom: 16px;
@@ -44,6 +53,7 @@
         transition: opacity 0.2s;
       }
       button:hover { opacity: 0.9; }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
       .btn-primary { background: var(--primary); color: white; }
       .btn-danger { background: var(--danger); color: white; }
       .btn-outline { background: white; border: 1px solid #ccc; color: var(--primary); }
@@ -59,7 +69,7 @@
       .status-dot.active { background: var(--success); }
       .status-text { font-size: 13px; color: var(--secondary); margin-bottom: 12px; display: flex; align-items: center; }
       
-      input[type="text"] {
+      select, input[type="text"] {
         width: 100%;
         padding: 8px;
         margin-bottom: 8px;
@@ -67,28 +77,58 @@
         border-radius: 4px;
         box-sizing: border-box;
       }
+
+      /* Settings panel */
+      #settings-panel {
+        display: none;
+        border-top: 1px solid #eee;
+        padding-top: 12px;
+        margin-top: 12px;
+      }
     </style>
   </head>
   <body>
     <div class="header">
       <h2>Leaka AI Recorder</h2>
+      <button id="btn-settings" class="settings-btn" title="Settings">⚙️</button>
     </div>
 
-    <div class="section">
-      <div class="status-text">
-        <span id="status-dot" class="status-dot"></span>
-        <span id="status-label">Idle</span>
+    <!-- Main View -->
+    <div id="main-view">
+      <div class="section">
+        <label style="font-size: 12px; font-weight: 600; margin-bottom: 4px; display: block;">Target Environment</label>
+        <select id="env-select">
+          <option value="">Loading environments...</option>
+        </select>
+        <div id="env-warning" style="font-size: 11px; color: var(--danger); display: none;">
+          Please create an Application in Leaka Dashboard first.
+        </div>
       </div>
-      
-      <button id="btn-record" class="btn-primary">Start Recording Prompts</button>
-      <button id="btn-stop" class="btn-danger" style="display: none;">Stop & Save to Vault</button>
+
+      <div class="section" style="border-top: 1px solid #eee; padding-top: 12px;">
+        <div class="status-text">
+          <span id="status-dot" class="status-dot"></span>
+          <span id="status-label">Idle</span>
+        </div>
+        
+        <button id="btn-record" class="btn-primary">Start Recording Prompts</button>
+        <button id="btn-stop" class="btn-danger" style="display: none;">Stop & Save to Vault</button>
+      </div>
+
+      <div class="section" style="border-top: 1px solid #eee; padding-top: 12px;">
+        <h3 style="font-size: 14px; margin-top: 0; margin-bottom: 4px;">Inject Auth State</h3>
+        <p style="font-size: 11px; color: var(--secondary); margin-top: 0; margin-bottom: 8px;">Extracts active cookies & localStorage.</p>
+        <button id="btn-extract-cookies" class="btn-outline">Push to Selected Environment</button>
+        <div id="cookie-status" style="font-size: 12px; color: var(--success); margin-top: 4px; display: none;">Auth state pushed successfully!</div>
+      </div>
     </div>
 
-    <div class="section" style="border-top: 1px solid #eee; padding-top: 12px;">
-      <h3 style="font-size: 14px; margin-top: 0;">Session Auth</h3>
-      <input type="text" id="workspace-id" placeholder="Workspace ID" />
-      <button id="btn-extract-cookies" class="btn-outline">Push Cookies to Leaka Vault</button>
-      <div id="cookie-status" style="font-size: 12px; color: var(--success); margin-top: 4px; display: none;">Cookies pushed successfully!</div>
+    <!-- Settings View -->
+    <div id="settings-panel">
+      <h3 style="font-size: 14px; margin-top: 0;">Extension Settings</h3>
+      <label style="font-size: 12px; font-weight: 600; margin-bottom: 4px; display: block;">Backend URL</label>
+      <input type="text" id="backend-url" placeholder="http://localhost:8000" />
+      <button id="btn-save-settings" class="btn-primary" style="margin-top: 8px;">Save</button>
     </div>
 
     <script src="popup.js"></script>

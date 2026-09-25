@@ -3,7 +3,11 @@ let recordedEvents = [];
 
 // Initialize state
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.set({ isRecording: false, events: [] });
+  chrome.storage.local.set({ 
+    isRecording: false, 
+    events: [],
+    leakaConfig: { backendUrl: 'http://localhost:8000', selectedEnvId: null }
+  });
 });
 
 // Listen for messages from popup or content script
@@ -28,10 +32,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.storage.local.set({ isRecording: false });
     
     // Process recorded events into Natural Language Prompts
-    chrome.storage.local.get(['events', 'workspaceId'], (data) => {
+    chrome.storage.local.get(['events', 'leakaConfig'], (data) => {
+      const config = data.leakaConfig || { backendUrl: 'http://localhost:8000', selectedEnvId: null };
       const nlpPrompts = processEventsToPrompts(data.events || []);
       // Push to backend
-      pushPromptsToVault(nlpPrompts, data.workspaceId || 'personal')
+      pushPromptsToVault(nlpPrompts, config)
         .then(() => {
           chrome.storage.local.set({ events: [] });
         })
@@ -50,67 +55,71 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ success: true });
     
   } else if (message.action === 'extract_cookies') {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (!tabs[0] || !tabs[0].url) {
-        sendResponse({ success: false, error: 'No active tab URL' });
-        return;
-      }
+    chrome.storage.local.get(['leakaConfig'], (data) => {
+      const config = data.leakaConfig || { backendUrl: 'http://localhost:8000', selectedEnvId: null };
       
-      const tabUrl = tabs[0].url;
-      const urlObj = new URL(tabUrl);
-      const domain = urlObj.hostname;
-      const origin = urlObj.origin;
-      
-      // We will grab cookies for the URL, AND inject a script to grab localStorage
-      chrome.scripting.executeScript({
-        target: { tabId: tabs[0].id },
-        func: () => {
-          const ls = [];
-          for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            ls.push({ name: key, value: localStorage.getItem(key) });
-          }
-          return ls;
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (!tabs[0] || !tabs[0].url) {
+          sendResponse({ success: false, error: 'No active tab URL' });
+          return;
         }
-      }, (injectionResults) => {
-        const lsData = (injectionResults && injectionResults[0] && injectionResults[0].result) ? injectionResults[0].result : [];
         
-        chrome.cookies.getAll({ url: tabUrl }, async (cookies) => {
-          try {
-            // Format cookies for Playwright storageState
-            const playwrightCookies = cookies.map(c => ({
-              name: c.name,
-              value: c.value,
-              domain: c.domain,
-              path: c.path,
-              expires: c.expirationDate || -1,
-              httpOnly: c.httpOnly,
-              secure: c.secure,
-              sameSite: c.sameSite === 'no_restriction' ? 'None' : (c.sameSite === 'unspecified' ? 'Lax' : c.sameSite)
-            }));
-
-            const res = await fetch('http://localhost:8000/api/vault/cookies', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                workspace_id: message.workspaceId,
-                domain: domain,
-                cookies: playwrightCookies,
-                origins: [
-                  {
-                    origin: origin,
-                    localStorage: lsData
-                  }
-                ]
-              })
-            });
-            
-            if (!res.ok) throw new Error('Backend returned ' + res.status);
-            sendResponse({ success: true });
-          } catch (error) {
-            console.error(error);
-            sendResponse({ success: false, error: error.message });
+        const tabUrl = tabs[0].url;
+        const urlObj = new URL(tabUrl);
+        const domain = urlObj.hostname;
+        const origin = urlObj.origin;
+        
+        // We will grab cookies for the URL, AND inject a script to grab localStorage
+        chrome.scripting.executeScript({
+          target: { tabId: tabs[0].id },
+          func: () => {
+            const ls = [];
+            for (let i = 0; i < localStorage.length; i++) {
+              const key = localStorage.key(i);
+              ls.push({ name: key, value: localStorage.getItem(key) });
+            }
+            return ls;
           }
+        }, (injectionResults) => {
+          const lsData = (injectionResults && injectionResults[0] && injectionResults[0].result) ? injectionResults[0].result : [];
+          
+          chrome.cookies.getAll({ url: tabUrl }, async (cookies) => {
+            try {
+              // Format cookies for Playwright storageState
+              const playwrightCookies = cookies.map(c => ({
+                name: c.name,
+                value: c.value,
+                domain: c.domain,
+                path: c.path,
+                expires: c.expirationDate || -1,
+                httpOnly: c.httpOnly,
+                secure: c.secure,
+                sameSite: c.sameSite === 'no_restriction' ? 'None' : (c.sameSite === 'unspecified' ? 'Lax' : c.sameSite)
+              }));
+
+              const res = await fetch(`${config.backendUrl}/api/vault/cookies`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  environment_id: config.selectedEnvId ? parseInt(config.selectedEnvId) : null,
+                  domain: domain,
+                  cookies: playwrightCookies,
+                  origins: [
+                    {
+                      origin: origin,
+                      localStorage: lsData
+                    }
+                  ]
+                })
+              });
+              
+              if (!res.ok) throw new Error('Backend returned ' + res.status);
+              sendResponse({ success: true });
+            } catch (error) {
+              console.error(error);
+              sendResponse({ success: false, error: error.message });
+            }
+          });
         });
       });
     });
@@ -119,7 +128,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 function processEventsToPrompts(events) {
-  // Convert raw DOM events into Leaka Natural Language Prompts
   const prompts = [];
   
   for (const ev of events) {
@@ -137,14 +145,14 @@ function processEventsToPrompts(events) {
   return prompts;
 }
 
-async function pushPromptsToVault(prompts, workspaceId) {
+async function pushPromptsToVault(prompts, config) {
   if (!prompts.length) return;
   
-  await fetch('http://localhost:8000/api/vault/prompts', {
+  await fetch(`${config.backendUrl}/api/vault/prompts`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      workspace_id: workspaceId,
+      environment_id: config.selectedEnvId ? parseInt(config.selectedEnvId) : null,
       prompts: prompts
     })
   });

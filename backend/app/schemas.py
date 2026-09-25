@@ -636,10 +636,24 @@ class OriginState(BaseModel):
 
 class VaultCookiesRequest(BaseModel):
     workspace_id: Optional[str] = None
+    environment_id: Optional[int] = None
     domain: str
     cookies: List[CookieData]
     origins: Optional[List[OriginState]] = None
 
 class VaultPromptsRequest(BaseModel):
     workspace_id: Optional[str] = None
+    environment_id: Optional[int] = None
     prompts: List[str]
+
+class VaultEnvironmentOut(BaseModel):
+    id: int
+    name: str
+
+class VaultApplicationOut(BaseModel):
+    id: int
+    name: str
+    environments: List[VaultEnvironmentOut]
+
+class VaultContextResponse(BaseModel):
+    applications: List[VaultApplicationOut]
