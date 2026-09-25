@@ -3408,17 +3408,35 @@ def transfer_application(
 @app.get("/api/vault/context", response_model=VaultContextResponse)
 def get_vault_context(db: Session = Depends(get_db)):
     # Note: No auth for testing purposes. In prod, use Depends(get_current_user)
-    from .models import Application, Environment
-    apps = db.query(Application).all() # Just grab all for demo extension
+    from .models import Application, Environment, Workspace
     
-    result = []
+    # Let's deduplicate and group by workspace to avoid the massive chaotic list
+    apps = db.query(Application).all()
+    
+    # Fetch all workspaces for easy lookup
+    workspaces = {w.id: w.name for w in db.query(Workspace).all()}
+    
+    # Deduplicate apps by (workspace_id, name)
+    unique_apps = {}
     for app in apps:
+        key = (app.workspace_id, app.name)
+        if key not in unique_apps:
+            unique_apps[key] = app
+            
+    result = []
+    for (ws_id, _), app in unique_apps.items():
+        ws_name = workspaces.get(ws_id, "Personal") if ws_id else "Personal"
+        
         envs = db.query(Environment).filter(Environment.application_id == app.id).all()
         result.append(VaultApplicationOut(
             id=app.id,
-            name=app.name,
+            name=f"[{ws_name}] {app.name}",
             environments=[VaultEnvironmentOut(id=e.id, name=e.name) for e in envs]
         ))
+        
+    # Sort alphabetically for better UX
+    result.sort(key=lambda x: x.name)
+    
     return VaultContextResponse(applications=result)
 
 @app.post("/api/vault/cookies")
