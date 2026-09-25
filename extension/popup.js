@@ -152,8 +152,11 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   btnStop.addEventListener('click', () => {
-    chrome.runtime.sendMessage({ action: 'stop_recording' }, () => {
+    const testName = document.getElementById('test-name').value;
+    chrome.runtime.sendMessage({ action: 'stop_recording', testName: testName }, () => {
       setRecordingState(false);
+      document.getElementById('test-name-container').style.display = 'none';
+      document.getElementById('test-name').value = '';
     });
   });
 

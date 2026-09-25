@@ -645,6 +645,7 @@ class VaultPromptsRequest(BaseModel):
     workspace_id: Optional[str] = None
     environment_id: Optional[int] = None
     prompts: List[str]
+    name: Optional[str] = None
 
 class VaultEnvironmentOut(BaseModel):
     id: int

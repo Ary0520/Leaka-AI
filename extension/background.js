@@ -36,7 +36,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const config = data.leakaConfig || { backendUrl: 'http://localhost:8000', selectedEnvId: null };
       const nlpPrompts = processEventsToPrompts(data.events || []);
       // Push to backend
-      pushPromptsToVault(nlpPrompts, config)
+      pushPromptsToVault(nlpPrompts, config, message.testName)
         .then(() => {
           chrome.storage.local.set({ events: [] });
         })
@@ -215,7 +215,7 @@ function processEventsToPrompts(events) {
   return compressed.map(p => p.text);
 }
 
-async function pushPromptsToVault(prompts, config) {
+async function pushPromptsToVault(prompts, config, testName) {
   if (!prompts.length) return;
   
   await fetch(`${config.backendUrl}/api/vault/prompts`, {
@@ -226,7 +226,8 @@ async function pushPromptsToVault(prompts, config) {
     },
     body: JSON.stringify({
       environment_id: config.selectedEnvId ? parseInt(config.selectedEnvId) : null,
-      prompts: prompts
+      prompts: prompts,
+      name: testName || null
     })
   });
 }

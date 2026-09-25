@@ -3489,10 +3489,29 @@ def store_vault_prompts(body: VaultPromptsRequest, db: Session = Depends(get_db)
             if app:
                 workspace_id = app.workspace_id
                 
+    # Generate a heuristic enterprise test name
+    test_name = body.name
+    if not test_name:
+        domain = "Application"
+        action = "Navigation Flow"
+        for p in body.prompts:
+            if "Navigate to" in p:
+                parts = p.split("://")
+                if len(parts) > 1:
+                    domain = parts[1].split("/")[0]
+                    # Clean up common subdomains
+                    domain = domain.replace("www.", "").split(".")[0].capitalize()
+            elif "Click on" in p and action == "Navigation Flow":
+                target = p.replace("Click on ", "").replace("the ", "").replace(" button", "").replace('"', '')
+                action = f"{target} Flow"
+            elif "Type " in p and action == "Navigation Flow":
+                action = "Form Submission Flow"
+        test_name = f"[{domain}] {action}"
+
     tc = TestCase(
         owner_id=owner_id,
         workspace_id=workspace_id,
-        name=f"Recorded Flow ({len(body.prompts)} steps)",
+        name=test_name,
         prompt=f"Execute the following recorded flow precisely:\n{prompt_str}",
         environment_id=body.environment_id,
     )
