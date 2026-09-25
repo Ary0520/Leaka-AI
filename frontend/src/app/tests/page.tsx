@@ -59,12 +59,12 @@ export default function TestCasesPage() {
   const queryClient = useQueryClient();
   const toggleMut = useMutation({
     mutationFn: (id: number) => api.toggleQuarantine(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["cases"] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["testcases-page"] }),
   });
   
   const deleteMut = useMutation({
     mutationFn: (id: number) => api.deleteTestCase(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["cases"] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["testcases-page"] }),
   });
   
   const runMut = useMutation({
