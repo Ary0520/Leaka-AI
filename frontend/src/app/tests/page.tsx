@@ -202,7 +202,7 @@ export default function TestCasesPage() {
                               )}
                             </DropdownMenuItem>
                             <DropdownMenuItem 
-                              onClick={() => deleteMut.mutate(c.id)}
+                              onClick={() => { if (window.confirm("Are you sure you want to delete this test case? This cannot be undone.")) deleteMut.mutate(c.id); }}
                               className="text-destructive"
                             >
                               <Trash2 className="h-4 w-4 mr-2" /> Delete
