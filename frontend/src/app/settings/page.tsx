@@ -194,6 +194,11 @@ export default function SettingsPage() {
     queryFn: () => api.getUserSlackSettings(),
   });
 
+  const { data: apiKeys, isLoading: apiKeysLoading } = useQuery({
+    queryKey: ["api-keys"],
+    queryFn: () => api.listApiKeys(),
+  });
+
   // Local form state
   const [linearKey, setLinearKey] = useState("");
   const [linearTeam, setLinearTeam] = useState("");
@@ -213,6 +218,9 @@ export default function SettingsPage() {
   
   const [ciToken, setCiToken] = useState("");
   
+  const [newKeyName, setNewKeyName] = useState("");
+  const [generatedKey, setGeneratedKey] = useState<{name: string, key: string} | null>(null);
+
   const [llmTestResult, setLlmTestResult] = useState<{ ok: boolean; provider: string; model: string; detail: string } | null>(null);
 
   // Initial population
@@ -283,6 +291,26 @@ export default function SettingsPage() {
       });
     },
     onError: (e: Error) => toast({ title: "Connection test failed", description: e.message, variant: "destructive" }),
+  });
+
+  const createKeyMut = useMutation({
+    mutationFn: (name: string) => api.createApiKey(name),
+    onSuccess: (r) => {
+      setGeneratedKey(r);
+      setNewKeyName("");
+      toast({ title: "API Key Created" });
+      qc.invalidateQueries({ queryKey: ["api-keys"] });
+    },
+    onError: (e: Error) => toast({ title: "Failed to create key", description: e.message, variant: "destructive" }),
+  });
+
+  const deleteKeyMut = useMutation({
+    mutationFn: (id: number) => api.deleteApiKey(id),
+    onSuccess: () => {
+      toast({ title: "API Key deleted" });
+      qc.invalidateQueries({ queryKey: ["api-keys"] });
+    },
+    onError: (e: Error) => toast({ title: "Failed to delete key", description: e.message, variant: "destructive" }),
   });
 
   const copyToClip = (text: string) => {
@@ -604,6 +632,80 @@ export default function SettingsPage() {
           </div>
         </Card>
       </div>
+
+      {/* ── DEVELOPER API KEYS ── */}
+      <div className="space-y-3">
+        <div className="text-[10px] tracking-widest uppercase font-semibold text-muted-foreground pl-1">Developer API Keys</div>
+        <Card className="border-0 bg-[#161922] p-6 overflow-hidden relative shadow-sm border-t border-t-muted/10">
+          <div className="flex items-center gap-4 mb-6">
+            <div className="w-10 h-10 rounded-xl bg-white grid place-items-center shadow-sm shrink-0">
+              <Cpu className="w-5 h-5 text-black" />
+            </div>
+            <div>
+              <h3 className="font-medium text-foreground text-sm">MCP & API Keys</h3>
+              <p className="text-sm text-muted-foreground mt-0.5 leading-tight">
+                Manage personal API keys used for the Chrome Extension and Cursor MCP Server.
+              </p>
+            </div>
+          </div>
+          
+          <div className="space-y-4 pt-2 border-t border-border/20">
+            {generatedKey && (
+              <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-md mt-4">
+                <p className="text-emerald-400 font-medium text-sm mb-2">Save this key now! You will not be able to see it again.</p>
+                <div className="flex items-center gap-2">
+                  <div className="h-10 flex-1 flex items-center px-4 rounded-md bg-[#0B0E14] border border-transparent font-mono text-sm text-emerald-50 truncate">
+                    {generatedKey.key}
+                  </div>
+                  <Button variant="secondary" onClick={() => copyToClip(generatedKey.key)}>
+                    <Copy className="w-4 h-4 mr-2" /> Copy
+                  </Button>
+                </div>
+              </div>
+            )}
+            
+            <div className="flex items-end gap-2 mt-4">
+              <div className="flex-1 space-y-1">
+                <Label className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground">New Key Name</Label>
+                <Input 
+                  className="bg-[#0B0E14] border-transparent h-10 text-sm focus-visible:ring-1 focus-visible:ring-indigo-500/50" 
+                  placeholder="e.g. Cursor MCP Server" 
+                  value={newKeyName} 
+                  onChange={e => setNewKeyName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && newKeyName.trim()) createKeyMut.mutate(newKeyName.trim()); }}
+                />
+              </div>
+              <Button onClick={() => createKeyMut.mutate(newKeyName.trim())} disabled={!newKeyName.trim() || createKeyMut.isPending} className="h-10 bg-indigo-300 text-indigo-950 hover:bg-indigo-400 font-semibold">
+                {createKeyMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Generate Key"}
+              </Button>
+            </div>
+
+            <div className="mt-6 pt-6 border-t border-border/20">
+              <h4 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-4">Active Keys</h4>
+              {apiKeysLoading ? (
+                <div className="h-20 animate-pulse bg-muted/10 rounded-md" />
+              ) : apiKeys && apiKeys.length > 0 ? (
+                <div className="space-y-2">
+                  {apiKeys.map((key: { id: number, name: string, created_at: string }) => (
+                    <div key={key.id} className="flex items-center justify-between p-3 rounded-md bg-[#0B0E14] border border-transparent group hover:border-border/30">
+                      <div>
+                        <p className="text-sm font-medium text-foreground">{key.name}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">Created on {new Date(key.created_at).toLocaleDateString()}</p>
+                      </div>
+                      <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => { if(confirm('Revoke this API Key?')) deleteKeyMut.mutate(key.id); }}>
+                        Revoke
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">No API keys generated yet.</p>
+              )}
+            </div>
+          </div>
+        </Card>
+      </div>
+
     </div>
   );
 }

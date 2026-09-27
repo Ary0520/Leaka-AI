@@ -250,8 +250,9 @@ app = FastAPI(
     description="Autonomous QA agent for revenue flows using browser-use.",
 )
 
-from .routers import runner
+from .routers import runner, api_keys
 app.include_router(runner.router)
+app.include_router(api_keys.router)
 
 from .mcp_server import leaka_mcp
 app.mount("/api/mcp", leaka_mcp.sse_app())
