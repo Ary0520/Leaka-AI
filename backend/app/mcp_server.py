@@ -5,9 +5,9 @@ from typing import Optional
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
-from backend.app.database import SessionLocal
-from backend.app.models import TestRun, TestCase, TestRunStatus, ApiKey, TestSuite
-from backend.app.auth import verify_token
+from .database import SessionLocal
+from .models import TestRun, TestCase, TestRunStatus, ApiKey, TestSuite
+from .auth import verify_token
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ async def trigger_test_suite(suite_id: int, api_key: str = Field(..., descriptio
         if not cases:
             return "Suite has no test cases to run."
 
-        from backend.app.main import _dispatch_run_task
+        from .main import _dispatch_run_task
 
         run_group_id = str(uuid.uuid4())
         job_ids = []
