@@ -1,11 +1,12 @@
 import logging
 import hashlib
+import uuid
 from typing import Optional
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
 from backend.app.database import SessionLocal
-from backend.app.models import TestRun, TestCase, TestRunStatus, ApiKey
+from backend.app.models import TestRun, TestCase, TestRunStatus, ApiKey, TestSuite
 from backend.app.auth import verify_token
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ def _verify_api_key(db, token: str) -> str:
 # --- Define Leaka Orchestration Tools ---
 
 @leaka_mcp.tool()
-async def trigger_test_suite(suite_id: int, env_id: int, api_key: str = Field(..., description="Leaka API Key for auth")) -> str:
+async def trigger_test_suite(suite_id: int, api_key: str = Field(..., description="Leaka API Key for auth"), environment_id: int = None) -> str:
     """
     Trigger a Leaka AI test suite to run dynamically against the specified environment.
     Use this to start End-to-End testing.
@@ -38,11 +39,58 @@ async def trigger_test_suite(suite_id: int, env_id: int, api_key: str = Field(..
     db = SessionLocal()
     try:
         owner_id = _verify_api_key(db, api_key)
-        # Note: In a real implementation we would import _dispatch_run_task 
-        # and enqueue the runs for the suite. For safety we just log it.
-        return f"Successfully authorized user {owner_id}. Test suite {suite_id} triggered on environment {env_id}."
+        
+        suite = db.query(TestSuite).filter(TestSuite.id == suite_id, TestSuite.owner_id == owner_id).first()
+        if not suite:
+            return f"Error: Suite {suite_id} not found."
+            
+        cases = db.query(TestCase).filter(TestCase.suite_id == suite_id).all()
+        if not cases:
+            return "Suite has no test cases to run."
+
+        from backend.app.main import _dispatch_run_task
+
+        run_group_id = str(uuid.uuid4())
+        job_ids = []
+        for tc in cases:
+            job_id = uuid.uuid4().hex
+            run_name = f"[Suite] {suite.name} — {tc.name}"
+            run = TestRun(
+                job_id=job_id,
+                run_group_id=run_group_id,
+                owner_id=owner_id,
+                test_case_id=tc.id,
+                workspace_id=tc.workspace_id,
+                name=run_name,
+                prompt=tc.prompt,
+                target_url=tc.target_url,
+                success_criteria=tc.success_criteria,
+                assertions=tc.assertions,
+                status=TestRunStatus.PENDING,
+            )
+            db.add(run)
+            db.flush()
+
+            task_id = _dispatch_run_task(
+                job_id=job_id,
+                name=run.name,
+                prompt=tc.prompt,
+                target_url=tc.target_url or "",
+                success_criteria=tc.success_criteria,
+                use_vision=True,
+                max_steps=50,
+                test_case_id=tc.id,
+                owner_id=owner_id,
+                environment_id=environment_id
+            )
+            run.task_id = task_id
+            job_ids.append(job_id)
+
+        db.commit()
+        return f"Successfully authorized user {owner_id}. Test suite {suite_id} triggered with {len(job_ids)} test runs. Job IDs: {', '.join(job_ids)}"
     except Exception as e:
-        return f"Auth Error: {str(e)}"
+        db.rollback()
+        return f"Auth or Execution Error: {str(e)}"
     finally:
         db.close()
 
@@ -86,7 +134,7 @@ async def analyze_failure(run_id: str, api_key: str = Field(..., description="Le
         if run.is_successful:
             return "Test passed successfully. No failure to analyze."
             
-        return f"Failure Analysis for {run_id}:\nSteps Executed: {run.live_steps}\nCategory: {run.rca_category}"
+        return f"Failure Analysis for {run_id}:\nSteps Executed: {run.live_steps}\nCategory: {run.rca_category}\nError: {run.error_message}"
     except Exception as e:
         return f"Error: {str(e)}"
     finally:
@@ -113,7 +161,7 @@ async def quarantine_test(test_id: int, api_key: str = Field(..., description="L
         db.close()
 
 @leaka_mcp.tool()
-async def create_test_case(name: str, target_url: str, prompt: str, success_criteria: str, api_key: str = Field(..., description="Leaka API Key for auth")) -> str:
+async def create_test_case(name: str, target_url: str, prompt: str, success_criteria: str, api_key: str = Field(..., description="Leaka API Key for auth"), suite_id: int = None) -> str:
     """
     Create a new Leaka AI test case using natural language instructions.
     """
@@ -125,7 +173,8 @@ async def create_test_case(name: str, target_url: str, prompt: str, success_crit
             target_url=target_url,
             prompt=prompt,
             success_criteria=success_criteria,
-            owner_id=owner_id
+            owner_id=owner_id,
+            suite_id=suite_id
         )
         db.add(tc)
         db.commit()
