@@ -111,3 +111,27 @@ async def quarantine_test(test_id: int, api_key: str = Field(..., description="L
         return f"Error: {str(e)}"
     finally:
         db.close()
+
+@leaka_mcp.tool()
+async def create_test_case(name: str, target_url: str, prompt: str, success_criteria: str, api_key: str = Field(..., description="Leaka API Key for auth")) -> str:
+    """
+    Create a new Leaka AI test case using natural language instructions.
+    """
+    db = SessionLocal()
+    try:
+        owner_id = _verify_api_key(db, api_key)
+        tc = TestCase(
+            name=name,
+            target_url=target_url,
+            prompt=prompt,
+            success_criteria=success_criteria,
+            owner_id=owner_id
+        )
+        db.add(tc)
+        db.commit()
+        db.refresh(tc)
+        return f"Successfully created test case '{name}' with ID {tc.id}."
+    except Exception as e:
+        return f"Error: {str(e)}"
+    finally:
+        db.close()
