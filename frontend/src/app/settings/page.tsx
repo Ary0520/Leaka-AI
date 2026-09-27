@@ -293,8 +293,11 @@ export default function SettingsPage() {
     onError: (e: Error) => toast({ title: "Connection test failed", description: e.message, variant: "destructive" }),
   });
 
+  const [newKeyScope, setNewKeyScope] = useState("developer");
+  const [newKeyExpiration, setNewKeyExpiration] = useState<number | null>(90);
+
   const createKeyMut = useMutation({
-    mutationFn: (name: string) => api.createApiKey(name),
+    mutationFn: (payload: { name: string; scope: string; expires_in_days: number | null }) => api.createApiKey(payload),
     onSuccess: (r) => {
       setGeneratedKey(r);
       setNewKeyName("");
@@ -664,35 +667,77 @@ export default function SettingsPage() {
               </div>
             )}
             
-            <div className="flex items-end gap-2 mt-4">
-              <div className="flex-1 space-y-1">
-                <Label className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground">New Key Name</Label>
-                <Input 
-                  className="bg-[#0B0E14] border-transparent h-10 text-sm focus-visible:ring-1 focus-visible:ring-indigo-500/50" 
-                  placeholder="e.g. Cursor MCP Server" 
-                  value={newKeyName} 
-                  onChange={e => setNewKeyName(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter' && newKeyName.trim()) createKeyMut.mutate(newKeyName.trim()); }}
-                />
+            <div className="flex flex-col gap-4 mt-4">
+              <div className="flex flex-col sm:flex-row items-end gap-3">
+                <div className="flex-1 space-y-2 w-full">
+                  <Label className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground">New Key Name</Label>
+                  <Input 
+                    className="bg-[#0B0E14] border-transparent h-10 text-sm focus-visible:ring-1 focus-visible:ring-indigo-500/50" 
+                    placeholder="e.g. Cursor MCP Server" 
+                    value={newKeyName} 
+                    onChange={e => setNewKeyName(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && newKeyName.trim()) createKeyMut.mutate({ name: newKeyName.trim(), scope: newKeyScope, expires_in_days: newKeyExpiration }); }}
+                  />
+                </div>
+                
+                <div className="w-full sm:w-40 space-y-2">
+                  <Label className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground">Permissions</Label>
+                  <Select value={newKeyScope} onValueChange={setNewKeyScope}>
+                    <SelectTrigger className="w-full bg-[#0B0E14] border-transparent h-10 text-sm focus:ring-1 focus:ring-indigo-500/50">
+                      <SelectValue placeholder="Scope" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="developer">Developer (Full)</SelectItem>
+                      <SelectItem value="runner">CI Runner (Exec Only)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="w-full sm:w-36 space-y-2">
+                  <Label className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground">Expiration</Label>
+                  <Select value={newKeyExpiration?.toString() || "never"} onValueChange={(v) => setNewKeyExpiration(v === "never" ? null : parseInt(v))}>
+                    <SelectTrigger className="w-full bg-[#0B0E14] border-transparent h-10 text-sm focus:ring-1 focus:ring-indigo-500/50">
+                      <SelectValue placeholder="Expiration" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="30">30 days</SelectItem>
+                      <SelectItem value="90">90 days</SelectItem>
+                      <SelectItem value="never">Never</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                <Button 
+                  onClick={() => createKeyMut.mutate({ name: newKeyName.trim(), scope: newKeyScope, expires_in_days: newKeyExpiration })} 
+                  disabled={!newKeyName.trim() || createKeyMut.isPending} 
+                  className="w-full sm:w-auto h-10 bg-indigo-300 text-indigo-950 hover:bg-indigo-400 font-semibold"
+                >
+                  {createKeyMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Generate"}
+                </Button>
               </div>
-              <Button onClick={() => createKeyMut.mutate(newKeyName.trim())} disabled={!newKeyName.trim() || createKeyMut.isPending} className="h-10 bg-indigo-300 text-indigo-950 hover:bg-indigo-400 font-semibold">
-                {createKeyMut.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Generate Key"}
-              </Button>
             </div>
 
-            <div className="mt-6 pt-6 border-t border-border/20">
+            <div className="mt-8 pt-6 border-t border-border/20">
               <h4 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-4">Active Keys</h4>
               {apiKeysLoading ? (
                 <div className="h-20 animate-pulse bg-muted/10 rounded-md" />
               ) : apiKeys && apiKeys.length > 0 ? (
-                <div className="space-y-2">
-                  {apiKeys.map((key: { id: number, name: string, created_at: string }) => (
-                    <div key={key.id} className="flex items-center justify-between p-3 rounded-md bg-[#0B0E14] border border-transparent group hover:border-border/30">
-                      <div>
-                        <p className="text-sm font-medium text-foreground">{key.name}</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">Created on {new Date(key.created_at).toLocaleDateString()}</p>
+                <div className="space-y-3">
+                  {apiKeys.map((key: { id: number, name: string, scope: string, expires_at: string | null, created_at: string }) => (
+                    <div key={key.id} className="flex items-center justify-between p-4 rounded-md bg-[#0B0E14] border border-transparent group hover:border-border/30 transition-colors">
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-foreground">{key.name}</p>
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                            {key.scope === "developer" ? "Developer" : "CI Runner"}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Created {new Date(key.created_at).toLocaleDateString()} 
+                          {key.expires_at ? ` · Expires ${new Date(key.expires_at).toLocaleDateString()}` : " · Never expires"}
+                        </p>
                       </div>
-                      <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => { if(confirm('Revoke this API Key?')) deleteKeyMut.mutate(key.id); }}>
+                      <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => { if(confirm('Revoke this API Key? Any systems using it will immediately lose access.')) deleteKeyMut.mutate(key.id); }}>
                         Revoke
                       </Button>
                     </div>

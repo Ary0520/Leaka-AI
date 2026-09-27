@@ -407,6 +407,12 @@ def _m15_environment_auth_headers() -> None:
     _safe_add_column("environments", "auth_api_headers", "TEXT")
     logger.info("M15 applied: environments.auth_api_headers ready.")
 
+def _m16_api_key_scopes() -> None:
+    """Add scope and expires_at to api_keys table."""
+    _safe_add_column("api_keys", "scope", "VARCHAR(32) DEFAULT 'developer'")
+    _safe_add_column("api_keys", "expires_at", "TIMESTAMP")
+    logger.info("M16 applied: api_keys.scope and expires_at ready.")
+
 # ---------------------------------------------------------------------------
 # Public runner
 # ---------------------------------------------------------------------------
@@ -426,6 +432,7 @@ _MIGRATIONS = [
     ("M13_application_openapi_spec", _m13_application_openapi_spec),
     ("M14_byok_llm_settings", _m14_byok_llm_settings),
     ("M15_environment_auth_headers", _m15_environment_auth_headers),
+    ("M16_api_key_scopes", _m16_api_key_scopes),
     ("B1_backfill_graph", _b1_backfill_graph),
 ]
 

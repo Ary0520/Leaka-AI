@@ -633,6 +633,10 @@ export const api = {
     body: JSON.stringify(body),
   }),
 
+  listApiKeys: () => request<{ id: number; name: string; scope: string; expires_at: string | null; created_at: string }[]>("/api/settings/api-keys"),
+  createApiKey: (payload: { name: string; scope: string; expires_in_days: number | null }) => request<{ id: number; name: string; key: string }>("/api/settings/api-keys", { method: "POST", body: JSON.stringify(payload) }),
+  deleteApiKey: (id: number) => request<{ ok: boolean }>(`/api/settings/api-keys/${id}`, { method: "DELETE" }),
+
   // Runs
   enqueueRun: (body: TestRunRequest) =>
     request<EnqueueResponse>("/api/tests/run", {

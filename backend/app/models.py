@@ -215,6 +215,8 @@ class ApiKey(Base):
     owner_id = Column(String(64), nullable=False, index=True)
     name = Column(String(128), nullable=False)
     key_hash = Column(String(64), nullable=False, unique=True, index=True)
+    scope = Column(String(32), nullable=False, default="developer")
+    expires_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     last_used_at = Column(DateTime, nullable=True)
 
