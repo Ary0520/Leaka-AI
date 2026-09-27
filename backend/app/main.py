@@ -253,6 +253,9 @@ app = FastAPI(
 from .routers import runner
 app.include_router(runner.router)
 
+from .mcp_server import leaka_mcp
+app.mount("/api/mcp", leaka_mcp.sse_app())
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS or ["*"],
@@ -260,6 +263,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 
 @app.on_event("startup")
