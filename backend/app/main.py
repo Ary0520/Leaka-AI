@@ -3513,10 +3513,11 @@ Example output:
             raw_data = "[\n" + ",\n".join(body.prompts) + "\n]"
             
             import asyncio
+            from browser_use.llm.openai.serializer import UserMessage, SystemMessage as BUSystemMessage
             async def run_llm():
                 return await llm.ainvoke([
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Raw trace:\n{raw_data}"}
+                    BUSystemMessage(content=system_prompt),
+                    UserMessage(content=f"Raw trace:\n{raw_data}")
                 ])
                 
             try:
@@ -3532,7 +3533,12 @@ Example output:
             else:
                 response = loop.run_until_complete(run_llm())
                 
-            prompt_str = response.content.strip()
+            # browser_use returns ChatInvokeCompletion with .completion field (not .content)
+            raw_completion = response.completion
+            if hasattr(raw_completion, 'content'):
+                prompt_str = raw_completion.content.strip()
+            else:
+                prompt_str = str(raw_completion).strip()
         except Exception as e:
             import traceback
             traceback.print_exc()
