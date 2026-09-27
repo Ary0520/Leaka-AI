@@ -188,18 +188,20 @@ document.addEventListener('DOMContentLoaded', () => {
   function setRecordingState(isRecording) {
     if (isRecording) {
       btnRecord.style.display = 'none';
-      btnStop.style.display = 'block';
+      btnStop.style.display = 'flex'; // Use flex for icon alignment
       statusDot.classList.add('active');
-      statusLabel.textContent = 'Recording natural language prompts...';
+      statusLabel.textContent = 'Recording telemetry...';
       statusLabel.style.color = 'var(--success)';
       envSelect.disabled = true;
+      document.getElementById('test-name-container').style.display = 'block';
     } else {
-      btnRecord.style.display = 'block';
+      btnRecord.style.display = 'flex'; // Use flex for icon alignment
       btnStop.style.display = 'none';
       statusDot.classList.remove('active');
       statusLabel.textContent = 'Idle';
-      statusLabel.style.color = 'var(--secondary)';
+      statusLabel.style.color = 'var(--muted-foreground)';
       envSelect.disabled = false;
+      document.getElementById('test-name-container').style.display = 'none';
     }
   }
 });

@@ -3,142 +3,268 @@
   <head>
     <meta charset="utf-8" />
     <title>Leaka AI</title>
+    <!-- Use standard fonts similar to Instrument Sans / Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
       :root {
-        --primary: #000000;
-        --secondary: #666666;
-        --accent: #2563eb;
-        --danger: #ef4444;
-        --success: #10b981;
+        /* Sleek Dark Theme mapped from tailwind config */
+        --background: #12151c; /* hsl(225, 25%, 9%) */
+        --foreground: #f4f6fa; /* hsl(210, 40%, 98%) */
+        --primary: #4776ff; /* hsl(226, 100%, 64%) */
+        --primary-hover: #3b63d9;
+        --secondary: #1f242d; /* hsl(225, 20%, 15%) */
+        --secondary-hover: #2a313e;
+        --muted-foreground: #8e9bb0; /* hsl(215, 20%, 65%) */
+        --destructive: #e9466c; /* hsl(346, 80%, 60%) */
+        --destructive-hover: #d13d60;
+        --success: #17cd6a; /* hsl(150, 80%, 45%) */
+        --border: #1f242d;
       }
+
       body {
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         width: 320px;
         margin: 0;
         padding: 16px;
-        color: var(--primary);
-        background: #ffffff;
+        color: var(--foreground);
+        background: var(--background);
+        -webkit-font-smoothing: antialiased;
       }
+
       .header {
         display: flex;
         justify-content: space-between;
         align-items: center;
         margin-bottom: 16px;
-        border-bottom: 1px solid #eee;
+        border-bottom: 1px solid var(--border);
         padding-bottom: 12px;
       }
-      .header h2 {
-        margin: 0;
-        font-size: 16px;
+
+      .header img {
+        height: 22px;
+        /* Drop shadow for glowing effect like primary brand color */
+        filter: drop-shadow(0px 0px 8px rgba(71, 118, 255, 0.4));
       }
+
       .settings-btn {
         background: none;
         border: none;
         cursor: pointer;
-        font-size: 16px;
-        color: var(--secondary);
-        padding: 4px;
+        padding: 6px;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background-color 0.2s;
       }
+      .settings-btn:hover {
+        background-color: var(--secondary);
+      }
+      .settings-btn svg {
+        fill: var(--muted-foreground);
+        width: 18px;
+        height: 18px;
+        transition: fill 0.2s;
+      }
+      .settings-btn:hover svg {
+        fill: var(--foreground);
+      }
+
       .section {
         margin-bottom: 16px;
       }
+      .section-divider {
+        border-top: 1px solid var(--border);
+        padding-top: 16px;
+        margin-top: 16px;
+      }
+
+      label {
+        font-size: 12px;
+        font-weight: 500;
+        margin-bottom: 6px;
+        display: block;
+        color: var(--foreground);
+        letter-spacing: 0.02em;
+      }
+
+      p.desc {
+        font-size: 11px;
+        color: var(--muted-foreground);
+        margin-top: 0;
+        margin-bottom: 10px;
+        line-height: 1.4;
+      }
+
       button {
         width: 100%;
-        padding: 10px;
+        padding: 10px 14px;
         border: none;
-        border-radius: 6px;
-        font-weight: 600;
+        border-radius: 8px;
+        font-weight: 500;
+        font-size: 13px;
         cursor: pointer;
         margin-bottom: 8px;
-        transition: opacity 0.2s;
+        transition: all 0.2s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
       }
-      button:hover { opacity: 0.9; }
-      button:disabled { opacity: 0.5; cursor: not-allowed; }
-      .btn-primary { background: var(--primary); color: white; }
-      .btn-danger { background: var(--danger); color: white; }
-      .btn-outline { background: white; border: 1px solid #ccc; color: var(--primary); }
+      button:disabled { 
+        opacity: 0.5; 
+        cursor: not-allowed; 
+      }
+      
+      .btn-primary { 
+        background: var(--primary); 
+        color: #ffffff; 
+        box-shadow: 0 0 12px rgba(71, 118, 255, 0.3);
+      }
+      .btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+      
+      .btn-danger { 
+        background: var(--destructive); 
+        color: #ffffff; 
+      }
+      .btn-danger:hover:not(:disabled) { background: var(--destructive-hover); }
+      
+      .btn-outline { 
+        background: transparent; 
+        border: 1px solid var(--border); 
+        color: var(--foreground); 
+      }
+      .btn-outline:hover:not(:disabled) { background: var(--secondary); }
+      
+      .status-text { 
+        font-size: 13px; 
+        color: var(--muted-foreground); 
+        margin-bottom: 14px; 
+        display: flex; 
+        align-items: center; 
+        font-weight: 500;
+      }
       
       .status-dot {
         height: 8px;
         width: 8px;
         border-radius: 50%;
         display: inline-block;
-        margin-right: 6px;
-        background: var(--secondary);
+        margin-right: 8px;
+        background: var(--muted-foreground);
+        box-shadow: 0 0 0 2px var(--background);
       }
-      .status-dot.active { background: var(--success); }
-      .status-text { font-size: 13px; color: var(--secondary); margin-bottom: 12px; display: flex; align-items: center; }
       
-      select, input[type="text"] {
+      @keyframes pulse-success {
+        0% { box-shadow: 0 0 0 0 rgba(23, 205, 106, 0.4); }
+        70% { box-shadow: 0 0 0 6px rgba(23, 205, 106, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(23, 205, 106, 0); }
+      }
+
+      .status-dot.active { 
+        background: var(--success); 
+        animation: pulse-success 2s infinite;
+      }
+      
+      select, input[type="text"], input[type="password"] {
         width: 100%;
-        padding: 8px;
-        margin-bottom: 8px;
-        border: 1px solid #ccc;
-        border-radius: 4px;
+        padding: 9px 12px;
+        margin-bottom: 12px;
+        background-color: var(--secondary);
+        border: 1px solid var(--border);
+        color: var(--foreground);
+        border-radius: 6px;
         box-sizing: border-box;
+        font-size: 13px;
+        font-family: inherit;
+        transition: border-color 0.2s;
+      }
+      
+      select:focus, input:focus {
+        outline: none;
+        border-color: var(--primary);
       }
 
       /* Settings panel */
       #settings-panel {
         display: none;
-        border-top: 1px solid #eee;
-        padding-top: 12px;
-        margin-top: 12px;
+        border-top: 1px solid var(--border);
+        padding-top: 16px;
+        margin-top: 16px;
+      }
+
+      h3 {
+        font-size: 14px;
+        font-weight: 600;
+        margin-top: 0;
+        margin-bottom: 6px;
+        letter-spacing: -0.01em;
       }
     </style>
   </head>
   <body>
     <div class="header">
-      <h2>Leaka AI Recorder</h2>
-      <button id="btn-settings" class="settings-btn" title="Settings">⚙️</button>
+      <img src="icons/leaka-logo.png" alt="Leaka AI" />
+      <button id="btn-settings" class="settings-btn" title="Settings">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.06-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.73,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.06,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.43-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.49-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/>
+        </svg>
+      </button>
     </div>
 
     <!-- Main View -->
     <div id="main-view">
       <div class="section">
-        <label style="font-size: 12px; font-weight: 600; margin-bottom: 4px; display: block;">Target Environment</label>
+        <label>Target Environment</label>
         <select id="env-select">
           <option value="">Loading environments...</option>
         </select>
-        <div id="env-warning" style="font-size: 11px; color: var(--danger); display: none;">
+        <div id="env-warning" style="font-size: 11px; color: var(--destructive); display: none; margin-top: -4px;">
           Please create an Application in Leaka Dashboard first.
         </div>
       </div>
 
-      <div class="section" style="border-top: 1px solid #eee; padding-top: 12px;">
+      <div class="section section-divider">
         <div class="status-text">
           <span id="status-dot" class="status-dot"></span>
           <span id="status-label">Idle</span>
         </div>
         
         <div id="test-name-container" style="display: none;">
-          <label style="font-size: 12px; font-weight: 600; margin-bottom: 4px; display: block;">Test Case Name (Optional)</label>
-          <input type="text" id="test-name" placeholder="e.g., Checkout Flow" />
+          <label>Test Case Name <span style="color: var(--muted-foreground); font-weight: 400;">(Optional)</span></label>
+          <input type="text" id="test-name" placeholder="e.g. Checkout flow" />
         </div>
         
-        <button id="btn-record" class="btn-primary">Start Recording Prompts</button>
-        <button id="btn-stop" class="btn-danger" style="display: none;">Stop & Save to Vault</button>
+        <button id="btn-record" class="btn-primary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle></svg>
+          Start Recording Telemetry
+        </button>
+        <button id="btn-stop" class="btn-danger" style="display: none;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12"></rect></svg>
+          Stop & Save to Vault
+        </button>
       </div>
 
-      <div class="section" style="border-top: 1px solid #eee; padding-top: 12px;">
-        <h3 style="font-size: 14px; margin-top: 0; margin-bottom: 4px;">Inject Auth State</h3>
-        <p style="font-size: 11px; color: var(--secondary); margin-top: 0; margin-bottom: 8px;">Extracts active cookies & localStorage.</p>
-        <button id="btn-extract-cookies" class="btn-outline">Push to Selected Environment</button>
-        <div id="cookie-status" style="font-size: 12px; color: var(--success); margin-top: 4px; display: none;">Auth state pushed successfully!</div>
+      <div class="section section-divider">
+        <h3>Inject Auth State</h3>
+        <p class="desc">Bypass login steps by securely pushing this browser session to your Environment.</p>
+        <button id="btn-extract-cookies" class="btn-outline">Push State to Environment</button>
+        <div id="cookie-status" style="font-size: 12px; color: var(--success); margin-top: 8px; display: none; text-align: center;">Auth state pushed successfully!</div>
       </div>
     </div>
 
     <!-- Settings View -->
     <div id="settings-panel">
-      <h3 style="font-size: 14px; margin-top: 0;">Extension Settings</h3>
+      <h3>Extension Settings</h3>
+      <p class="desc">Connect the extension to your Leaka workspace.</p>
       
-      <label style="font-size: 12px; font-weight: 600; margin-bottom: 4px; display: block;">Leaka API Key (Required)</label>
-      <input type="password" id="api-key" placeholder="Paste Leaka API Key or JWT..." style="font-family: monospace;" />
+      <label>Leaka API Key</label>
+      <input type="password" id="api-key" placeholder="Paste Developer API Key" style="font-family: monospace;" />
       
-      <label style="font-size: 12px; font-weight: 600; margin-top: 8px; margin-bottom: 4px; display: block;">Backend URL</label>
+      <label>Backend URL</label>
       <input type="text" id="backend-url" placeholder="http://localhost:8000" />
       
-      <button id="btn-save-settings" class="btn-primary" style="margin-top: 12px;">Save & Authenticate</button>
+      <button id="btn-save-settings" class="btn-primary" style="margin-top: 4px;">Save & Authenticate</button>
     </div>
 
     <script src="popup.js"></script>
