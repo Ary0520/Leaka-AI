@@ -6,9 +6,9 @@ from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
 
-from backend.app.database import get_db
-from backend.app.models import ApiKey
-from backend.app.auth import get_current_user
+from ..database import get_db
+from ..models import ApiKey
+from ..auth import get_current_user
 
 router = APIRouter(prefix="/api/settings/api-keys", tags=["api_keys"])
 
