@@ -10,15 +10,7 @@ import { toast } from "@/components/ui/use-toast";
 import Link from "next/link";
 
 export default function McpIntegrationHub() {
-  const { data: apiKeys, isLoading: apiKeysLoading } = useQuery({
-    queryKey: ["api-keys"],
-    queryFn: () => api.listApiKeys(),
-  });
-
-  const [selectedKey, setSelectedKey] = useState<string>("YOUR_API_KEY");
   const [copiedSection, setCopiedSection] = useState<string | null>(null);
-
-  const developerKeys = apiKeys?.filter((k: any) => k.scope === "developer") || [];
 
   const handleCopy = (text: string, section: string) => {
     navigator.clipboard.writeText(text);
@@ -33,7 +25,7 @@ export default function McpIntegrationHub() {
       "type": "sse",
       "url": "https://api.leaka.live/api/mcp/sse",
       "env": {
-        "LEAKA_API_KEY": "${selectedKey}"
+        "LEAKA_API_KEY": "<YOUR_DEVELOPER_API_KEY>"
       }
     }
   }
@@ -65,32 +57,10 @@ export default function McpIntegrationHub() {
                 {/* Step 1 */}
                 <div className="relative pl-8">
                   <div className="absolute left-0 top-0.5 flex h-6 w-6 items-center justify-center rounded-full bg-indigo-500/20 text-xs font-bold text-indigo-300 ring-4 ring-[#161922]">1</div>
-                  <h4 className="text-sm font-semibold text-foreground">Select your Developer Key</h4>
-                  <p className="text-xs text-muted-foreground mt-1 mb-3">Choose the API key your IDE will use to authenticate requests.</p>
-                  
-                  {apiKeysLoading ? (
-                    <div className="h-10 w-full md:w-2/3 animate-pulse bg-[#0B0E14] rounded-md border border-muted/10" />
-                  ) : developerKeys.length > 0 ? (
-                    <Select value={selectedKey} onValueChange={setSelectedKey}>
-                      <SelectTrigger className="w-full md:w-2/3 bg-[#0B0E14] border-muted/20 h-10">
-                        <SelectValue placeholder="Select an API Key" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {developerKeys.map((key: any) => (
-                          <SelectItem key={key.id} value={`leaka_dev_... (Key ${key.id})`}>
-                            {key.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-md flex items-center justify-between">
-                      <p className="text-sm text-amber-400">No Developer API Keys found.</p>
-                      <Link href="/settings">
-                        <Button variant="outline" size="sm" className="h-8 border-amber-500/30 text-amber-300 hover:bg-amber-500/20">Generate Key</Button>
-                      </Link>
-                    </div>
-                  )}
+                  <h4 className="text-sm font-semibold text-foreground">Get your Developer Key</h4>
+                  <p className="text-xs text-muted-foreground mt-1 mb-3">
+                    You need an API key with the Developer scope to authenticate your IDE. You can generate or manage your keys <Link href="/settings" className="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">here</Link>.
+                  </p>
                 </div>
 
                 {/* Step 2 */}
@@ -119,7 +89,7 @@ export default function McpIntegrationHub() {
       "type": "sse",
       "url": "https://api.leaka.live/api/mcp/sse",
       "env": {
-        "LEAKA_API_KEY": "${selectedKey.includes('leaka_dev_') ? 'YOUR_ACTUAL_KEY_HERE' : selectedKey}"
+        "LEAKA_API_KEY": "<YOUR_DEVELOPER_API_KEY>"
       }
     }
   }
