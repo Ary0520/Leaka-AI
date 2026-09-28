@@ -43,9 +43,6 @@ export default function McpIntegrationHub() {
     <div className="max-w-4xl space-y-10 pb-12 animate-in fade-in duration-500">
       {/* Header */}
       <div className="flex flex-col gap-2">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 text-indigo-400 w-fit text-xs font-semibold tracking-wide uppercase border border-indigo-500/20 mb-2">
-          <Zap className="w-3.5 h-3.5" /> Next-Gen DevEx
-        </div>
         <h1 className="text-3xl font-semibold tracking-tight text-foreground flex items-center gap-3">
           IDE Integrations <span className="text-muted-foreground font-normal">(MCP)</span>
         </h1>
