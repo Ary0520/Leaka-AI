@@ -244,6 +244,11 @@ def _dispatch_explore_task(
 
 
 
+
+
+
+
+
 app = FastAPI(
     title="Leaka AI — RevGuard QA API",
     version="0.1.0",
@@ -251,6 +256,23 @@ app = FastAPI(
 )
 
 from .routers import runner, api_keys
+
+class MCPCompatASGIMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope['type'] == 'http':
+            if scope['method'] == 'POST' and scope['path'] == '/api/mcp/sse':
+                # Rewrite the path to /api/mcp/messages so the Mount can handle it
+                # We do not append a trailing slash because we want Starlette to handle it natively if needed,
+                # or we append the trailing slash so it skips the 307 redirect!
+                scope['path'] = '/api/mcp/messages/'
+                scope['raw_path'] = b'/api/mcp/messages/'
+        await self.app(scope, receive, send)
+
+app.add_middleware(MCPCompatASGIMiddleware)
+
 app.include_router(runner.router)
 app.include_router(api_keys.router)
 
