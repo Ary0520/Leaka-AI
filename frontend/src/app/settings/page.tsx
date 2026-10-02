@@ -257,15 +257,29 @@ export default function SettingsPage() {
   });
 
   const saveSlackMut = useMutation({
-    mutationFn: () =>
-      api.updateUserSlackSettings({
+    mutationFn: (clear?: boolean) => {
+      if (clear) {
+        return api.updateUserSlackSettings({
+          slack_webhook_url: "",
+          slack_bot_token: "",
+          slack_channel_id: "",
+          slack_auto_alert_on_failure: slackAutoAlert,
+          dashboard_base_url: slackDashboardUrl || undefined,
+        });
+      }
+      return api.updateUserSlackSettings({
         slack_webhook_url: slackWebhookUrl || undefined,
+        slack_bot_token: slackBotToken || undefined,
+        slack_channel_id: slackChannelId || undefined,
         slack_auto_alert_on_failure: slackAutoAlert,
         dashboard_base_url: slackDashboardUrl || undefined,
-      }),
+      });
+    },
     onSuccess: () => {
       toast({ title: "Slack settings saved" });
       setSlackWebhookUrl("");
+      setSlackBotToken("");
+      setSlackChannelId("");
       qc.invalidateQueries({ queryKey: ["user-slack-settings"] });
     },
     onError: (e: Error) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
@@ -460,7 +474,7 @@ export default function SettingsPage() {
           isConnected={(slackData?.slack_webhook_url_set || slackData?.slack_bot_token_set) ?? false}
           statusCaption="Posting to workspace"
           emptyStateText="Not connected yet — add your Slack Bot Token (preferred) or Webhook URL to receive rich failure alerts."
-          onDisconnect={() => saveSlackMut.mutate()}
+          onDisconnect={() => saveSlackMut.mutate(true)}
         >
           <div className="space-y-6">
             <MaskedCredentialField 
