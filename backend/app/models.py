@@ -192,6 +192,8 @@ class UserSettings(Base):
     slack_webhook_url = Column(String(2048), nullable=True)
     slack_bot_token = Column(String(256), nullable=True)
     slack_channel_id = Column(String(32), nullable=True)
+    slack_channel_name = Column(String(128), nullable=True)
+    slack_team_name = Column(String(128), nullable=True)
     slack_auto_alert_on_failure = Column(Boolean, default=True, nullable=False)
     # Dashboard deep-link base (e.g. "https://app.leaka.ai" or "http://localhost:3000")
     dashboard_base_url = Column(String(512), nullable=True)

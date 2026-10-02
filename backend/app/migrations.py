@@ -68,6 +68,13 @@ def _m17_slack_bot_token() -> None:
     _safe_add_column("user_settings", "slack_channel_id", "VARCHAR(32)")
     logger.info("M17 applied: user_settings.slack_bot_token ready.")
 
+
+def _m18_slack_oauth_metadata() -> None:
+    """Add slack_team_name and slack_channel_name to user_settings."""
+    _safe_add_column("user_settings", "slack_team_name", "VARCHAR(128)")
+    _safe_add_column("user_settings", "slack_channel_name", "VARCHAR(128)")
+    logger.info("M18 applied: user_settings.slack_oauth_metadata ready.")
+
 # ---------------------------------------------------------------------------
 # M1 — pgvector extension + embeddings table
 # ---------------------------------------------------------------------------
@@ -440,6 +447,7 @@ _MIGRATIONS = [
     ("M15_environment_auth_headers", _m15_environment_auth_headers),
     ("M16_api_key_scopes", _m16_api_key_scopes),
     ("M17_slack_bot_token", _m17_slack_bot_token),
+    ("M18_slack_oauth_metadata", _m18_slack_oauth_metadata),
     ("B1_backfill_graph", _b1_backfill_graph),
 ]
 

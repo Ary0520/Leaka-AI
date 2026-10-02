@@ -111,6 +111,18 @@ class Settings:
         return os.getenv("SLACK_WEBHOOK_URL")
 
     @property
+    def SLACK_CLIENT_ID(self) -> str | None:
+        return os.getenv("SLACK_CLIENT_ID")
+
+    @property
+    def SLACK_CLIENT_SECRET(self) -> str | None:
+        return os.getenv("SLACK_CLIENT_SECRET")
+
+    @property
+    def SLACK_REDIRECT_URI(self) -> str | None:
+        return os.getenv("SLACK_REDIRECT_URI")
+
+    @property
     def DASHBOARD_BASE_URL(self) -> str | None:
         """Fallback dashboard base URL for single-tenant / self-hosted use."""
         return os.getenv("DASHBOARD_BASE_URL")
