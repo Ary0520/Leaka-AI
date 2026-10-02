@@ -207,6 +207,8 @@ export default function SettingsPage() {
   const [emailTo, setEmailTo] = useState("");
   
   const [slackWebhookUrl, setSlackWebhookUrl] = useState("");
+  const [slackBotToken, setSlackBotToken] = useState("");
+  const [slackChannelId, setSlackChannelId] = useState("");
   const [slackAutoAlert, setSlackAutoAlert] = useState(true);
   const [slackDashboardUrl, setSlackDashboardUrl] = useState("");
 
@@ -239,6 +241,7 @@ export default function SettingsPage() {
     if (slackData) {
       setSlackAutoAlert(slackData.slack_auto_alert_on_failure);
       setSlackDashboardUrl(slackData.dashboard_base_url ?? "");
+      setSlackChannelId(slackData.slack_channel_id ?? "");
     }
   }, [slackData]);
 
