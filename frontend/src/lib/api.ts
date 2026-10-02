@@ -803,6 +803,9 @@ export const api = {
       slack_bot_token_set?: boolean;
       slack_channel_id_set?: boolean;
       slack_channel_id?: string;
+      slack_channel_name?: string | null;
+      slack_team_name?: string | null;
+      oauth_configured?: boolean;
       slack_auto_alert_on_failure: boolean;
       dashboard_base_url: string;
     }>("/api/user/slack-settings"),
@@ -811,6 +814,8 @@ export const api = {
     slack_webhook_url?: string;
     slack_bot_token?: string;
     slack_channel_id?: string;
+    slack_channel_name?: string;
+    slack_team_name?: string;
     slack_auto_alert_on_failure?: boolean;
     dashboard_base_url?: string;
   }) =>
@@ -818,6 +823,9 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+
+  getSlackAuthorizeUrl: () =>
+    request<{ url: string }>("/api/integrations/slack/authorize"),
 
   testSlackPing: () =>
     request<{ ok: boolean; message: string }>("/api/user/slack-settings/test-ping", {
