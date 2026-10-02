@@ -30,7 +30,7 @@ from .celery_app import celery_app
 from .config import settings
 from .database import get_db, init_db
 from .auth import get_current_user, get_extension_user
-from .integrations import linear_client, email_client, slack_client
+from .integrations import linear_client, email_client, slack_client, jira_client
 from .models import (
     Application,
     AppMapNode,
@@ -47,6 +47,7 @@ from .models import (
     CodeDiff,
     FlowMapping,
     LinearIssue,
+    JiraIssue,
     TestCase,
     TestRun,
     TestRunStatus,
@@ -70,6 +71,10 @@ from .schemas import (
     CIWebhookRequest,
     CIWebhookResponse,
     CreateLinearTicketRequest,
+    CreateJiraIssueRequest,
+    JiraIssueResponse,
+    JiraSettingsResponse,
+    JiraSettingsUpdate,
     ExploreEnqueueResponse,
     ExploreRunStatusResponse,
     GraphNodeOut,
@@ -1256,6 +1261,23 @@ def get_run_status(
         .all()
     )
 
+    jira_info = None
+    if run.jira_issue:
+        jira_info = {
+            "id": run.jira_issue.issue_id,
+            "key": run.jira_issue.issue_key,
+            "url": run.jira_issue.url,
+            "summary": run.jira_issue.summary,
+        }
+    linear_info = None
+    if run.linear_issue:
+        linear_info = {
+            "id": run.linear_issue.issue_id,
+            "identifier": run.linear_issue.identifier,
+            "url": run.linear_issue.url,
+            "title": run.linear_issue.title,
+        }
+
     return TestRunStatusResponse(
         job_id=run.job_id,
         task_id=run.task_id,
@@ -1280,6 +1302,8 @@ def get_run_status(
         started_at=run.started_at,
         completed_at=run.completed_at,
         screenshots=[ScreenshotOut.model_validate(s) for s in screenshots],
+        linear_issue=linear_info,
+        jira_issue=jira_info,
     )
 
 
@@ -1590,6 +1614,199 @@ def create_linear_ticket(body: CreateLinearTicketRequest, db: Session = Depends(
         issue_id=issue.issue_id,
         identifier=issue.identifier,
         title=issue.title,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Jira Integration
+# ---------------------------------------------------------------------------
+@app.get("/api/user/jira-settings", response_model=JiraSettingsResponse)
+def get_user_jira_settings(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    owner = user["sub"]
+    cfg = db.query(UserSettings).filter(UserSettings.owner_id == owner).first()
+    if not cfg:
+        return JiraSettingsResponse()
+
+    masked = ""
+    if cfg.jira_api_token:
+        t = cfg.jira_api_token
+        masked = f"{t[:4]}••••••••{t[-4:]}" if len(t) >= 8 else "••••••••"
+
+    return JiraSettingsResponse(
+        jira_domain=cfg.jira_domain,
+        jira_email=cfg.jira_email,
+        jira_api_token_set=bool(cfg.jira_api_token),
+        jira_api_token_masked=masked,
+        jira_project_key=cfg.jira_project_key,
+        jira_issue_type=cfg.jira_issue_type or "Bug",
+        jira_auto_file_on_failure=cfg.jira_auto_file_on_failure,
+    )
+
+
+@app.patch("/api/user/jira-settings")
+def update_user_jira_settings(
+    body: JiraSettingsUpdate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    owner = user["sub"]
+    cfg = db.query(UserSettings).filter(UserSettings.owner_id == owner).first()
+    if not cfg:
+        cfg = UserSettings(owner_id=owner)
+        db.add(cfg)
+
+    if body.jira_domain is not None:
+        cfg.jira_domain = body.jira_domain.strip() if body.jira_domain else None
+    if body.jira_email is not None:
+        cfg.jira_email = body.jira_email.strip() if body.jira_email else None
+    if body.jira_api_token is not None:
+        cfg.jira_api_token = body.jira_api_token.strip() if body.jira_api_token else None
+    if body.jira_project_key is not None:
+        cfg.jira_project_key = body.jira_project_key.strip().upper() if body.jira_project_key else None
+    if body.jira_issue_type is not None:
+        cfg.jira_issue_type = body.jira_issue_type.strip() if body.jira_issue_type else "Bug"
+    if body.jira_auto_file_on_failure is not None:
+        cfg.jira_auto_file_on_failure = body.jira_auto_file_on_failure
+
+    db.commit()
+    return {"message": "Jira settings saved successfully."}
+
+
+@app.post("/api/user/jira-settings/test-connection")
+def test_jira_connection(
+    body: Optional[JiraSettingsUpdate] = None,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    owner = user["sub"]
+    cfg = db.query(UserSettings).filter(UserSettings.owner_id == owner).first()
+
+    domain = (body and body.jira_domain) or (cfg and cfg.jira_domain)
+    email = (body and body.jira_email) or (cfg and cfg.jira_email)
+    api_token = (body and body.jira_api_token) or (cfg and cfg.jira_api_token)
+
+    if not domain or not email or not api_token:
+        raise HTTPException(400, "Please provide Jira Domain, Account Email, and API Token to test connection.")
+
+    try:
+        res = jira_client.verify_connection(domain, email, api_token)
+        return {
+            "ok": True,
+            "message": f"Successfully connected to Jira as {res.get('display_name')} ({res.get('email_address')})",
+            "profile": res,
+        }
+    except Exception as e:
+        raise HTTPException(400, f"Jira Connection Failed: {str(e)}")
+
+
+@app.get("/api/integrations/jira/projects")
+def get_jira_projects(
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    owner = user["sub"]
+    cfg = db.query(UserSettings).filter(UserSettings.owner_id == owner).first()
+    if not cfg or not cfg.jira_domain or not cfg.jira_email or not cfg.jira_api_token:
+        raise HTTPException(400, "Jira credentials are not configured yet.")
+
+    try:
+        projects = jira_client.list_projects(cfg.jira_domain, cfg.jira_email, cfg.jira_api_token)
+        return {"projects": projects}
+    except Exception as e:
+        raise HTTPException(400, f"Failed to list Jira projects: {str(e)}")
+
+
+@app.post("/api/integrations/jira/issue", response_model=JiraIssueResponse)
+def create_jira_issue_endpoint(
+    body: CreateJiraIssueRequest,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    run = _get_owned_run(db, body.job_id, user)
+    owner = user["sub"]
+    cfg = db.query(UserSettings).filter(UserSettings.owner_id == owner).first()
+
+    if not cfg or not cfg.jira_domain or not cfg.jira_email or not cfg.jira_api_token or not cfg.jira_project_key:
+        raise HTTPException(400, "Jira integration is not fully configured. Please configure your domain, email, API token, and project key in Settings.")
+
+    # Check if already filed for this run
+    existing = db.query(JiraIssue).filter(JiraIssue.test_run_id == run.id).first()
+    if existing:
+        return JiraIssueResponse(
+            success=True,
+            issue_id=existing.issue_id,
+            issue_key=existing.issue_key,
+            url=existing.url,
+            is_duplicate=True,
+        )
+
+    # Resolve screenshot
+    screenshot_shot = (
+        db.query(TestScreenshot)
+        .filter(TestScreenshot.test_run_id == run.id)
+        .order_by(TestScreenshot.is_failure_point.desc(), TestScreenshot.step_index.desc())
+        .first()
+    )
+    shot_abs = None
+    if screenshot_shot and screenshot_shot.file_path:
+        fp = screenshot_shot.file_path
+        candidate = (
+            fp if os.path.isabs(fp)
+            else os.path.normpath(os.path.join(os.path.dirname(SCREENSHOT_ROOT), fp))
+        )
+        if os.path.isfile(candidate):
+            shot_abs = candidate
+
+    dashboard_run_url = None
+    if cfg.dashboard_base_url:
+        dashboard_run_url = f"{cfg.dashboard_base_url.rstrip('/')}/runs/{run.job_id}"
+    elif settings.DASHBOARD_BASE_URL:
+        dashboard_run_url = f"{settings.DASHBOARD_BASE_URL.rstrip('/')}/runs/{run.job_id}"
+
+    test_identifier = str(run.test_case_id or run.job_id[:12])
+    res = jira_client.file_or_update_defect(
+        domain=cfg.jira_domain,
+        email=cfg.jira_email,
+        api_token=cfg.jira_api_token,
+        project_key=cfg.jira_project_key,
+        test_name=run.name,
+        job_id=run.job_id,
+        test_identifier=test_identifier,
+        target_url=run.target_url,
+        duration_seconds=run.duration_seconds or 0,
+        total_steps=run.total_steps or 0,
+        rca_category=run.rca_category,
+        error_message=run.error_message,
+        prompt=run.prompt,
+        final_result=run.final_result,
+        screenshot_path=shot_abs,
+        dashboard_run_url=dashboard_run_url,
+        issue_type=body.issue_type or cfg.jira_issue_type or "Bug",
+    )
+
+    if not res.get("success"):
+        return JiraIssueResponse(success=False, error=res.get("error", "Failed to file defect in Jira."))
+
+    issue = JiraIssue(
+        test_run_id=run.id,
+        issue_id=res.get("id") or res["key"],
+        issue_key=res["key"],
+        project_key=cfg.jira_project_key,
+        summary=body.summary or f"[QA BUG] {run.name} — {run.job_id[:8]}",
+        url=res.get("url"),
+    )
+    db.add(issue)
+    db.commit()
+
+    return JiraIssueResponse(
+        success=True,
+        issue_id=issue.issue_id,
+        issue_key=issue.issue_key,
+        url=issue.url,
+        is_duplicate=res.get("is_duplicate", False),
     )
 
 

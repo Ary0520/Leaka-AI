@@ -197,6 +197,8 @@ class TestRunStatusResponse(BaseModel):
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     screenshots: List[ScreenshotOut] = []
+    linear_issue: Optional[dict[str, Any]] = None
+    jira_issue: Optional[dict[str, Any]] = None
 
 
 class TestRunListResponse(BaseModel):
@@ -237,6 +239,42 @@ class LinearTicketResponse(BaseModel):
     issue_id: Optional[str] = None
     identifier: Optional[str] = None
     title: Optional[str] = None
+
+
+# -------------- Jira --------------
+class CreateJiraIssueRequest(BaseModel):
+    job_id: str
+    summary: Optional[str] = None
+    description: Optional[str] = None
+    issue_type: Optional[str] = None
+
+
+class JiraIssueResponse(BaseModel):
+    success: bool
+    issue_id: Optional[str] = None
+    issue_key: Optional[str] = None
+    url: Optional[str] = None
+    is_duplicate: bool = False
+    error: Optional[str] = None
+
+
+class JiraSettingsResponse(BaseModel):
+    jira_domain: Optional[str] = None
+    jira_email: Optional[str] = None
+    jira_api_token_set: bool = False
+    jira_api_token_masked: Optional[str] = None
+    jira_project_key: Optional[str] = None
+    jira_issue_type: str = "Bug"
+    jira_auto_file_on_failure: bool = False
+
+
+class JiraSettingsUpdate(BaseModel):
+    jira_domain: Optional[str] = None
+    jira_email: Optional[str] = None
+    jira_api_token: Optional[str] = None
+    jira_project_key: Optional[str] = None
+    jira_issue_type: Optional[str] = None
+    jira_auto_file_on_failure: Optional[bool] = None
 
 
 # -------------- Application Intelligence (Explore Mode) --------------

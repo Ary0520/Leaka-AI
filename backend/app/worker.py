@@ -371,6 +371,8 @@ def _build_incident_context(
     dashboard_base_url: Optional[str],
     linear_issue_url: Optional[str],
     linear_identifier: Optional[str],
+    jira_issue_url: Optional[str] = None,
+    jira_issue_key: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     Extracts all real, available execution fields into a flat dict
@@ -516,6 +518,8 @@ def _build_incident_context(
         "error_message": error_message,
         "linear_issue_url": linear_issue_url,
         "linear_identifier": linear_identifier,
+        "jira_issue_url": jira_issue_url,
+        "jira_issue_key": jira_issue_key,
         "screenshot_path": screenshot_path,
     }
 
@@ -1611,8 +1615,8 @@ def run_browser_test(
                         except Exception:
                             pass  # integration failure must never block test result
 
-                    # Resolve failure screenshot abs path for email attachment
-                    email_shot_abs: Optional[str] = None
+                    # Resolve failure screenshot abs path for attachments
+                    failure_shot_abs: Optional[str] = None
                     if final_failure_shot_rel:
                         fp = final_failure_shot_rel
                         candidate = (
@@ -1622,7 +1626,71 @@ def run_browser_test(
                             )
                         )
                         if os.path.isfile(candidate):
-                            email_shot_abs = candidate
+                            failure_shot_abs = candidate
+
+                    # ---- Jira auto-ticket ----
+                    if run_id is not None and run and run.owner_id:
+                        try:
+                            from .integrations import jira_client
+                            from .models import JiraIssue
+                            u_cfg_jira = (
+                                db.query(UserSettings)
+                                .filter(UserSettings.owner_id == run.owner_id)
+                                .first()
+                            )
+                            if (
+                                u_cfg_jira
+                                and u_cfg_jira.jira_domain
+                                and u_cfg_jira.jira_email
+                                and u_cfg_jira.jira_api_token
+                                and u_cfg_jira.jira_project_key
+                                and u_cfg_jira.jira_auto_file_on_failure
+                            ):
+                                existing_jira = (
+                                    db.query(JiraIssue)
+                                    .filter(JiraIssue.test_run_id == run_id)
+                                    .first()
+                                )
+                                if not existing_jira:
+                                    dashboard_run_url = None
+                                    if u_cfg_jira.dashboard_base_url:
+                                        dashboard_run_url = f"{u_cfg_jira.dashboard_base_url.rstrip('/')}/runs/{job_id}"
+                                    elif settings.DASHBOARD_BASE_URL:
+                                        dashboard_run_url = f"{settings.DASHBOARD_BASE_URL.rstrip('/')}/runs/{job_id}"
+
+                                    test_identifier = str(run.test_case_id or run.job_id[:12])
+                                    jira_res = jira_client.file_or_update_defect(
+                                        domain=u_cfg_jira.jira_domain,
+                                        email=u_cfg_jira.jira_email,
+                                        api_token=u_cfg_jira.jira_api_token,
+                                        project_key=u_cfg_jira.jira_project_key,
+                                        test_name=name,
+                                        job_id=job_id,
+                                        test_identifier=test_identifier,
+                                        target_url=target_url,
+                                        duration_seconds=duration,
+                                        total_steps=total_steps_count,
+                                        rca_category=rca_category_val,
+                                        error_message=run.error_message if run else None,
+                                        prompt=prompt,
+                                        final_result=final_result_text,
+                                        screenshot_path=failure_shot_abs,
+                                        dashboard_run_url=dashboard_run_url,
+                                        issue_type=u_cfg_jira.jira_issue_type or "Bug",
+                                    )
+                                    if jira_res.get("success") and jira_res.get("key"):
+                                        db.add(JiraIssue(
+                                            test_run_id=run_id,
+                                            issue_id=jira_res.get("id") or jira_res["key"],
+                                            issue_key=jira_res["key"],
+                                            project_key=u_cfg_jira.jira_project_key,
+                                            summary=f"[QA BUG] {name} — {job_id[:8]}",
+                                            url=jira_res.get("url"),
+                                        ))
+                                        db.commit()
+                                        logger.info("Jira issue %s linked to run %s", jira_res["key"], job_id)
+                        except Exception as j_exc:
+                            logger.warning("Jira auto-ticket failed for job_id=%s: %s", job_id, j_exc)
 
                     # ---- Resend email auto-alert ----
                     if settings.RESEND_API_KEY and settings.EMAIL_ALERT_TO:
@@ -1636,7 +1704,7 @@ def run_browser_test(
                                 test_name=name,
                                 job_id=job_id,
                                 steps_summary=steps_payload,
-                                screenshot_path=email_shot_abs,
+                                screenshot_path=failure_shot_abs,
                             )
                         except Exception:
                             pass
@@ -1694,9 +1762,11 @@ def run_browser_test(
 
                     if has_slack_creds and user_slack_enabled:
                         try:
-                            # Resolve any Linear issue just created
+                            # Resolve any Linear or Jira issue just created
                             lin_url: Optional[str] = None
                             lin_id: Optional[str] = None
+                            jira_url: Optional[str] = None
+                            jira_key: Optional[str] = None
                             if run_id is not None:
                                 lin_issue = (
                                     db.query(LinearIssue)
@@ -1706,6 +1776,16 @@ def run_browser_test(
                                 if lin_issue:
                                     lin_url = lin_issue.url
                                     lin_id = lin_issue.identifier
+
+                                from .models import JiraIssue
+                                jira_iss = (
+                                    db.query(JiraIssue)
+                                    .filter(JiraIssue.test_run_id == run_id)
+                                    .first()
+                                )
+                                if jira_iss:
+                                    jira_url = jira_iss.url
+                                    jira_key = jira_iss.issue_key
 
                             ctx = _build_incident_context(
                                 name=name,
@@ -1727,6 +1807,8 @@ def run_browser_test(
                                 ),
                                 linear_issue_url=lin_url,
                                 linear_identifier=lin_id,
+                                jira_issue_url=jira_url,
+                                jira_issue_key=jira_key,
                             )
                             slack_res = slack_client.send_qa_incident(
                                 webhook_url=effective_webhook,

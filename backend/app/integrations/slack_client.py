@@ -222,6 +222,9 @@ def send_qa_incident(
     # Linear
     linear_issue_url: Optional[str] = None,
     linear_identifier: Optional[str] = None,
+    # Jira
+    jira_issue_url: Optional[str] = None,
+    jira_issue_key: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     POST a structured QA incident Block Kit message to a Slack Incoming Webhook.
@@ -377,6 +380,14 @@ def send_qa_incident(
             "type": "button",
             "text": {"type": "plain_text", "text": label, "emoji": True},
             "url": linear_issue_url,
+        })
+    if jira_issue_url:
+        label = f"🎫 Jira {jira_issue_key}" if jira_issue_key else "🎫 Jira Issue"
+        action_elements.append({
+            "type": "button",
+            "text": {"type": "plain_text", "text": label, "emoji": True},
+            "url": jira_issue_url,
+            "style": "primary",
         })
 
     if action_elements:
