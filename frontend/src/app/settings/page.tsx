@@ -457,14 +457,32 @@ export default function SettingsPage() {
           description="Auto-post structured QA incident reports to your Slack channel when a test fails."
           logo={<SlackLogo />}
           logoBgClass="bg-white"
-          isConnected={slackData?.slack_webhook_url_set ?? false}
+          isConnected={(slackData?.slack_webhook_url_set || slackData?.slack_bot_token_set) ?? false}
           statusCaption="Posting to workspace"
-          emptyStateText="Not connected yet — add your Slack Incoming Webhook URL to automatically receive rich failure alerts."
+          emptyStateText="Not connected yet — add your Slack Bot Token (preferred) or Webhook URL to receive rich failure alerts."
           onDisconnect={() => saveSlackMut.mutate()}
         >
           <div className="space-y-6">
             <MaskedCredentialField 
-              label="Incoming Webhook URL" 
+              label="Slack Bot Token (Preferred)" 
+              placeholder="xoxb-..." 
+              value={slackBotToken} 
+              onChange={setSlackBotToken} 
+              isSet={slackData?.slack_bot_token_set ?? false} 
+              isMaskedFallback="xoxb-****"
+              isSaving={saveSlackMut.isPending}
+              onSave={() => saveSlackMut.mutate()} 
+            />
+
+            <div className="space-y-2 pt-1">
+              <Label className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground">Channel ID (e.g. C0123456789)</Label>
+              <Input className="font-mono bg-[#0B0E14] border-transparent h-10 text-sm focus-visible:ring-1 focus-visible:ring-indigo-500/50" placeholder="C0123456789" value={slackChannelId} onChange={e => setSlackChannelId(e.target.value)} />
+            </div>
+
+            <div className="border-t border-border/50 pt-6"></div>
+
+            <MaskedCredentialField 
+              label="Incoming Webhook URL (Legacy)" 
               placeholder="https://hooks.slack.com/services/T.../B..." 
               value={slackWebhookUrl} 
               onChange={setSlackWebhookUrl} 
