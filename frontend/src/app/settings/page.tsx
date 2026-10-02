@@ -211,6 +211,7 @@ export default function SettingsPage() {
   const [slackChannelId, setSlackChannelId] = useState("");
   const [slackAutoAlert, setSlackAutoAlert] = useState(true);
   const [slackDashboardUrl, setSlackDashboardUrl] = useState("");
+  const [isConnectingSlack, setIsConnectingSlack] = useState(false);
 
   const [llmProvider, setLlmProvider] = useState("");
   const [openrouterKey, setOpenrouterKey] = useState("");
@@ -244,6 +245,46 @@ export default function SettingsPage() {
       setSlackChannelId(slackData.slack_channel_id ?? "");
     }
   }, [slackData]);
+
+  // Handle Slack OAuth return redirect
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("slack_connected") === "true") {
+      toast({
+        title: "Slack connected!",
+        description: "QA incident alerts and threaded screenshots are now configured.",
+      });
+      qc.invalidateQueries({ queryKey: ["user-slack-settings"] });
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (params.get("slack_error")) {
+      const err = params.get("slack_error");
+      toast({
+        title: "Slack connection failed",
+        description: `Error: ${err}. Please try again or use manual configuration.`,
+        variant: "destructive",
+      });
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, [qc]);
+
+  const handleSlackOAuthConnect = async () => {
+    try {
+      setIsConnectingSlack(true);
+      const res = await api.getSlackAuthorizeUrl();
+      if (res.url) {
+        window.location.href = res.url;
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to initiate Slack OAuth flow.";
+      toast({
+        title: "Connection error",
+        description: msg,
+        variant: "destructive",
+      });
+      setIsConnectingSlack(false);
+    }
+  };
 
   // Mutations
   const saveMut = useMutation({
@@ -343,10 +384,15 @@ export default function SettingsPage() {
   }
 
   // Count active integrations
+  const isSlackConnected = Boolean(
+    slackData?.slack_webhook_url_set ||
+    slackData?.slack_bot_token_set ||
+    slackData?.slack_team_name
+  );
   const isLlmSet = data?.llm.openrouter_key_set || data?.llm.openai_key_set || data?.llm.anthropic_key_set || llmProvider === "ollama";
   const activeCount = [
     isLlmSet,
-    slackData?.slack_webhook_url_set,
+    isSlackConnected,
     data?.resend.api_key_set,
     data?.linear.api_key_set,
     data?.ci.webhook_token
@@ -471,49 +517,96 @@ export default function SettingsPage() {
           description="Auto-post structured QA incident reports to your Slack channel when a test fails."
           logo={<SlackLogo />}
           logoBgClass="bg-white"
-          isConnected={(slackData?.slack_webhook_url_set || slackData?.slack_bot_token_set) ?? false}
-          statusCaption="Posting to workspace"
-          emptyStateText="Not connected yet — add your Slack Bot Token (preferred) or Webhook URL to receive rich failure alerts."
+          isConnected={isSlackConnected}
+          statusCaption={
+            slackData?.slack_team_name
+              ? `Connected to ${slackData.slack_team_name}${slackData.slack_channel_name ? ` · #${slackData.slack_channel_name}` : ""}`
+              : isSlackConnected
+              ? "Posting to workspace"
+              : undefined
+          }
+          emptyStateText="Not connected yet — connect via 1-click OAuth (recommended) or configure custom bot credentials to receive rich alerts."
           onDisconnect={() => saveSlackMut.mutate(true)}
         >
           <div className="space-y-6">
-            <MaskedCredentialField 
-              label="Slack Bot Token (Preferred)" 
-              placeholder="xoxb-..." 
-              value={slackBotToken} 
-              onChange={setSlackBotToken} 
-              isSet={slackData?.slack_bot_token_set ?? false} 
-              isMaskedFallback="xoxb-****"
-              isSaving={saveSlackMut.isPending}
-              onSave={() => saveSlackMut.mutate()} 
-            />
-
-            <div className="space-y-2 pt-1">
-              <Label className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground">Channel ID (e.g. C0123456789)</Label>
-              <Input className="font-mono bg-[#0B0E14] border-transparent h-10 text-sm focus-visible:ring-1 focus-visible:ring-indigo-500/50" placeholder="C0123456789" value={slackChannelId} onChange={e => setSlackChannelId(e.target.value)} />
+            {/* 1-Click OAuth Banner */}
+            <div className="rounded-xl border border-indigo-500/20 bg-gradient-to-r from-indigo-950/40 via-[#161922] to-transparent p-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-sm font-semibold text-foreground">
+                      {isSlackConnected ? "Slack Workspace Connected" : "Connect with Slack (Recommended)"}
+                    </h4>
+                    <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                      1-Click OAuth
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed max-w-md">
+                    {isSlackConnected
+                      ? `Alerts and threaded screenshot proofs are actively streaming to #${slackData?.slack_channel_name || "qa-alerts"}.`
+                      : "Install the official Leaka AI bot in 5 seconds with automatic channel selection, native logo branding, and threaded failure screenshots."}
+                  </p>
+                </div>
+                <Button
+                  onClick={handleSlackOAuthConnect}
+                  disabled={isConnectingSlack}
+                  className="bg-[#4A154B] hover:bg-[#5E1E60] text-white font-medium text-xs h-9 px-4 shrink-0 shadow-md flex items-center gap-2"
+                >
+                  {isConnectingSlack ? <Loader2 className="w-4 h-4 animate-spin" /> : <SlackLogo />}
+                  {isSlackConnected ? "Switch Channel" : "Connect with Slack"}
+                </Button>
+              </div>
             </div>
 
-            <div className="relative py-2">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-border/40" />
-              </div>
-              <div className="relative flex justify-center text-[10px] uppercase font-semibold tracking-widest">
-                <span className="bg-[#161922] px-3 text-muted-foreground/60">
-                  OR
+            {/* Collapsible Advanced / Self-Hosted Configuration */}
+            <details className="group border border-border/30 rounded-xl overflow-hidden bg-[#0B0E14]/40 transition-colors">
+              <summary className="flex cursor-pointer items-center justify-between px-5 py-3.5 text-xs font-medium text-muted-foreground hover:text-white select-none">
+                <span className="flex items-center gap-2">
+                  <Settings2 className="w-3.5 h-3.5 text-muted-foreground" />
+                  Advanced / Self-Hosted Setup (Custom Bot Token & Webhook)
                 </span>
-              </div>
-            </div>
+                <ChevronDown className="w-4 h-4 transition-transform group-open:-rotate-180" />
+              </summary>
+              <div className="px-5 pb-5 pt-3 border-t border-border/20 space-y-6">
+                <MaskedCredentialField 
+                  label="Slack Bot Token" 
+                  placeholder="xoxb-..." 
+                  value={slackBotToken} 
+                  onChange={setSlackBotToken} 
+                  isSet={slackData?.slack_bot_token_set ?? false} 
+                  isMaskedFallback="xoxb-****"
+                  isSaving={saveSlackMut.isPending}
+                  onSave={() => saveSlackMut.mutate()} 
+                />
 
-            <MaskedCredentialField 
-              label="Incoming Webhook URL (Legacy)" 
-              placeholder="https://hooks.slack.com/services/T.../B..." 
-              value={slackWebhookUrl} 
-              onChange={setSlackWebhookUrl} 
-              isSet={slackData?.slack_webhook_url_set ?? false} 
-              isMaskedFallback="https://hooks.slack.com/services/T0••••/B0••••"
-              isSaving={saveSlackMut.isPending}
-              onSave={() => saveSlackMut.mutate()} 
-            />
+                <div className="space-y-2 pt-1">
+                  <Label className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground">Channel ID (e.g. C0123456789)</Label>
+                  <Input className="font-mono bg-[#0B0E14] border-transparent h-10 text-sm focus-visible:ring-1 focus-visible:ring-indigo-500/50" placeholder="C0123456789" value={slackChannelId} onChange={e => setSlackChannelId(e.target.value)} />
+                </div>
+
+                <div className="relative py-2">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-border/40" />
+                  </div>
+                  <div className="relative flex justify-center text-[10px] uppercase font-semibold tracking-widest">
+                    <span className="bg-[#161922] px-3 text-muted-foreground/60">
+                      OR
+                    </span>
+                  </div>
+                </div>
+
+                <MaskedCredentialField 
+                  label="Incoming Webhook URL (Legacy)" 
+                  placeholder="https://hooks.slack.com/services/T.../B..." 
+                  value={slackWebhookUrl} 
+                  onChange={setSlackWebhookUrl} 
+                  isSet={slackData?.slack_webhook_url_set ?? false} 
+                  isMaskedFallback="https://hooks.slack.com/services/T0••••/B0••••"
+                  isSaving={saveSlackMut.isPending}
+                  onSave={() => saveSlackMut.mutate()} 
+                />
+              </div>
+            </details>
             
             <div className="space-y-2 pt-1">
               <Label className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground">Your Leaka Dashboard URL</Label>
@@ -548,6 +641,7 @@ export default function SettingsPage() {
                   <li>Expected vs. actual result from the agent execution</li>
                   <li>Failed step number and the action that triggered the failure</li>
                   <li>Reproduction steps derived from the actual execution trace</li>
+                  <li>Forensic failure screenshot attached natively in thread</li>
                 </ul>
               </div>
             </details>
