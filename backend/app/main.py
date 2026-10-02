@@ -1704,6 +1704,8 @@ def slack_failure_alert(
 
 class SlackSettingsBody(BaseModel):
     slack_webhook_url: Optional[str] = None       # empty string = clear
+    slack_bot_token: Optional[str] = None
+    slack_channel_id: Optional[str] = None
     slack_auto_alert_on_failure: Optional[bool] = None
     dashboard_base_url: Optional[str] = None
 
