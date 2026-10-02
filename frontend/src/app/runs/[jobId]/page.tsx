@@ -15,7 +15,7 @@ import {
   AlertTriangle, ArrowLeft, CheckCircle2, CircleDashed, Loader2,
   Mail, Ticket, XCircle, ClipboardCopy, X, CheckCheck, Clock,
   Image as ImageIcon, Bell, MousePointerClick, Navigation, Type,
-  Search, ScrollText, ArrowRight, Globe, Zap,
+  Search, ScrollText, ArrowRight, Globe, Zap, ExternalLink,
 } from "lucide-react";
 import { formatDate, formatDuration, truncate } from "@/lib/utils";
 import { useParams } from "next/navigation";
@@ -194,7 +194,7 @@ export default function RunDetailPage() {
   const params = useParams<{ jobId: string }>();
   const jobId = params.jobId!;
 
-  const { data, isLoading, isRefetching } = useQuery({
+  const { data, isLoading, isRefetching, refetch } = useQuery({
     queryKey: ["run", jobId],
     queryFn: () => api.getRunStatus(jobId),
     refetchInterval: (ctx) => {
@@ -207,6 +207,7 @@ export default function RunDetailPage() {
   const linearMut = useMutation({
     mutationFn: () => api.createLinearIssue({ job_id: jobId }),
     onSuccess: (res) => {
+      refetch();
       toast({
         title: res.success ? "Linear ticket created" : "Linear ticket failed",
         description: res.success
@@ -216,6 +217,21 @@ export default function RunDetailPage() {
       });
     },
     onError: (e: Error) => toast({ title: "Linear failed", description: e.message, variant: "destructive" }),
+  });
+
+  const jiraMut = useMutation({
+    mutationFn: () => api.createJiraIssue({ job_id: jobId }),
+    onSuccess: (res) => {
+      refetch();
+      toast({
+        title: res.success ? (res.is_duplicate ? "Jira defect updated" : "Jira bug ticket created") : "Jira ticket failed",
+        description: res.success
+          ? (res.issue_key ? `Defect logged as ${res.issue_key}` : "Defect logged in Jira.")
+          : (res.error || "Verify Jira configuration in Settings."),
+        variant: res.success ? "default" : "destructive",
+      });
+    },
+    onError: (e: Error) => toast({ title: "Jira failed", description: e.message, variant: "destructive" }),
   });
 
   const emailMut = useMutation({
@@ -253,6 +269,30 @@ export default function RunDetailPage() {
           {isLoading ? <Skeleton className="h-6 w-64 inline-block align-middle" /> : data?.name}
         </h1>
         {data && <StatusBadge status={data.status} />}
+        {data?.jira_issue && (
+          <a
+            href={data.jira_issue.url || "#"}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-[#0052CC]/15 text-[#4C9AFF] border border-[#0052CC]/30 hover:bg-[#0052CC]/25 transition-colors"
+          >
+            <Ticket className="w-3.5 h-3.5" />
+            <span>Jira: {data.jira_issue.key}</span>
+            <ExternalLink className="w-3 h-3 ml-0.5 opacity-70" />
+          </a>
+        )}
+        {data?.linear_issue && (
+          <a
+            href={data.linear_issue.url || "#"}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-[#5E6AD2]/15 text-[#A5B4FC] border border-[#5E6AD2]/30 hover:bg-[#5E6AD2]/25 transition-colors"
+          >
+            <Ticket className="w-3.5 h-3.5" />
+            <span>Linear: {data.linear_issue.identifier || "Issue"}</span>
+            <ExternalLink className="w-3 h-3 ml-0.5 opacity-70" />
+          </a>
+        )}
         {isRunning && (
           <Button size="sm" variant="destructive" disabled={cancelMut.isPending} onClick={() => cancelMut.mutate()}>
             {cancelMut.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <X className="w-3 h-3 mr-1" />}
@@ -273,7 +313,10 @@ export default function RunDetailPage() {
           steps={steps}
           onEmail={() => emailMut.mutate()}
           onLinear={() => linearMut.mutate()}
+          onJira={() => jiraMut.mutate()}
           onSlack={() => slackMut.mutate()}
+          isCreatingJira={jiraMut.isPending}
+          isCreatingLinear={linearMut.isPending}
         />
       )}
     </div>
@@ -281,13 +324,16 @@ export default function RunDetailPage() {
 }
 
 function RunView({
-  data, steps, onEmail, onLinear, onSlack,
+  data, steps, onEmail, onLinear, onJira, onSlack, isCreatingJira, isCreatingLinear,
 }: {
   data: Awaited<ReturnType<typeof api.getRunStatus>>;
   steps: StepAction[];
   onEmail: () => void;
   onLinear: () => void;
+  onJira: () => void;
   onSlack: () => void;
+  isCreatingJira?: boolean;
+  isCreatingLinear?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const copyClip = async (text: string) => {
@@ -668,15 +714,79 @@ function RunView({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Card>
               <CardHeader>
-                <CardTitle className="text-base flex items-center gap-2"><Ticket className="w-4 h-4" />Linear ticket</CardTitle>
+                <CardTitle className="text-base flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <span className="w-5 h-5 flex items-center justify-center">
+                      <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none">
+                        <path d="M11.53 2c0 2.4-1.95 4.35-4.35 4.35H2.83C1.27 6.35 0 7.62 0 9.18v4.35C0 15.93 1.27 17.2 2.83 17.2h4.35c2.4 0 4.35 1.95 4.35 4.35v.45h4.35c1.56 0 2.83-1.27 2.83-2.83v-4.35c0-2.4 1.95-4.35 4.35-4.35h.45V6.12c0-1.56-1.27-2.83-2.83-2.83h-4.35c-2.4 0-4.35-1.95-4.35-4.35V0H11.53v2z" fill="#2684FF"/>
+                        <path d="M21.17 11.82h-4.35c-2.4 0-4.35 1.95-4.35 4.35v4.35c0 1.56 1.27 2.83 2.83 2.83h4.35c1.56 0 2.83-1.27 2.83-2.83v-4.35c0-2.4-1.95-4.35-4.35-4.35z" fill="#0052CC"/>
+                      </svg>
+                    </span>
+                    Jira Software
+                  </span>
+                  {data.jira_issue && (
+                    <Badge variant="outline" className="text-xs bg-[#0052CC]/10 text-[#4C9AFF] border-[#0052CC]/30 font-mono">
+                      {data.jira_issue.key}
+                    </Badge>
+                  )}
+                </CardTitle>
+                <CardDescription>File an issue with structured ADF description, reproduction steps, and screenshots.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {data.jira_issue ? (
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                    <Button variant="outline" asChild className="gap-1.5">
+                      <a href={data.jira_issue.url} target="_blank" rel="noopener noreferrer">
+                        <span>Open {data.jira_issue.key} in Jira</span>
+                        <ExternalLink className="w-3.5 h-3.5 opacity-70" />
+                      </a>
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={onJira} disabled={isCreatingJira} className="text-xs text-muted-foreground">
+                      {isCreatingJira && <Loader2 className="w-3 h-3 mr-1 animate-spin" />}
+                      Re-sync / Append note
+                    </Button>
+                  </div>
+                ) : (
+                  <Button variant="outline" onClick={onJira} disabled={isCreatingJira}>
+                    {isCreatingJira ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Ticket className="w-4 h-4 mr-2" />}
+                    Create Jira ticket
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <Ticket className="w-4 h-4 text-[#A5B4FC]" />
+                    Linear
+                  </span>
+                  {data.linear_issue && (
+                    <Badge variant="outline" className="text-xs bg-[#5E6AD2]/10 text-[#A5B4FC] border-[#5E6AD2]/30 font-mono">
+                      {data.linear_issue.identifier}
+                    </Badge>
+                  )}
+                </CardTitle>
                 <CardDescription>File a bug report with reproduction steps to your engineering backlog.</CardDescription>
               </CardHeader>
               <CardContent>
-                <Button variant="outline" onClick={onLinear}>
-                  <Ticket className="w-4 h-4 mr-2" />Create Linear ticket
-                </Button>
+                {data.linear_issue ? (
+                  <Button variant="outline" asChild className="gap-1.5">
+                    <a href={data.linear_issue.url} target="_blank" rel="noopener noreferrer">
+                      <span>Open {data.linear_issue.identifier} in Linear</span>
+                      <ExternalLink className="w-3.5 h-3.5 opacity-70" />
+                    </a>
+                  </Button>
+                ) : (
+                  <Button variant="outline" onClick={onLinear} disabled={isCreatingLinear}>
+                    {isCreatingLinear ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Ticket className="w-4 h-4 mr-2" />}
+                    Create Linear ticket
+                  </Button>
+                )}
               </CardContent>
             </Card>
+
             <Card>
               <CardHeader>
                 <CardTitle className="text-base flex items-center gap-2"><Mail className="w-4 h-4" />Email alert</CardTitle>
@@ -688,6 +798,7 @@ function RunView({
                 </Button>
               </CardContent>
             </Card>
+
             <Card>
               <CardHeader>
                 <CardTitle className="text-base flex items-center gap-2"><Bell className="w-4 h-4" />Slack alert</CardTitle>
