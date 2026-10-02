@@ -490,6 +490,15 @@ def _build_incident_context(
         base = dashboard_base_url.rstrip("/")
         dashboard_run_url = f"{base}/runs/{job_id}"
 
+    screenshot_path = None
+    if final_failure_shot_rel:
+        fp = final_failure_shot_rel
+        screenshot_path = fp if os.path.isabs(fp) else os.path.normpath(
+            os.path.join(os.path.dirname(SCREENSHOT_ROOT), fp)
+        )
+        if not os.path.isfile(screenshot_path):
+            screenshot_path = None
+
     return {
         "test_name": name,
         "job_id": job_id,
@@ -507,6 +516,7 @@ def _build_incident_context(
         "error_message": error_message,
         "linear_issue_url": linear_issue_url,
         "linear_identifier": linear_identifier,
+        "screenshot_path": screenshot_path,
     }
 
 
@@ -1033,11 +1043,17 @@ def run_browser_test(
                     if _owner else None
                 )
                 _wh = (_u.slack_webhook_url if _u else None) or settings.SLACK_WEBHOOK_URL
+                _bot_token = getattr(_u, 'slack_bot_token', None) if _u else None
+                _channel_id = getattr(_u, 'slack_channel_id', None) if _u else None
                 _enabled = _u.slack_auto_alert_on_failure if _u else True
                 _dash = (_u.dashboard_base_url if _u else None) or settings.DASHBOARD_BASE_URL
-                if _wh and _enabled:
+                
+                has_creds = bool(_wh) or (bool(_bot_token) and bool(_channel_id))
+                if has_creds and _enabled:
                     _crash_res = _sc.send_qa_incident(
                         webhook_url=_wh,
+                        slack_bot_token=_bot_token,
+                        slack_channel_id=_channel_id,
                         test_name=name,
                         job_id=job_id,
                         target_url=target_url,
@@ -1630,6 +1646,8 @@ def run_browser_test(
                     # Falls back to global SLACK_WEBHOOK_URL from .env for
                     # single-tenant / self-hosted deployments.
                     user_slack_url: Optional[str] = None
+                    user_slack_bot_token: Optional[str] = None
+                    user_slack_channel_id: Optional[str] = None
                     user_slack_enabled: bool = True
                     user_dashboard_base: Optional[str] = None
 
@@ -1642,11 +1660,13 @@ def run_browser_test(
                             )
                             if u_cfg:
                                 user_slack_url = u_cfg.slack_webhook_url
+                                user_slack_bot_token = getattr(u_cfg, "slack_bot_token", None)
+                                user_slack_channel_id = getattr(u_cfg, "slack_channel_id", None)
                                 user_slack_enabled = u_cfg.slack_auto_alert_on_failure
                                 user_dashboard_base = u_cfg.dashboard_base_url.strip() if u_cfg.dashboard_base_url else None
                                 logger.info(
-                                    "Slack lookup: owner=%s url_set=%s enabled=%s",
-                                    run.owner_id, bool(user_slack_url), user_slack_enabled,
+                                    "Slack lookup: owner=%s url_set=%s bot_set=%s enabled=%s",
+                                    run.owner_id, bool(user_slack_url), bool(user_slack_bot_token), user_slack_enabled,
                                 )
                             else:
                                 logger.info(
@@ -1666,12 +1686,13 @@ def run_browser_test(
                         )
 
                     effective_webhook = user_slack_url or settings.SLACK_WEBHOOK_URL
+                    has_slack_creds = bool(effective_webhook) or (bool(user_slack_bot_token) and bool(user_slack_channel_id))
                     logger.info(
-                        "Slack gate: effective_webhook=%s enabled=%s (job_id=%s)",
-                        bool(effective_webhook), user_slack_enabled, job_id,
+                        "Slack gate: has_creds=%s enabled=%s (job_id=%s)",
+                        has_slack_creds, user_slack_enabled, job_id,
                     )
 
-                    if effective_webhook and user_slack_enabled:
+                    if has_slack_creds and user_slack_enabled:
                         try:
                             # Resolve any Linear issue just created
                             lin_url: Optional[str] = None
@@ -1709,6 +1730,8 @@ def run_browser_test(
                             )
                             slack_res = slack_client.send_qa_incident(
                                 webhook_url=effective_webhook,
+                                slack_bot_token=user_slack_bot_token,
+                                slack_channel_id=user_slack_channel_id,
                                 **ctx,
                             )
                             if slack_res.get("ok"):

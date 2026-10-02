@@ -365,15 +365,47 @@ def send_qa_incident(
     )
     payload = {"text": fallback_text, "blocks": blocks}
 
-    try:
-        resp = requests.post(webhook_url, json=payload, timeout=10)
-        if 200 <= resp.status_code < 300:
-            return {"ok": True, "status_code": resp.status_code, "dedup_key": dedup_key}
-        return {
-            "ok": False,
-            "status_code": resp.status_code,
-            "body": resp.text[:500],
-            "dedup_key": dedup_key,
-        }
-    except Exception as exc:
-        return {"ok": False, "reason": f"request_error: {exc}", "dedup_key": dedup_key}
+    # 1. Try Bot Token Auth First
+    if slack_bot_token and slack_channel_id:
+        try:
+            import os
+            from slack_sdk import WebClient
+            client = WebClient(token=slack_bot_token)
+            
+            # Post main block kit message
+            resp = client.chat_postMessage(
+                channel=slack_channel_id,
+                text=fallback_text,
+                blocks=blocks
+            )
+            thread_ts = resp.get("ts")
+            
+            # Upload screenshot directly into the thread
+            if screenshot_path and os.path.isfile(screenshot_path) and thread_ts:
+                client.files_upload_v2(
+                    channel=slack_channel_id,
+                    file=screenshot_path,
+                    thread_ts=thread_ts,
+                    initial_comment="📸 *Failure Evidence Screenshot*"
+                )
+                
+            return {"ok": True, "status_code": 200, "dedup_key": dedup_key}
+        except Exception as exc:
+            return {"ok": False, "reason": f"slack_sdk_error: {exc}", "dedup_key": dedup_key}
+
+    # 2. Fallback to Legacy Webhook
+    if webhook_url:
+        try:
+            resp = requests.post(webhook_url, json=payload, timeout=10)
+            if 200 <= resp.status_code < 300:
+                return {"ok": True, "status_code": resp.status_code, "dedup_key": dedup_key}
+            return {
+                "ok": False,
+                "status_code": resp.status_code,
+                "body": resp.text[:500],
+                "dedup_key": dedup_key,
+            }
+        except Exception as exc:
+            return {"ok": False, "reason": f"request_error: {exc}", "dedup_key": dedup_key}
+            
+    return {"ok": False, "reason": "No webhook_url or slack_bot_token provided", "dedup_key": dedup_key}
