@@ -57,3 +57,5 @@ sentence-transformers>=2.2.0
 # ---------- Dev / test (property-based correctness tests) ----------
 pytest>=8.0.0
 hypothesis>=6.100.0
+
+slack-sdk==3.31.0
