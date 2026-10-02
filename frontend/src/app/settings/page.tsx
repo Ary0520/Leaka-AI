@@ -547,7 +547,7 @@ export default function SettingsPage() {
               <Button onClick={() => saveSlackMut.mutate()} disabled={saveSlackMut.isPending} className="bg-indigo-300 text-indigo-950 hover:bg-indigo-400 font-semibold h-9 px-5">
                 {saveSlackMut.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : "Save Slack settings"}
               </Button>
-              <Button variant="ghost" onClick={() => testSlackMut.mutate()} disabled={testSlackMut.isPending || !slackData?.slack_webhook_url_set} className="h-9 px-4 text-muted-foreground hover:text-white font-medium">
+              <Button variant="ghost" onClick={() => testSlackMut.mutate()} disabled={testSlackMut.isPending || (!slackData?.slack_webhook_url_set && !slackData?.slack_bot_token_set)} className="h-9 px-4 text-muted-foreground hover:text-white font-medium">
                 {testSlackMut.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : "Send test ping"}
               </Button>
             </div>
