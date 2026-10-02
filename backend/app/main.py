@@ -1721,15 +1721,26 @@ def get_user_slack_settings(
         return {
             "slack_webhook_url_set": False,
             "slack_webhook_url_masked": "",
+            "slack_bot_token_set": False,
+            "slack_channel_id_set": False,
+            "slack_channel_id": "",
             "slack_auto_alert_on_failure": True,
             "dashboard_base_url": "",
         }
     masked = ""
     if cfg.slack_webhook_url:
-        masked = cfg.slack_webhook_url[:34] + "…" if len(cfg.slack_webhook_url) > 34 else cfg.slack_webhook_url
+        masked = cfg.slack_webhook_url[:34] + "..." if len(cfg.slack_webhook_url) > 34 else cfg.slack_webhook_url
+        
+    bot_token_set = bool(getattr(cfg, "slack_bot_token", None))
+    channel_id_set = bool(getattr(cfg, "slack_channel_id", None))
+    channel_id = getattr(cfg, "slack_channel_id", "") or ""
+
     return {
         "slack_webhook_url_set": bool(cfg.slack_webhook_url),
         "slack_webhook_url_masked": masked,
+        "slack_bot_token_set": bot_token_set,
+        "slack_channel_id_set": channel_id_set,
+        "slack_channel_id": channel_id,
         "slack_auto_alert_on_failure": cfg.slack_auto_alert_on_failure,
         "dashboard_base_url": cfg.dashboard_base_url or "",
     }
@@ -1748,7 +1759,11 @@ def update_user_slack_settings(
         db.add(cfg)
 
     if body.slack_webhook_url is not None:
-        cfg.slack_webhook_url = body.slack_webhook_url or None  # "" → None (clear)
+        cfg.slack_webhook_url = body.slack_webhook_url or None  # "" -> None (clear)
+    if hasattr(body, "slack_bot_token") and body.slack_bot_token is not None:
+        cfg.slack_bot_token = body.slack_bot_token or None
+    if hasattr(body, "slack_channel_id") and body.slack_channel_id is not None:
+        cfg.slack_channel_id = body.slack_channel_id or None
     if body.slack_auto_alert_on_failure is not None:
         cfg.slack_auto_alert_on_failure = body.slack_auto_alert_on_failure
     if body.dashboard_base_url is not None:
