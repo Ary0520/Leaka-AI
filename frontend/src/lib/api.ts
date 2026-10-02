@@ -691,8 +691,7 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
-  deleteTestCase: (id: number) =>
-    request<void>(`/api/test-cases/${id}`, { method: "DELETE" }),
+
 
   // Test suites
   listSuites: (params?: { skip?: number; limit?: number; workspace_id?: string }) => {
