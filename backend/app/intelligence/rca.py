@@ -8,8 +8,11 @@ categorizes the root cause to save engineers debugging time.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Any
 from pydantic import BaseModel
 
@@ -18,6 +21,44 @@ logger = logging.getLogger("revguard.intelligence.rca")
 class RCAResult(BaseModel):
     category: str
     explanation: str
+
+
+def _run_async(coro: Any) -> Any:
+    """Safely execute an async coroutine from synchronous or active event-loop context."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(lambda: asyncio.run(coro))
+            return future.result(timeout=60)
+    else:
+        return asyncio.run(coro)
+
+
+def _extract_json_dict(text: str) -> dict[str, Any]:
+    """Robustly extract a JSON dictionary from markdown blocks, braces, or messy completion text."""
+    if not isinstance(text, str):
+        return {}
+    # 1. Try markdown code block ```json ... ```
+    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except Exception:
+            pass
+    # 2. Try outer braces
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidate = text[start:end+1]
+        try:
+            return json.loads(candidate)
+        except Exception:
+            pass
+    return {}
 
 
 def analyze_failure(
@@ -29,7 +70,7 @@ def analyze_failure(
     last_action: Optional[str] = None
 ) -> RCAResult:
     """
-    Given forensic evidence, run it through the LLM with structured output
+    Given forensic evidence, run it through the LLM with structured output or fallback parsing
     to categorize the root cause.
     """
     if not llm:
@@ -54,7 +95,7 @@ def analyze_failure(
     except Exception as exc:
         logger.warning(f"Failed to parse HAR data for RCA: {exc}")
 
-    network_summary = "\\n".join(network_errors) if network_errors else "No prominent network errors."
+    network_summary = "\n".join(network_errors) if network_errors else "No prominent network errors."
     
     # Truncate console logs and dom slightly to fit well
     console_summary = (console_logs[-2000:] if console_logs else "No console logs captured.")
@@ -83,14 +124,91 @@ Console Logs (last 2000 chars):
 
 Evaluate the evidence carefully. If there is a 500 network error, it's a PRODUCT_BUG. If a button is just missing with no errors, it's a FLAKY_SELECTOR.
 
-Return the result.
+Return the result as a JSON object with EXACTLY the keys "category" and "explanation".
+Example format:
+{{"category": "PRODUCT_BUG", "explanation": "API /login returned 500 internal server error."}}
 """
-    try:
-        # LangChain structured output invocation
-        # browser_use's llm is usually a Langchain ChatModel
-        structured_llm = llm.with_structured_output(RCAResult)
-        result: RCAResult = structured_llm.invoke(prompt)
-        return result
-    except Exception as exc:
-        logger.error(f"RCA analysis failed: {exc}")
-        return RCAResult(category="UNKNOWN", explanation=f"RCA LLM analysis failed: {exc}")
+
+    # 1. LangChain model with .with_structured_output()
+    if hasattr(llm, "with_structured_output"):
+        try:
+            structured_llm = llm.with_structured_output(RCAResult)
+            if hasattr(structured_llm, "invoke"):
+                return structured_llm.invoke(prompt)
+            elif hasattr(structured_llm, "ainvoke"):
+                return _run_async(structured_llm.ainvoke(prompt))
+        except Exception as exc:
+            logger.warning(f"LangChain structured output invocation failed: {exc}")
+
+    # 2. browser_use model (SafeChatOpenRouter, ChatOpenRouter, etc.) with .ainvoke()
+    if hasattr(llm, "ainvoke"):
+        async def _call_bu_model() -> RCAResult:
+            try:
+                from browser_use.llm.messages import UserMessage
+                messages = [UserMessage(content=prompt)]
+            except Exception:
+                messages = [{"role": "user", "content": prompt}]
+
+            # Try structured output first
+            try:
+                res = await llm.ainvoke(messages, output_format=RCAResult)
+                if isinstance(res, RCAResult):
+                    return res
+                if hasattr(res, "completion"):
+                    if isinstance(res.completion, RCAResult):
+                        return res.completion
+                    if isinstance(res.completion, dict):
+                        return RCAResult(**res.completion)
+                    if isinstance(res.completion, str):
+                        data = _extract_json_dict(res.completion)
+                        if data and "category" in data:
+                            return RCAResult(
+                                category=str(data.get("category", "UNKNOWN")),
+                                explanation=str(data.get("explanation", res.completion[:200]))
+                            )
+            except Exception as exc:
+                logger.warning(f"browser_use structured ainvoke failed: {exc}")
+
+            # Fallback to plain prompt completion without output_format
+            try:
+                res = await llm.ainvoke(messages)
+                content = ""
+                if hasattr(res, "completion") and isinstance(res.completion, str):
+                    content = res.completion
+                elif hasattr(res, "content") and isinstance(res.content, str):
+                    content = res.content
+                else:
+                    content = str(res)
+
+                data = _extract_json_dict(content)
+                if data and "category" in data:
+                    return RCAResult(
+                        category=str(data.get("category", "UNKNOWN")),
+                        explanation=str(data.get("explanation", content[:200]))
+                    )
+                return RCAResult(category="UNKNOWN", explanation=content[:200])
+            except Exception as exc:
+                logger.error(f"browser_use raw ainvoke failed: {exc}")
+                raise
+
+        try:
+            return _run_async(_call_bu_model())
+        except Exception as exc:
+            logger.error(f"RCA browser_use async invocation failed: {exc}")
+
+    # 3. Synchronous LLM fallback with .invoke()
+    if hasattr(llm, "invoke"):
+        try:
+            res = llm.invoke(prompt)
+            content = getattr(res, "content", str(res))
+            data = _extract_json_dict(content)
+            if data and "category" in data:
+                return RCAResult(
+                    category=str(data.get("category", "UNKNOWN")),
+                    explanation=str(data.get("explanation", content[:200]))
+                )
+            return RCAResult(category="UNKNOWN", explanation=content[:200])
+        except Exception as exc:
+            logger.error(f"RCA sync invoke failed: {exc}")
+
+    return RCAResult(category="UNKNOWN", explanation="RCA analysis unable to process with available LLM methods.")
