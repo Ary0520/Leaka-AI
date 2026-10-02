@@ -75,6 +75,21 @@ def _m18_slack_oauth_metadata() -> None:
     _safe_add_column("user_settings", "slack_channel_name", "VARCHAR(128)")
     logger.info("M18 applied: user_settings.slack_oauth_metadata ready.")
 
+
+def _m19_jira_settings_and_issues() -> None:
+    """Add Jira configuration columns to user_settings and ensure jira_issues table exists."""
+    _safe_add_column("user_settings", "jira_domain", "VARCHAR(512)")
+    _safe_add_column("user_settings", "jira_email", "VARCHAR(256)")
+    _safe_add_column("user_settings", "jira_api_token", "TEXT")
+    _safe_add_column("user_settings", "jira_project_key", "VARCHAR(32)")
+    _safe_add_column("user_settings", "jira_issue_type", "VARCHAR(64) DEFAULT 'Bug'")
+    _safe_add_column("user_settings", "jira_auto_file_on_failure", "BOOLEAN DEFAULT FALSE")
+
+    from .models import JiraIssue
+    from .database import engine, Base
+    Base.metadata.create_all(bind=engine, tables=[JiraIssue.__table__], checkfirst=True)
+    logger.info("M19 applied: Jira settings and jira_issues table ready.")
+
 # ---------------------------------------------------------------------------
 # M1 — pgvector extension + embeddings table
 # ---------------------------------------------------------------------------
@@ -448,6 +463,7 @@ _MIGRATIONS = [
     ("M16_api_key_scopes", _m16_api_key_scopes),
     ("M17_slack_bot_token", _m17_slack_bot_token),
     ("M18_slack_oauth_metadata", _m18_slack_oauth_metadata),
+    ("M19_jira_settings_and_issues", _m19_jira_settings_and_issues),
     ("B1_backfill_graph", _b1_backfill_graph),
 ]
 

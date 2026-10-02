@@ -144,6 +144,9 @@ class TestRun(Base):
     linear_issue = relationship(
         "LinearIssue", back_populates="test_run", uselist=False, cascade="all, delete-orphan"
     )
+    jira_issue = relationship(
+        "JiraIssue", back_populates="test_run", uselist=False, cascade="all, delete-orphan"
+    )
 
 
 class TestScreenshot(Base):
@@ -175,6 +178,21 @@ class LinearIssue(Base):
     test_run = relationship("TestRun", back_populates="linear_issue")
 
 
+class JiraIssue(Base):
+    __tablename__ = "jira_issues"
+
+    id = Column(Integer, primary_key=True, index=True)
+    test_run_id = Column(Integer, ForeignKey("test_runs.id"), nullable=False, unique=True)
+    issue_id = Column(String(128), nullable=False)
+    issue_key = Column(String(64), nullable=False, index=True)
+    project_key = Column(String(32), nullable=True)
+    summary = Column(String(500), nullable=False)
+    url = Column(String(2048), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    test_run = relationship("TestRun", back_populates="jira_issue")
+
+
 class UserSettings(Base):
     """
     Per-user integration settings stored in the database.
@@ -197,6 +215,14 @@ class UserSettings(Base):
     slack_auto_alert_on_failure = Column(Boolean, default=True, nullable=False)
     # Dashboard deep-link base (e.g. "https://app.leaka.ai" or "http://localhost:3000")
     dashboard_base_url = Column(String(512), nullable=True)
+
+    # Jira
+    jira_domain = Column(String(512), nullable=True)
+    jira_email = Column(String(256), nullable=True)
+    jira_api_token = Column(Text, nullable=True)
+    jira_project_key = Column(String(32), nullable=True)
+    jira_issue_type = Column(String(64), nullable=True, default="Bug")
+    jira_auto_file_on_failure = Column(Boolean, default=False, nullable=False)
 
     # Onboarding
     onboarding_completed = Column(Boolean, default=False, nullable=False)
