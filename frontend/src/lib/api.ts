@@ -107,6 +107,8 @@ export interface RunStatusResponse {
   started_at?: string | null;
   completed_at?: string | null;
   screenshots: Screenshot[];
+  linear_issue?: { id: string; identifier?: string; url?: string; title?: string } | null;
+  jira_issue?: { id: string; key: string; url?: string; summary?: string } | null;
 }
 
 export interface RunListEntry {
@@ -765,6 +767,73 @@ export const api = {
       identifier?: string | null;
       title?: string | null;
     }>("/api/integrations/linear/issue", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  // Jira
+  getJiraSettings: () =>
+    request<{
+      jira_domain?: string | null;
+      jira_email?: string | null;
+      jira_api_token_set: boolean;
+      jira_api_token_masked?: string | null;
+      jira_project_key?: string | null;
+      jira_issue_type: string;
+      jira_auto_file_on_failure: boolean;
+    }>("/api/user/jira-settings"),
+
+  updateJiraSettings: (body: {
+    jira_domain?: string | null;
+    jira_email?: string | null;
+    jira_api_token?: string | null;
+    jira_project_key?: string | null;
+    jira_issue_type?: string | null;
+    jira_auto_file_on_failure?: boolean | null;
+  }) =>
+    request<{ message: string }>("/api/user/jira-settings", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  testJiraConnection: (body?: {
+    jira_domain?: string | null;
+    jira_email?: string | null;
+    jira_api_token?: string | null;
+  }) =>
+    request<{ ok: boolean; message: string; profile?: Record<string, unknown> }>(
+      "/api/user/jira-settings/test-connection",
+      {
+        method: "POST",
+        body: JSON.stringify(body || {}),
+      }
+    ),
+
+  getJiraProjects: () =>
+    request<{
+      projects: Array<{
+        id: string;
+        key: string;
+        name: string;
+        project_type_key?: string;
+        avatar_url?: string;
+      }>;
+    }>("/api/integrations/jira/projects"),
+
+  createJiraIssue: (body: {
+    job_id: string;
+    summary?: string | null;
+    description?: string | null;
+    issue_type?: string | null;
+  }) =>
+    request<{
+      success: boolean;
+      issue_id?: string | null;
+      issue_key?: string | null;
+      url?: string | null;
+      is_duplicate: boolean;
+      error?: string | null;
+    }>("/api/integrations/jira/issue", {
       method: "POST",
       body: JSON.stringify(body),
     }),

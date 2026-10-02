@@ -34,6 +34,13 @@ const LinearLogo = () => (
   </svg>
 );
 
+const JiraLogo = () => (
+  <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none">
+    <path d="M11.53 2c0 2.4-1.95 4.35-4.35 4.35H2.83C1.27 6.35 0 7.62 0 9.18v4.35C0 15.93 1.27 17.2 2.83 17.2h4.35c2.4 0 4.35 1.95 4.35 4.35v.45h4.35c1.56 0 2.83-1.27 2.83-2.83v-4.35c0-2.4 1.95-4.35 4.35-4.35h.45V6.12c0-1.56-1.27-2.83-2.83-2.83h-4.35c-2.4 0-4.35-1.95-4.35-4.35V0H11.53v2z" fill="#2684FF"/>
+    <path d="M21.17 11.82h-4.35c-2.4 0-4.35 1.95-4.35 4.35v4.35c0 1.56 1.27 2.83 2.83 2.83h4.35c1.56 0 2.83-1.27 2.83-2.83v-4.35c0-2.4-1.95-4.35-4.35-4.35z" fill="#0052CC"/>
+  </svg>
+);
+
 const ResendLogo = () => (
   <Mail className="w-5 h-5 text-white" />
 );
@@ -194,6 +201,18 @@ export default function SettingsPage() {
     queryFn: () => api.getUserSlackSettings(),
   });
 
+  const { data: jiraData, isLoading: jiraLoading } = useQuery({
+    queryKey: ["user-jira-settings"],
+    queryFn: () => api.getJiraSettings(),
+  });
+
+  const { data: jiraProjectsData, refetch: refetchJiraProjects, isFetching: isFetchingProjects } = useQuery({
+    queryKey: ["jira-projects"],
+    queryFn: () => api.getJiraProjects(),
+    enabled: Boolean(jiraData?.jira_api_token_set && jiraData?.jira_domain && jiraData?.jira_email),
+    retry: false,
+  });
+
   const { data: apiKeys, isLoading: apiKeysLoading } = useQuery({
     queryKey: ["api-keys"],
     queryFn: () => api.listApiKeys(),
@@ -205,6 +224,13 @@ export default function SettingsPage() {
   const [resendKey, setResendKey] = useState("");
   const [emailFrom, setEmailFrom] = useState("");
   const [emailTo, setEmailTo] = useState("");
+
+  const [jiraDomain, setJiraDomain] = useState("");
+  const [jiraEmail, setJiraEmail] = useState("");
+  const [jiraApiToken, setJiraApiToken] = useState("");
+  const [jiraProjectKey, setJiraProjectKey] = useState("");
+  const [jiraIssueType, setJiraIssueType] = useState("Bug");
+  const [jiraAutoFile, setJiraAutoFile] = useState(false);
   
   const [slackWebhookUrl, setSlackWebhookUrl] = useState("");
   const [slackBotToken, setSlackBotToken] = useState("");
@@ -245,6 +271,16 @@ export default function SettingsPage() {
       setSlackChannelId(slackData.slack_channel_id ?? "");
     }
   }, [slackData]);
+
+  useEffect(() => {
+    if (jiraData) {
+      setJiraDomain(jiraData.jira_domain ?? "");
+      setJiraEmail(jiraData.jira_email ?? "");
+      setJiraProjectKey(jiraData.jira_project_key ?? "");
+      setJiraIssueType(jiraData.jira_issue_type || "Bug");
+      setJiraAutoFile(jiraData.jira_auto_file_on_failure);
+    }
+  }, [jiraData]);
 
   // Handle Slack OAuth return redirect
   useEffect(() => {
@@ -336,6 +372,62 @@ export default function SettingsPage() {
       });
     },
     onError: (e: Error) => toast({ title: "Ping failed", description: e.message, variant: "destructive" }),
+  });
+
+  const saveJiraMut = useMutation({
+    mutationFn: (disconnect?: boolean) => {
+      if (disconnect) {
+        return api.updateJiraSettings({
+          jira_domain: "",
+          jira_email: "",
+          jira_api_token: "",
+          jira_project_key: "",
+          jira_auto_file_on_failure: false,
+        });
+      }
+      return api.updateJiraSettings({
+        jira_domain: jiraDomain || undefined,
+        jira_email: jiraEmail || undefined,
+        jira_api_token: jiraApiToken || undefined,
+        jira_project_key: jiraProjectKey || undefined,
+        jira_issue_type: jiraIssueType || undefined,
+        jira_auto_file_on_failure: jiraAutoFile,
+      });
+    },
+    onSuccess: (_, disconnect) => {
+      qc.invalidateQueries({ queryKey: ["user-jira-settings"] });
+      qc.invalidateQueries({ queryKey: ["jira-projects"] });
+      if (disconnect) {
+        setJiraDomain("");
+        setJiraEmail("");
+        setJiraApiToken("");
+        setJiraProjectKey("");
+        setJiraAutoFile(false);
+        toast({ title: "Jira disconnected", description: "Jira configuration removed." });
+      } else {
+        setJiraApiToken("");
+        toast({ title: "Jira settings saved", description: "Your Jira configuration has been updated." });
+      }
+    },
+    onError: (e: Error) => {
+      toast({ title: "Save failed", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const testJiraMut = useMutation({
+    mutationFn: () =>
+      api.testJiraConnection({
+        jira_domain: jiraDomain || undefined,
+        jira_email: jiraEmail || undefined,
+        jira_api_token: jiraApiToken || undefined,
+      }),
+    onSuccess: (res) => {
+      toast({ title: "Jira Connected! 🚀", description: res.message });
+      refetchJiraProjects();
+    },
+    onError: (e: Error) => {
+      toast({ title: "Jira Connection Failed", description: e.message, variant: "destructive" });
+    },
   });
 
   const testLlmMut = useMutation({
@@ -698,6 +790,146 @@ export default function SettingsPage() {
       {/* ── ISSUE TRACKING ── */}
       <div className="space-y-3">
         <div className="text-[10px] tracking-widest uppercase font-semibold text-muted-foreground pl-1">Issue Tracking</div>
+
+        {/* Jira Software */}
+        <IntegrationCard
+          name="Atlassian Jira Software"
+          description="Auto-file structured defect reports with failure screenshots directly to your Jira Cloud Kanban board."
+          logo={<JiraLogo />}
+          logoBgClass="bg-white"
+          isConnected={Boolean(jiraData?.jira_api_token_set && jiraData?.jira_domain && jiraData?.jira_project_key)}
+          statusCaption={
+            jiraData?.jira_domain
+              ? `Connected to ${jiraData.jira_domain.replace(/^https?:\/\//, "")}${jiraData.jira_project_key ? ` · Project ${jiraData.jira_project_key}` : ""}`
+              : undefined
+          }
+          emptyStateText="Not connected yet — add your Jira domain, email, and API token to link your sprint backlog."
+          onDisconnect={() => saveJiraMut.mutate(true)}
+        >
+          <div className="space-y-6">
+            <div className="space-y-2">
+              <Label className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground">Jira Cloud Domain</Label>
+              <Input
+                className="font-mono bg-[#0B0E14] border-transparent h-10 text-sm focus-visible:ring-1 focus-visible:ring-indigo-500/50"
+                placeholder="e.g. company.atlassian.net"
+                value={jiraDomain}
+                onChange={e => setJiraDomain(e.target.value)}
+              />
+              <p className="text-[11px] text-muted-foreground">Your Atlassian Cloud URL (e.g. https://your-company.atlassian.net)</p>
+            </div>
+
+            <div className="space-y-2 pt-1">
+              <Label className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground">Atlassian Account Email</Label>
+              <Input
+                type="email"
+                className="font-mono bg-[#0B0E14] border-transparent h-10 text-sm focus-visible:ring-1 focus-visible:ring-indigo-500/50"
+                placeholder="developer@company.com"
+                value={jiraEmail}
+                onChange={e => setJiraEmail(e.target.value)}
+              />
+            </div>
+
+            <div className="space-y-1">
+              <MaskedCredentialField 
+                label="Atlassian API Token" 
+                placeholder="ATATT3xFfGF0..." 
+                value={jiraApiToken} 
+                onChange={setJiraApiToken} 
+                isSet={jiraData?.jira_api_token_set ?? false} 
+                isMaskedFallback={jiraData?.jira_api_token_masked || "ATATT3••••••••"}
+                isSaving={saveJiraMut.isPending}
+                onSave={() => saveJiraMut.mutate(false)} 
+              />
+              <p className="text-[11px] text-muted-foreground pt-1">
+                Generate an API Token in your{" "}
+                <a
+                  href="https://id.atlassian.com/manage-profile/security/api-tokens"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-indigo-400 hover:text-indigo-300 underline font-medium"
+                >
+                  Atlassian Security Settings ↗
+                </a>
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground">Jira Project Key</Label>
+                  {jiraData?.jira_api_token_set && (
+                    <button
+                      type="button"
+                      onClick={() => refetchJiraProjects()}
+                      className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
+                    >
+                      <RefreshCcw className={cn("w-3 h-3", isFetchingProjects && "animate-spin")} /> Refresh projects
+                    </button>
+                  )}
+                </div>
+                {jiraProjectsData?.projects && jiraProjectsData.projects.length > 0 ? (
+                  <Select value={jiraProjectKey} onValueChange={setJiraProjectKey}>
+                    <SelectTrigger className="font-mono bg-[#0B0E14] border-transparent h-10 text-sm focus:ring-1 focus:ring-indigo-500/50">
+                      <SelectValue placeholder="Select a project" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-[#161922] border-border/40 text-foreground">
+                      {jiraProjectsData.projects.map(p => (
+                        <SelectItem key={p.key} value={p.key} className="font-mono text-xs">
+                          {p.name} ({p.key})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    className="font-mono bg-[#0B0E14] border-transparent h-10 text-sm focus-visible:ring-1 focus-visible:ring-indigo-500/50 uppercase"
+                    placeholder="e.g. KAN or QA"
+                    value={jiraProjectKey}
+                    onChange={e => setJiraProjectKey(e.target.value.toUpperCase())}
+                  />
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground">Default Issue Type</Label>
+                <Input
+                  className="font-mono bg-[#0B0E14] border-transparent h-10 text-sm focus-visible:ring-1 focus-visible:ring-indigo-500/50"
+                  placeholder="Bug"
+                  value={jiraIssueType}
+                  onChange={e => setJiraIssueType(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between rounded-lg bg-[#0B0E14] p-4 border border-transparent">
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-foreground">Auto-file defect on test failure</p>
+                <p className="text-xs text-muted-foreground max-w-[85%] leading-relaxed">
+                  Automatically create or update a Jira bug ticket with screenshots and root cause analysis whenever a test fails.
+                </p>
+              </div>
+              <button
+                role="switch"
+                aria-checked={jiraAutoFile}
+                onClick={() => setJiraAutoFile((v) => !v)}
+                className={cn("relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none", jiraAutoFile ? "bg-emerald-500" : "bg-muted-foreground/30")}
+              >
+                <span className={cn("pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform", jiraAutoFile ? "translate-x-4" : "translate-x-0")} />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-4 pt-4 border-t border-border/20 mt-6">
+              <Button onClick={() => saveJiraMut.mutate(false)} disabled={saveJiraMut.isPending} className="bg-indigo-300 text-indigo-950 hover:bg-indigo-400 font-semibold h-9 px-5">
+                {saveJiraMut.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : "Save Jira settings"}
+              </Button>
+              <Button variant="ghost" onClick={() => testJiraMut.mutate()} disabled={testJiraMut.isPending} className="h-9 px-4 text-muted-foreground hover:text-white font-medium">
+                {testJiraMut.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : "Test connection"}
+              </Button>
+            </div>
+          </div>
+        </IntegrationCard>
+
+        {/* Linear */}
         <IntegrationCard
           name="Linear"
           description="Auto-create bug tickets in your engineering backlog when a test fails."
