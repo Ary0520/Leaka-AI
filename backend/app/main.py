@@ -22,7 +22,7 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -1706,6 +1706,8 @@ class SlackSettingsBody(BaseModel):
     slack_webhook_url: Optional[str] = None       # empty string = clear
     slack_bot_token: Optional[str] = None
     slack_channel_id: Optional[str] = None
+    slack_channel_name: Optional[str] = None
+    slack_team_name: Optional[str] = None
     slack_auto_alert_on_failure: Optional[bool] = None
     dashboard_base_url: Optional[str] = None
 
@@ -1741,6 +1743,9 @@ def get_user_slack_settings(
         "slack_bot_token_set": bot_token_set,
         "slack_channel_id_set": channel_id_set,
         "slack_channel_id": channel_id,
+        "slack_channel_name": getattr(cfg, "slack_channel_name", None),
+        "slack_team_name": getattr(cfg, "slack_team_name", None),
+        "oauth_configured": bool(settings.SLACK_CLIENT_ID),
         "slack_auto_alert_on_failure": cfg.slack_auto_alert_on_failure,
         "dashboard_base_url": cfg.dashboard_base_url or "",
     }
@@ -1764,6 +1769,13 @@ def update_user_slack_settings(
         cfg.slack_bot_token = body.slack_bot_token or None
     if hasattr(body, "slack_channel_id") and body.slack_channel_id is not None:
         cfg.slack_channel_id = body.slack_channel_id or None
+    if hasattr(body, "slack_channel_name") and body.slack_channel_name is not None:
+        cfg.slack_channel_name = body.slack_channel_name or None
+    if hasattr(body, "slack_team_name") and body.slack_team_name is not None:
+        cfg.slack_team_name = body.slack_team_name or None
+    if hasattr(body, "slack_bot_token") and body.slack_bot_token == "":
+        cfg.slack_team_name = None
+        cfg.slack_channel_name = None
     if body.slack_auto_alert_on_failure is not None:
         cfg.slack_auto_alert_on_failure = body.slack_auto_alert_on_failure
     if body.dashboard_base_url is not None:
@@ -1794,6 +1806,158 @@ def test_slack_ping(
         slack_bot_token=bot_token,
         slack_channel_id=channel_id
     )
+
+
+
+
+# ---------------------------------------------------------------------------
+# Slack OAuth v2 (1-Click Zero-Friction Flow)
+# ---------------------------------------------------------------------------
+
+import hmac
+import hashlib
+import time
+import base64
+import json
+from urllib.parse import urlencode
+
+_OAUTH_STATE_SECRET = os.getenv("SECRET_KEY") or os.getenv("CI_WEBHOOK_TOKEN") or "leaka-oauth-state-secret-2026"
+
+
+def _generate_slack_oauth_state(owner_id: str) -> str:
+    payload = {"sub": owner_id, "ts": int(time.time())}
+    dumped = json.dumps(payload, separators=(",", ":"))
+    b64_payload = base64.urlsafe_b64encode(dumped.encode()).decode()
+    sig = hmac.new(_OAUTH_STATE_SECRET.encode(), b64_payload.encode(), hashlib.sha256).hexdigest()[:32]
+    return f"{b64_payload}.{sig}"
+
+
+def _verify_slack_oauth_state(state: str) -> Optional[str]:
+    try:
+        parts = state.split(".")
+        if len(parts) != 2:
+            return None
+        b64_payload, sig = parts
+        expected_sig = hmac.new(_OAUTH_STATE_SECRET.encode(), b64_payload.encode(), hashlib.sha256).hexdigest()[:32]
+        if not hmac.compare_digest(sig, expected_sig):
+            return None
+        payload = json.loads(base64.urlsafe_b64decode(b64_payload.encode()).decode())
+        # Expire after 15 minutes
+        if time.time() - payload.get("ts", 0) > 900:
+            return None
+        return payload.get("sub")
+    except Exception:
+        return None
+
+
+@app.get("/api/integrations/slack/authorize")
+def slack_oauth_authorize(
+    user: dict = Depends(get_current_user),
+):
+    """
+    Generate the official Slack OAuth v2 authorization URL.
+    Requests bot scopes: chat:write, files:write, and incoming-webhook.
+    """
+    client_id = settings.SLACK_CLIENT_ID
+    if not client_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Slack OAuth is not configured on this server. SLACK_CLIENT_ID is missing.",
+        )
+
+    owner_id = user["sub"]
+    state = _generate_slack_oauth_state(owner_id)
+    dashboard_base = settings.DASHBOARD_BASE_URL or "http://localhost:3000"
+    redirect_uri = settings.SLACK_REDIRECT_URI or f"{dashboard_base}/api/integrations/slack/callback"
+    scopes = "chat:write,files:write,incoming-webhook"
+
+    params = {
+        "client_id": client_id,
+        "scope": scopes,
+        "redirect_uri": redirect_uri,
+        "state": state,
+    }
+    url = f"https://slack.com/oauth/v2/authorize?{urlencode(params)}"
+    return {"url": url}
+
+
+@app.get("/api/integrations/slack/callback")
+def slack_oauth_callback(
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Handle the redirect from Slack OAuth v2.
+    Exchanges code for access token, extracts channel and team metadata,
+    updates UserSettings, and redirects back to the dashboard settings page.
+    """
+    dashboard_base = settings.DASHBOARD_BASE_URL or "http://localhost:3000"
+
+    if error:
+        logger.warning("Slack OAuth returned error: %s", error)
+        return RedirectResponse(url=f"{dashboard_base}/settings?slack_error={error}")
+
+    if not code or not state:
+        return RedirectResponse(url=f"{dashboard_base}/settings?slack_error=missing_code_or_state")
+
+    owner_id = _verify_slack_oauth_state(state)
+    if not owner_id:
+        return RedirectResponse(url=f"{dashboard_base}/settings?slack_error=invalid_or_expired_state")
+
+    client_id = settings.SLACK_CLIENT_ID
+    client_secret = settings.SLACK_CLIENT_SECRET
+    redirect_uri = settings.SLACK_REDIRECT_URI or f"{dashboard_base}/api/integrations/slack/callback"
+
+    if not client_id or not client_secret:
+        return RedirectResponse(url=f"{dashboard_base}/settings?slack_error=server_oauth_unconfigured")
+
+    try:
+        from slack_sdk import WebClient
+        client = WebClient()
+        response = client.oauth_v2_access(
+            client_id=client_id,
+            client_secret=client_secret,
+            code=code,
+            redirect_uri=redirect_uri,
+        )
+
+        if not response.get("ok"):
+            err_msg = response.get("error", "oauth_failed")
+            return RedirectResponse(url=f"{dashboard_base}/settings?slack_error={err_msg}")
+
+        # Extract credentials and metadata
+        bot_token = response.get("access_token")
+        incoming_webhook = response.get("incoming_webhook") or {}
+        channel_id = incoming_webhook.get("channel_id")
+        channel_name = incoming_webhook.get("channel")
+        webhook_url = incoming_webhook.get("url")
+        team = response.get("team") or {}
+        team_name = team.get("name")
+
+        cfg = db.query(UserSettings).filter(UserSettings.owner_id == owner_id).first()
+        if not cfg:
+            cfg = UserSettings(owner_id=owner_id)
+            db.add(cfg)
+
+        cfg.slack_bot_token = bot_token
+        if channel_id:
+            cfg.slack_channel_id = channel_id
+        if channel_name:
+            cfg.slack_channel_name = channel_name
+        if team_name:
+            cfg.slack_team_name = team_name
+        if webhook_url:
+            cfg.slack_webhook_url = webhook_url
+
+        db.commit()
+        return RedirectResponse(url=f"{dashboard_base}/settings?slack_connected=true")
+
+    except Exception as exc:
+        logger.error("Slack OAuth callback failed: %s", exc, exc_info=True)
+        return RedirectResponse(url=f"{dashboard_base}/settings?slack_error=internal_error")
+
 
 # ---------------------------------------------------------------------------
 # Onboarding state — track whether user has completed the onboarding flow
