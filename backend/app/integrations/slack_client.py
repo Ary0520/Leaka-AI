@@ -22,6 +22,42 @@ from typing import Any, Optional
 import requests
 
 
+def send_test_ping(webhook_url: Optional[str] = None, slack_bot_token: Optional[str] = None, slack_channel_id: Optional[str] = None) -> dict[str, Any]:
+    payload = {
+        "text": "✅ *Leaka AI — Slack connection verified.*\nYou'll receive QA incident alerts here when tests fail.",
+        "blocks": [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "✅ *Leaka AI — Slack connection verified.*\nYou'll receive QA incident alerts here when tests fail.",
+                },
+            }
+        ],
+    }
+    
+    if slack_bot_token and slack_channel_id:
+        from slack_sdk import WebClient
+        from slack_sdk.errors import SlackApiError
+        client = WebClient(token=slack_bot_token)
+        try:
+            payload["channel"] = slack_channel_id
+            response = client.chat_postMessage(**payload)
+            return {"ok": True, "message": "Test ping sent successfully via Bot Token."}
+        except SlackApiError as e:
+            return {"ok": False, "message": f"Slack API Error: {e.response['error']}"}
+    elif webhook_url:
+        import requests as _req
+        try:
+            resp = _req.post(webhook_url, json=payload, timeout=10)
+            if 200 <= resp.status_code < 300:
+                return {"ok": True, "message": "Test ping sent successfully via Webhook."}
+            return {"ok": False, "message": f"Slack returned HTTP {resp.status_code}: {resp.text[:200]}"}
+        except Exception as exc:
+            return {"ok": False, "message": f"Request failed: {exc}"}
+    else:
+        return {"ok": False, "message": "No Slack connection configured."}
+
 # ---------------------------------------------------------------------------
 # Diagnosis helpers — deterministic, no LLM call, no cost
 # ---------------------------------------------------------------------------

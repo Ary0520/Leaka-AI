@@ -1763,34 +1763,22 @@ def test_slack_ping(
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
-    """Send a test ping to verify the webhook URL is working."""
+    """Send a test ping to verify the webhook URL or Bot Token is working."""
     owner = user["sub"]
     cfg = db.query(UserSettings).filter(UserSettings.owner_id == owner).first()
     webhook = (cfg and cfg.slack_webhook_url) or settings.SLACK_WEBHOOK_URL
-    if not webhook:
-        raise HTTPException(400, "No Slack webhook URL configured.")
+    bot_token = getattr(cfg, "slack_bot_token", None) if cfg else None
+    channel_id = getattr(cfg, "slack_channel_id", None) if cfg else None
+    
+    if not webhook and not (bot_token and channel_id):
+        raise HTTPException(400, "No Slack configuration (Webhook or Bot Token) found.")
 
-    import requests as _req
-    payload = {
-        "text": "✅ *Leaka AI — Slack connection verified.*\nYou'll receive QA incident alerts here when tests fail.",
-        "blocks": [
-            {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": "✅ *Leaka AI — Slack connection verified.*\nYou'll receive QA incident alerts here when tests fail.",
-                },
-            }
-        ],
-    }
-    try:
-        resp = _req.post(webhook, json=payload, timeout=10)
-        if 200 <= resp.status_code < 300:
-            return {"ok": True, "message": "Test ping sent successfully."}
-        return {"ok": False, "message": f"Slack returned HTTP {resp.status_code}: {resp.text[:200]}"}
-    except Exception as exc:
-        return {"ok": False, "message": f"Request failed: {exc}"}
-
+    from app.integrations import slack_client
+    return slack_client.send_test_ping(
+        webhook_url=webhook,
+        slack_bot_token=bot_token,
+        slack_channel_id=channel_id
+    )
 
 # ---------------------------------------------------------------------------
 # Onboarding state — track whether user has completed the onboarding flow
