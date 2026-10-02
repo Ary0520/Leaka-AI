@@ -257,7 +257,7 @@ export default function SettingsPage() {
   });
 
   const saveSlackMut = useMutation({
-    mutationFn: (clear?: boolean) => {
+    mutationFn: (clear?: boolean | void) => {
       if (clear) {
         return api.updateUserSlackSettings({
           slack_webhook_url: "",
@@ -493,7 +493,16 @@ export default function SettingsPage() {
               <Input className="font-mono bg-[#0B0E14] border-transparent h-10 text-sm focus-visible:ring-1 focus-visible:ring-indigo-500/50" placeholder="C0123456789" value={slackChannelId} onChange={e => setSlackChannelId(e.target.value)} />
             </div>
 
-            <div className="border-t border-border/50 pt-6"></div>
+            <div className="relative py-2">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-border/40" />
+              </div>
+              <div className="relative flex justify-center text-[10px] uppercase font-semibold tracking-widest">
+                <span className="bg-[#161922] px-3 text-muted-foreground/60">
+                  OR
+                </span>
+              </div>
+            </div>
 
             <MaskedCredentialField 
               label="Incoming Webhook URL (Legacy)" 
