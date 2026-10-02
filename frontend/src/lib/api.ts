@@ -801,12 +801,17 @@ export const api = {
     request<{
       slack_webhook_url_set: boolean;
       slack_webhook_url_masked: string;
+      slack_bot_token_set?: boolean;
+      slack_channel_id_set?: boolean;
+      slack_channel_id?: string;
       slack_auto_alert_on_failure: boolean;
       dashboard_base_url: string;
     }>("/api/user/slack-settings"),
 
   updateUserSlackSettings: (body: {
     slack_webhook_url?: string;
+    slack_bot_token?: string;
+    slack_channel_id?: string;
     slack_auto_alert_on_failure?: boolean;
     dashboard_base_url?: string;
   }) =>
