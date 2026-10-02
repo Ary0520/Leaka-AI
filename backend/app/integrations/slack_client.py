@@ -194,7 +194,10 @@ def incident_dedup_key(
 
 def send_qa_incident(
     *,
-    webhook_url: str,
+    webhook_url: Optional[str] = None,
+    slack_bot_token: Optional[str] = None,
+    slack_channel_id: Optional[str] = None,
+    screenshot_path: Optional[str] = None,
     # Identity
     test_name: str,
     job_id: str,
