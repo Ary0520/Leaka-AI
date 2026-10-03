@@ -1719,6 +1719,26 @@ def get_jira_projects(
         raise HTTPException(400, f"Failed to list Jira projects: {str(e)}")
 
 
+@app.get("/api/integrations/jira/issue-types")
+def get_jira_issue_types(
+    project_key: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    owner = user["sub"]
+    cfg = db.query(UserSettings).filter(UserSettings.owner_id == owner).first()
+    if not cfg or not cfg.jira_domain or not cfg.jira_email or not cfg.jira_api_token:
+        raise HTTPException(400, "Jira credentials are not configured yet.")
+
+    try:
+        types = jira_client.list_issue_types(
+            cfg.jira_domain, cfg.jira_email, cfg.jira_api_token, project_key=project_key
+        )
+        return {"issue_types": types}
+    except Exception as e:
+        raise HTTPException(400, f"Failed to list Jira issue types: {str(e)}")
+
+
 @app.post("/api/integrations/jira/issue", response_model=JiraIssueResponse)
 def create_jira_issue_endpoint(
     body: CreateJiraIssueRequest,

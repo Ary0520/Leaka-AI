@@ -191,33 +191,6 @@ function IntegrationCard({
 export default function SettingsPage() {
   const qc = useQueryClient();
   
-  const { data, isLoading } = useQuery({
-    queryKey: ["integration-settings"],
-    queryFn: () => api.getIntegrationSettings(),
-  });
-
-  const { data: slackData, isLoading: slackLoading } = useQuery({
-    queryKey: ["user-slack-settings"],
-    queryFn: () => api.getUserSlackSettings(),
-  });
-
-  const { data: jiraData, isLoading: jiraLoading } = useQuery({
-    queryKey: ["user-jira-settings"],
-    queryFn: () => api.getJiraSettings(),
-  });
-
-  const { data: jiraProjectsData, refetch: refetchJiraProjects, isFetching: isFetchingProjects } = useQuery({
-    queryKey: ["jira-projects"],
-    queryFn: () => api.getJiraProjects(),
-    enabled: Boolean(jiraData?.jira_api_token_set && jiraData?.jira_domain && jiraData?.jira_email),
-    retry: false,
-  });
-
-  const { data: apiKeys, isLoading: apiKeysLoading } = useQuery({
-    queryKey: ["api-keys"],
-    queryFn: () => api.listApiKeys(),
-  });
-
   // Local form state
   const [linearKey, setLinearKey] = useState("");
   const [linearTeam, setLinearTeam] = useState("");
@@ -252,6 +225,40 @@ export default function SettingsPage() {
 
   const [llmTestResult, setLlmTestResult] = useState<{ ok: boolean; provider: string; model: string; detail: string } | null>(null);
 
+  const { data, isLoading } = useQuery({
+    queryKey: ["integration-settings"],
+    queryFn: () => api.getIntegrationSettings(),
+  });
+
+  const { data: slackData, isLoading: slackLoading } = useQuery({
+    queryKey: ["user-slack-settings"],
+    queryFn: () => api.getUserSlackSettings(),
+  });
+
+  const { data: jiraData, isLoading: jiraLoading } = useQuery({
+    queryKey: ["user-jira-settings"],
+    queryFn: () => api.getJiraSettings(),
+  });
+
+  const { data: jiraProjectsData, refetch: refetchJiraProjects, isFetching: isFetchingProjects } = useQuery({
+    queryKey: ["jira-projects"],
+    queryFn: () => api.getJiraProjects(),
+    enabled: Boolean(jiraData?.jira_api_token_set && jiraData?.jira_domain && jiraData?.jira_email),
+    retry: false,
+  });
+
+  const { data: jiraIssueTypesData, isFetching: isFetchingIssueTypes } = useQuery({
+    queryKey: ["jira-issue-types", jiraProjectKey],
+    queryFn: () => api.getJiraIssueTypes(jiraProjectKey),
+    enabled: Boolean(jiraData?.jira_api_token_set && jiraData?.jira_domain && jiraData?.jira_email && jiraProjectKey),
+    retry: false,
+  });
+
+  const { data: apiKeys, isLoading: apiKeysLoading } = useQuery({
+    queryKey: ["api-keys"],
+    queryFn: () => api.listApiKeys(),
+  });
+
   // Initial population
   useEffect(() => {
     if (data) {
@@ -281,6 +288,16 @@ export default function SettingsPage() {
       setJiraAutoFile(jiraData.jira_auto_file_on_failure);
     }
   }, [jiraData]);
+
+  useEffect(() => {
+    if (jiraIssueTypesData?.issue_types && jiraIssueTypesData.issue_types.length > 0) {
+      const names = jiraIssueTypesData.issue_types.map(t => t.name);
+      if (!names.includes(jiraIssueType)) {
+        const preferred = names.find(n => n.toLowerCase() === "bug") || names.find(n => n.toLowerCase() === "task") || names[0];
+        if (preferred) setJiraIssueType(preferred);
+      }
+    }
+  }, [jiraIssueTypesData, jiraIssueType]);
 
   // Handle Slack OAuth return redirect
   useEffect(() => {
@@ -892,12 +909,27 @@ export default function SettingsPage() {
 
               <div className="space-y-2">
                 <Label className="text-[10px] tracking-widest font-semibold uppercase text-muted-foreground">Default Issue Type</Label>
-                <Input
-                  className="font-mono bg-[#0B0E14] border-transparent h-10 text-sm focus-visible:ring-1 focus-visible:ring-indigo-500/50"
-                  placeholder="Bug"
-                  value={jiraIssueType}
-                  onChange={e => setJiraIssueType(e.target.value)}
-                />
+                {jiraIssueTypesData?.issue_types && jiraIssueTypesData.issue_types.length > 0 ? (
+                  <Select value={jiraIssueType} onValueChange={setJiraIssueType}>
+                    <SelectTrigger className="font-mono bg-[#0B0E14] border-transparent h-10 text-sm focus:ring-1 focus:ring-indigo-500/50">
+                      <SelectValue placeholder="Select issue type" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-[#161922] border-border/40 text-foreground">
+                      {jiraIssueTypesData.issue_types.map(t => (
+                        <SelectItem key={t.id} value={t.name} className="font-mono text-xs">
+                          {t.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    className="font-mono bg-[#0B0E14] border-transparent h-10 text-sm focus-visible:ring-1 focus-visible:ring-indigo-500/50"
+                    placeholder="Task or Bug"
+                    value={jiraIssueType}
+                    onChange={e => setJiraIssueType(e.target.value)}
+                  />
+                )}
               </div>
             </div>
 

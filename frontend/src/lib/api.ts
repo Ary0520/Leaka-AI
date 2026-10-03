@@ -820,6 +820,18 @@ export const api = {
       }>;
     }>("/api/integrations/jira/projects"),
 
+  getJiraIssueTypes: (projectKey?: string | null) => {
+    const qs = projectKey ? `?project_key=${encodeURIComponent(projectKey)}` : "";
+    return request<{
+      issue_types: Array<{
+        id: string;
+        name: string;
+        description?: string;
+        icon_url?: string;
+      }>;
+    }>(`/api/integrations/jira/issue-types${qs}`);
+  },
+
   createJiraIssue: (body: {
     job_id: string;
     summary?: string | null;
