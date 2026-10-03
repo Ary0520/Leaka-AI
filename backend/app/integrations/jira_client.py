@@ -43,6 +43,45 @@ def normalize_jira_url(domain_or_url: str) -> str:
     return f"https://{d}.atlassian.net"
 
 
+_CLOUD_ID_CACHE: dict[str, str] = {}
+
+
+def get_cloud_id(domain_or_url: str) -> Optional[str]:
+    """
+    Resolve the Atlassian Cloud ID for a given domain from /_edge/tenant_info.
+    This enables seamless support for modern Atlassian Scoped API Tokens (ATATT3xF...)
+    which require routing through https://api.atlassian.com/ex/jira/{cloudId}.
+    """
+    site_url = normalize_jira_url(domain_or_url)
+    if not site_url:
+        return None
+    if site_url in _CLOUD_ID_CACHE:
+        return _CLOUD_ID_CACHE[site_url]
+    try:
+        resp = requests.get(f"{site_url}/_edge/tenant_info", timeout=10)
+        if resp.status_code == 200:
+            cid = resp.json().get("cloudId")
+            if cid:
+                _CLOUD_ID_CACHE[site_url] = str(cid)
+                return str(cid)
+    except Exception as e:
+        logger.debug("Failed to resolve tenant_info cloudId for %s: %s", site_url, e)
+    return None
+
+
+def get_api_base_url(domain_or_url: str) -> str:
+    """
+    Returns the appropriate API base URL.
+    Prefers https://api.atlassian.com/ex/jira/{cloudId} if cloudId is available
+    (supporting both scoped ATATT tokens and classic tokens).
+    Falls back to direct site URL https://{domain}.
+    """
+    cid = get_cloud_id(domain_or_url)
+    if cid:
+        return f"https://api.atlassian.com/ex/jira/{cid}"
+    return normalize_jira_url(domain_or_url)
+
+
 def get_auth_headers(email: str, api_token: str) -> dict[str, str]:
     """Build Basic Auth headers using Base64(email:api_token)."""
     cred = f"{email.strip()}:{api_token.strip()}".encode("utf-8")
@@ -59,23 +98,32 @@ def verify_connection(domain: str, email: str, api_token: str) -> dict[str, Any]
     Test authentication and verify connectivity against Jira Cloud.
     Calls GET /rest/api/3/myself.
     """
-    base_url = normalize_jira_url(domain)
-    if not base_url:
+    site_url = normalize_jira_url(domain)
+    if not site_url:
         raise ValueError("Jira domain is required.")
     if not email or not api_token:
         raise ValueError("Jira email and API token are required.")
 
-    endpoint = f"{base_url}/rest/api/3/myself"
+    api_base = get_api_base_url(domain)
+    endpoint = f"{api_base}/rest/api/3/myself"
     headers = get_auth_headers(email, api_token)
 
     try:
         resp = requests.get(endpoint, headers=headers, timeout=15)
+        # If gateway fails or domain changed, attempt fallback directly to site_url
+        if resp.status_code == 401 and api_base != site_url:
+            fallback_endpoint = f"{site_url}/rest/api/3/myself"
+            resp_fallback = requests.get(fallback_endpoint, headers=headers, timeout=15)
+            if resp_fallback.status_code == 200:
+                resp = resp_fallback
+                api_base = site_url
+
         if resp.status_code == 401:
             raise PermissionError("Invalid Jira credentials. Please check your email and API token.")
         if resp.status_code == 403:
             raise PermissionError("Access forbidden. Ensure your Atlassian user has access to this Jira instance.")
         if resp.status_code == 404:
-            raise ValueError(f"Jira instance '{base_url}' not found. Please verify your domain.")
+            raise ValueError(f"Jira instance '{site_url}' not found. Please verify your domain.")
 
         resp.raise_for_status()
         data = resp.json()
@@ -85,11 +133,11 @@ def verify_connection(domain: str, email: str, api_token: str) -> dict[str, Any]
             "email_address": data.get("emailAddress", email),
             "account_id": data.get("accountId"),
             "active": data.get("active", True),
-            "domain": base_url,
+            "domain": site_url,
         }
     except requests.RequestException as e:
         logger.error("Jira connection verification failed: %s", e)
-        raise RuntimeError(f"Failed to connect to Jira at {base_url}: {e}") from e
+        raise RuntimeError(f"Failed to connect to Jira at {site_url}: {e}") from e
 
 
 def list_projects(domain: str, email: str, api_token: str) -> list[dict[str, Any]]:
@@ -97,8 +145,8 @@ def list_projects(domain: str, email: str, api_token: str) -> list[dict[str, Any
     Fetch accessible Jira projects.
     Calls GET /rest/api/3/project.
     """
-    base_url = normalize_jira_url(domain)
-    endpoint = f"{base_url}/rest/api/3/project"
+    api_base = get_api_base_url(domain)
+    endpoint = f"{api_base}/rest/api/3/project"
     headers = get_auth_headers(email, api_token)
 
     resp = requests.get(endpoint, headers=headers, timeout=15)
@@ -115,21 +163,33 @@ def list_projects(domain: str, email: str, api_token: str) -> list[dict[str, Any
             "avatar_url": (p.get("avatarUrls") or {}).get("48x48"),
         })
     return projects
-
-
 def list_issue_types(domain: str, email: str, api_token: str, project_key: Optional[str] = None) -> list[dict[str, Any]]:
     """
     Fetch supported issue types for a given project or globally.
-    Calls GET /rest/api/3/issuetype.
+    Calls GET /rest/api/3/project/{project_key} or GET /rest/api/3/issuetype.
     """
-    base_url = normalize_jira_url(domain)
+    api_base = get_api_base_url(domain)
     headers = get_auth_headers(email, api_token)
 
-    endpoint = f"{base_url}/rest/api/3/issuetype"
-    if project_key:
-        endpoint = f"{base_url}/rest/api/3/issue/createmeta/{project_key}/issuetypes"
-
     try:
+        if project_key:
+            endpoint = f"{api_base}/rest/api/3/project/{project_key.strip().upper()}"
+            resp = requests.get(endpoint, headers=headers, timeout=15)
+            if resp.status_code == 200:
+                data = resp.json()
+                types = []
+                for t in data.get("issueTypes", []):
+                    if not t.get("subtask", False):
+                        types.append({
+                            "id": t.get("id"),
+                            "name": t.get("name"),
+                            "description": t.get("description"),
+                            "icon_url": t.get("iconUrl"),
+                        })
+                if types:
+                    return types
+
+        endpoint = f"{api_base}/rest/api/3/issuetype"
         resp = requests.get(endpoint, headers=headers, timeout=15)
         resp.raise_for_status()
         data = resp.json()
@@ -146,7 +206,7 @@ def list_issue_types(domain: str, email: str, api_token: str, project_key: Optio
                 })
         return types
     except Exception as e:
-        logger.warning("Failed to fetch custom issue types for Jira project %s: %s", project_key, e)
+        logger.warning("Failed to fetch issue types for Jira project %s: %s", project_key, e)
         return [{"id": "10004", "name": "Bug", "description": "A problem which impairs or prevents the functions of the product."}]
 
 
@@ -281,8 +341,9 @@ def search_open_issue(
     Search for an existing non-resolved Jira issue using JQL to prevent duplicate ticket spam.
     Query: project = '{project_key}' AND labels = '{label_identifier}' AND statusCategory != Done
     """
-    base_url = normalize_jira_url(domain)
-    endpoint = f"{base_url}/rest/api/3/search"
+    site_url = normalize_jira_url(domain)
+    api_base = get_api_base_url(domain)
+    endpoint = f"{api_base}/rest/api/3/search"
     headers = get_auth_headers(email, api_token)
 
     clean_proj = project_key.strip().replace("'", "")
@@ -309,7 +370,7 @@ def search_open_issue(
                 "id": iss.get("id"),
                 "key": iss.get("key"),
                 "summary": iss.get("fields", {}).get("summary"),
-                "url": f"{base_url}/browse/{iss.get('key')}",
+                "url": f"{site_url}/browse/{iss.get('key')}",
             }
         return None
     except Exception as e:
@@ -329,8 +390,8 @@ def add_comment(
     Append an execution trace comment to an existing Jira issue when repeated test runs fail.
     Calls POST /rest/api/3/issue/{issueKey}/comment.
     """
-    base_url = normalize_jira_url(domain)
-    endpoint = f"{base_url}/rest/api/3/issue/{issue_key}/comment"
+    api_base = get_api_base_url(domain)
+    endpoint = f"{api_base}/rest/api/3/issue/{issue_key}/comment"
     headers = get_auth_headers(email, api_token)
 
     content_nodes: list[dict[str, Any]] = [
@@ -391,9 +452,27 @@ def create_issue(
     Create a new Jira Cloud defect via POST /rest/api/3/issue.
     Returns: {"success": bool, "id": str, "key": str, "url": str, "error": str}
     """
-    base_url = normalize_jira_url(domain)
-    endpoint = f"{base_url}/rest/api/3/issue"
+    site_url = normalize_jira_url(domain)
+    api_base = get_api_base_url(domain)
+    endpoint = f"{api_base}/rest/api/3/issue"
     headers = get_auth_headers(email, api_token)
+
+    clean_proj = project_key.strip().upper()
+    target_type = (issue_type or "Bug").strip()
+    resolved_issue_type = target_type
+    try:
+        proj_types = list_issue_types(domain, email, api_token, project_key=clean_proj)
+        type_names = [t.get("name") for t in proj_types if t.get("name")]
+        if type_names:
+            matched = next((tn for tn in type_names if tn.lower() == target_type.lower()), None)
+            if matched:
+                resolved_issue_type = matched
+            else:
+                fallback = next((tn for tn in type_names if tn in ("Bug", "Task", "Story", "Incident")), type_names[0])
+                resolved_issue_type = fallback
+                logger.info("Project %s issue types %s do not include '%s'; using '%s'", clean_proj, type_names, target_type, fallback)
+    except Exception as e:
+        logger.debug("Failed to verify issue types for project %s: %s", clean_proj, e)
 
     issue_labels = ["leaka-ai", "automated-qa"]
     if labels:
@@ -404,10 +483,10 @@ def create_issue(
 
     payload = {
         "fields": {
-            "project": {"key": project_key.strip().upper()},
+            "project": {"key": clean_proj},
             "summary": summary[:255],
             "description": description_adf,
-            "issuetype": {"name": issue_type},
+            "issuetype": {"name": resolved_issue_type},
             "labels": issue_labels,
         }
     }
@@ -430,7 +509,7 @@ def create_issue(
     data = resp.json()
     issue_id = data.get("id")
     issue_key = data.get("key")
-    issue_url = f"{base_url}/browse/{issue_key}"
+    issue_url = f"{site_url}/browse/{issue_key}"
 
     return {
         "success": True,
@@ -456,8 +535,8 @@ def upload_attachment(
         logger.warning("Jira attachment file does not exist: %s", file_path)
         return False
 
-    base_url = normalize_jira_url(domain)
-    endpoint = f"{base_url}/rest/api/3/issue/{issue_key}/attachments"
+    api_base = get_api_base_url(domain)
+    endpoint = f"{api_base}/rest/api/3/issue/{issue_key}/attachments"
 
     # Basic auth without Content-Type (requests sets multipart boundary automatically)
     cred = f"{email.strip()}:{api_token.strip()}".encode("utf-8")
