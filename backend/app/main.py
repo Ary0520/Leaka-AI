@@ -2469,8 +2469,31 @@ def explore_status(job_id: str, db: Session = Depends(get_db), user: dict = Depe
     run = db.query(ExploreRun).filter(ExploreRun.job_id == job_id).first()
     if not run:
         raise HTTPException(404, "Explore run not found")
-    if run.owner_id and run.owner_id != user.get("sub"):
-        raise HTTPException(404, "Explore run not found")
+        
+    user_id = user.get("sub")
+    if run.owner_id and run.owner_id != user_id:
+        from .models import Application, WorkspaceMember
+        app = db.query(Application).filter(Application.id == run.application_id).first()
+        if app and app.workspace_id:
+            mem = db.query(WorkspaceMember).filter(
+                WorkspaceMember.workspace_id == app.workspace_id,
+                WorkspaceMember.user_id == user_id
+            ).first()
+            if not mem:
+                raise HTTPException(404, "Explore run not found")
+        else:
+            raise HTTPException(404, "Explore run not found")
+
+    # Stale explore run reaper (15 min guardrail)
+    now = datetime.utcnow()
+    ref_time = run.started_at or run.created_at
+    if run.status in (ExploreRunStatus.RUNNING, ExploreRunStatus.PENDING) and ref_time:
+        if (now - ref_time).total_seconds() > 900:
+            run.status = ExploreRunStatus.FAILED
+            run.error_message = "Exploration timed out (exceeded 15 minutes). Check target site reachability or add pages manually."
+            run.completed_at = now
+            db.commit()
+
     return ExploreRunStatusResponse(
         job_id=run.job_id,
         task_id=run.task_id,
@@ -2547,8 +2570,13 @@ def get_application_map(app_id: int, db: Session = Depends(get_db), user: dict =
 
     cases = None
     if not have_verdicts:
-        # Fallback path: heuristic + enqueue a recompute for next time.
-        cases = db.query(TestCase).filter(TestCase.owner_id == user["sub"]).all()
+        from sqlalchemy import or_
+        if app_row.workspace_id:
+            cases = db.query(TestCase).filter(
+                or_(TestCase.owner_id == user["sub"], TestCase.workspace_id == app_row.workspace_id)
+            ).all()
+        else:
+            cases = db.query(TestCase).filter(TestCase.owner_id == user["sub"]).all()
         try:
             from .graph_worker import _dispatch_recompute_coverage
             _dispatch_recompute_coverage(app_row.id, reason="map_read_no_verdicts")
@@ -3895,21 +3923,43 @@ def store_vault_cookies(body: VaultCookiesRequest, db: Session = Depends(get_db)
         
     print(f"[VAULT] Received {len(body.cookies)} cookies and {ls_count} localStorage items for {body.domain}")
     
+    from .models import Environment, Application, WorkspaceMember
+    owner_id = user["sub"]
+    env = None
     if body.environment_id:
-        from .models import Environment
         env = db.query(Environment).filter(Environment.id == body.environment_id).first()
-        if env:
-            # Build Playwright storageState JSON
-            state = {
-                "cookies": [c.dict() for c in body.cookies],
-                "origins": [o.dict() for o in body.origins] if body.origins else []
-            }
-            env.auth_strategy = "state_cache"
-            env.auth_state_template = json.dumps(state)
-            db.commit()
-            print(f"[VAULT] Successfully saved Golden State to Environment {env.name} ({env.id})")
+        
+    if not env and body.domain:
+        # Auto-match environment by domain
+        user_ws = [w[0] for w in db.query(WorkspaceMember.workspace_id).filter(WorkspaceMember.user_id == owner_id).all()]
+        apps = db.query(Application).filter(
+            (Application.workspace_id.in_(user_ws)) | (Application.owner_id == owner_id)
+        ).all()
+        app_ids = [a.id for a in apps]
+        if app_ids:
+            clean_domain = body.domain.replace("www.", "").strip()
+            env = db.query(Environment).filter(
+                Environment.application_id.in_(app_ids),
+                Environment.base_url.ilike(f"%{clean_domain}%")
+            ).first()
+            if not env:
+                env = db.query(Environment).filter(
+                    Environment.application_id.in_(app_ids)
+                ).order_by(Environment.id.desc()).first()
+
+    if env:
+        # Build Playwright storageState JSON
+        state = {
+            "cookies": [c.dict() for c in body.cookies],
+            "origins": [o.dict() for o in body.origins] if body.origins else []
+        }
+        env.auth_strategy = "state_cache"
+        env.auth_state_template = json.dumps(state)
+        db.commit()
+        print(f"[VAULT] Successfully saved Golden State to Environment {env.name} ({env.id})")
+        return {"status": "ok", "environment_id": env.id, "environment_name": env.name, "message": f"Auth state successfully saved to {env.name}."}
             
-    return {"status": "ok", "message": "Auth state successfully saved to Environment."}
+    return {"status": "ok", "message": "Auth state received, but no matching environment was found to attach it to."}
 
 @app.post("/api/vault/prompts")
 def store_vault_prompts(body: VaultPromptsRequest, db: Session = Depends(get_db), user: dict = Depends(get_extension_user)):
@@ -3982,6 +4032,28 @@ Example output:
     owner_id = user["sub"]
     workspace_id = None
     
+    if not body.environment_id and body.prompts:
+        user_ws = [w[0] for w in db.query(WorkspaceMember.workspace_id).filter(WorkspaceMember.user_id == owner_id).all()]
+        apps = db.query(Application).filter(
+            (Application.workspace_id.in_(user_ws)) | (Application.owner_id == owner_id)
+        ).all()
+        app_ids = [a.id for a in apps]
+        if app_ids:
+            # Check if any prompt contains the base_url or domain of an environment
+            for p in body.prompts:
+                for app in apps:
+                    matched_env = db.query(Environment).filter(Environment.application_id == app.id).first()
+                    if matched_env and (matched_env.base_url in p or app.name.lower() in p.lower()):
+                        body.environment_id = matched_env.id
+                        break
+                if body.environment_id:
+                    break
+            if not body.environment_id:
+                # Default to the most recent environment
+                latest_env = db.query(Environment).filter(Environment.application_id.in_(app_ids)).order_by(Environment.id.desc()).first()
+                if latest_env:
+                    body.environment_id = latest_env.id
+
     if body.environment_id:
         env = db.query(Environment).filter(Environment.id == body.environment_id).first()
         if env:

@@ -566,6 +566,32 @@ def explore_application(
     # ── Build the exploration task prompt ──────────────────────────────────
     task_parts = [
         f"You are mapping the web application at: {base_url}",
+    ]
+
+    if environment_id:
+        _db = SessionLocal()
+        try:
+            from .models import Environment
+            _env_record = _db.query(Environment).filter(Environment.id == environment_id).first()
+            if _env_record and _env_record.auth_strategy == "visual_login" and _env_record.auth_payload:
+                try:
+                    import json as _json
+                    _creds = _json.loads(_env_record.auth_payload)
+                    _l_url = _creds.get("login_url") or base_url
+                    _u = _creds.get("username")
+                    _p = _creds.get("password")
+                    if _u and _p:
+                        task_parts.append(
+                            f"\nINITIAL AUTHENTICATION STEP:\nBefore exploring the rest of the application, "
+                            f"navigate to {_l_url}, log in with username/email '{_u}' and password '{_p}', "
+                            f"and wait for the authenticated dashboard to load. Once authenticated, explore internal app pages.\n"
+                        )
+                except Exception:
+                    pass
+        finally:
+            _db.close()
+
+    task_parts.extend([
         "",
         "GOAL: Systematically explore this application and build a map of its "
         "important pages, forms, and user flows. Navigate like a curious new "
@@ -602,7 +628,7 @@ def explore_application(
         "['Cart', 'Shipping', 'Payment']). Use exact labels of nodes in the map.",
         "9. When finished, call done() and return the structured application map.",
         "10. CRITICAL: You must output ONLY raw, valid JSON. Do not wrap your response in markdown (```json). Do not add any conversational text.",
-    ]
+    ])
     if login_hint:
         task_parts += [
             "",

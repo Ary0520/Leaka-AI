@@ -713,6 +713,22 @@ def run_browser_test(
                     with os.fdopen(fd, "w") as f:
                         f.write(env.auth_state_template)
                     storage_state_dict = temp_state_path
+                    task_parts.insert(0, "Authenticated Session: Headless browser pre-hydrated with stored cookies & local storage.")
+            elif env.auth_strategy == "visual_login":
+                if env.auth_payload:
+                    creds = json.loads(env.auth_payload)
+                    l_url = creds.get("login_url") or env.base_url
+                    u = creds.get("username")
+                    p = creds.get("password")
+                    if u and p:
+                        task_parts.insert(0, (
+                            f"AUTHENTICATION STEP (execute first):\n"
+                            f"1. Navigate to {l_url}\n"
+                            f"2. Fill in the login form with username/email: '{u}' and password: '{p}'\n"
+                            f"3. Submit the login form and wait until successfully authenticated.\n"
+                            f"4. Once authenticated, proceed to the test instructions below:\n"
+                        ))
+                        task_parts.append(f"Visual Auth: Provisioned login instructions for user '{u}'.")
             elif env.auth_strategy in ("api_injection", "ephemeral_users"):
                 payload = json.loads(env.auth_payload) if env.auth_payload else {}
                 headers = json.loads(env.auth_api_headers) if getattr(env, 'auth_api_headers', None) else {}
