@@ -117,7 +117,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               });
               
               if (!res.ok) throw new Error('Backend returned ' + res.status);
-              sendResponse({ success: true });
+              const resData = await res.json();
+              sendResponse({ success: true, message: resData.message || 'Auth state saved successfully!' });
             } catch (error) {
               console.error(error);
               sendResponse({ success: false, error: error.message });

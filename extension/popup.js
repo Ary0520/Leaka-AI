@@ -161,9 +161,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   btnExtractCookies.addEventListener('click', async () => {
-    if (!config.selectedEnvId) return alert('Select an environment first');
-    
-    btnExtractCookies.textContent = 'Extracting...';
+    btnExtractCookies.textContent = 'Syncing session...';
     btnExtractCookies.disabled = true;
 
     try {
@@ -172,15 +170,16 @@ document.addEventListener('DOMContentLoaded', () => {
       });
       
       if (response && response.success) {
+        cookieStatus.textContent = response.message || 'Auth session synced to Leaka!';
         cookieStatus.style.display = 'block';
-        setTimeout(() => { cookieStatus.style.display = 'none'; }, 3000);
+        setTimeout(() => { cookieStatus.style.display = 'none'; }, 4000);
       } else {
-        alert('Failed to push state: ' + (response?.error || 'Unknown error'));
+        alert('Failed to sync session: ' + (response?.error || 'Unknown error'));
       }
     } catch (e) {
       alert('Error: ' + e.message);
     } finally {
-      btnExtractCookies.textContent = 'Push to Selected Environment';
+      btnExtractCookies.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg> Sync Active Tab Session';
       btnExtractCookies.disabled = false;
     }
   });
