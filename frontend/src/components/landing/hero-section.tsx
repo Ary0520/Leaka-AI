@@ -143,7 +143,7 @@ export function HeroSection() {
         
       </div>
       
-      {/* Stats marquee - full width outside container */}
+      {/* Stats marquee - full width outside container 
       <div 
         className={`absolute bottom-8 lg:bottom-12 left-0 right-0 transition-all duration-700 delay-500 ${
           isVisible ? "opacity-100" : "opacity-0"
@@ -170,6 +170,7 @@ export function HeroSection() {
           ))}
         </div>
       </div>
+      */}
       
       {/* Scroll indicator */}
       

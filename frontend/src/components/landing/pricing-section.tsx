@@ -151,7 +151,7 @@ export function PricingSection() {
             </div>
 
             <a 
-              href="mailto:founder@leaka.live" 
+              href="mailto:aryansinhag@leaka.live" 
               className="px-6 py-3 border border-foreground/20 text-foreground font-medium hover:bg-foreground/5 hover:border-foreground transition-all"
             >
               Talk to Founder
