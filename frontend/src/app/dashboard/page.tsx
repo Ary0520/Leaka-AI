@@ -88,6 +88,32 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {(!kpis?.total_runs || kpis.total_runs === 0) && (
+        <Card className="border border-[#57f1db]/30 bg-[#16191a] shadow-md">
+          <CardContent className="pt-6 pb-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-[#57f1db]" />
+                  <h3 className="font-semibold text-base text-[#e1e2e4]">Welcome to Leaka AI</h3>
+                </div>
+                <p className="text-xs text-[#bacac5]">
+                  Start testing your product: run an automated test now or use the Chrome Extension to record actions from your live browser.
+                </p>
+              </div>
+              <div className="flex items-center gap-2.5">
+                <Button size="sm" variant="outline" asChild className="text-xs border-[rgba(186,202,197,0.2)]">
+                  <Link href="/applications">View Product Map</Link>
+                </Button>
+                <Button size="sm" asChild className="text-xs bg-[#57f1db] text-[#111415] hover:bg-[#57f1db]/90 font-medium">
+                  <Link href="/new">Run First E2E Test</Link>
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard 
           label="Total Runs" 
